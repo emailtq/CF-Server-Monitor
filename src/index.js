@@ -2,6 +2,7 @@ import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './
 import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './services/notification.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
+import { handleTerminalUpgrade } from './handlers/terminal.js';
 import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade, handleUpdateWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
@@ -28,6 +29,8 @@ import { MetricsBroadcaster as _MetricsBroadcaster }
   from './durable/MetricsBroadcaster.js';
 
 export class MetricsBroadcaster extends _MetricsBroadcaster {}
+import { TerminalBroker as _TerminalBroker } from './durable/TerminalBroker.js';
+export class TerminalBroker extends _TerminalBroker {}
 
 function cleanThemeAssetResponse(response) {
   const headers = new Headers(response.headers);
@@ -218,6 +221,12 @@ export default {
         }
       } catch (e) {
       }
+    }
+
+    if (path.startsWith('/api/agent/terminal/') || path.startsWith('/admin/api/terminal/')) {
+      const terminal = await handleTerminalUpgrade(request, env, null);
+      if (terminal) return terminal;
+      return createNotFoundResponse();
     }
 
     const bypassTurnstilePaths = [

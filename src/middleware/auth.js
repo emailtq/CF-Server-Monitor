@@ -126,7 +126,8 @@ export async function checkAuth(request, env, sys) {
   return verifyToken(getCookieValue(request, AUTH_COOKIE_NAME), env, sys);
 }
 
-export async function getTerminalAdminPrincipal(request, env, sys) {
+// Signature-only verification also permits logout to tombstone a never-used jti.
+export async function getTerminalJwtPrincipal(request, env, sys) {
   if (!isValidJwtSecret(sys?.jwt_secret) || sys.jwt_secret === env.API_SECRET ||
       sys.jwt_secret === getJwtSecret(env, {})) return null;
   const token = extractBearerToken(request) || getCookieValue(request, AUTH_COOKIE_NAME);
@@ -138,6 +139,16 @@ export async function getTerminalAdminPrincipal(request, env, sys) {
         payload.exp <= now || typeof payload.jti !== 'string' ||
         !/^[A-Za-z0-9_-]{1,128}$/.test(payload.jti)) return null;
 
+    return { jti: payload.jti, exp: payload.exp };
+  } catch (_) {
+    return null;
+  }
+}
+
+export async function getTerminalAdminPrincipal(request, env, sys) {
+  const payload = await getTerminalJwtPrincipal(request, env, sys);
+  if (!payload) return null;
+  try {
     const authorization = env.DB.prepare(`
       SELECT expires_at, revoked_at FROM terminal_auth_sessions WHERE jti = ?
     `).bind(payload.jti);

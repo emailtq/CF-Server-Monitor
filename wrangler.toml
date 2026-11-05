@@ -32,6 +32,14 @@ class_name = "MetricsBroadcaster"
 tag = "v1"
 new_sqlite_classes = ["MetricsBroadcaster"]
 
+[[durable_objects.bindings]]
+name = "TERMINAL_BROKER"
+class_name = "TerminalBroker"
+
+[[migrations]]
+tag = "terminal-v1"
+new_sqlite_classes = ["TerminalBroker"]
+
 # 开发服务器配置
 [dev]
 port = 8787

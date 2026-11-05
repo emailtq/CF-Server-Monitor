@@ -79,6 +79,14 @@ jobs:
           tag = "v1"
           new_sqlite_classes = ["MetricsBroadcaster"]
 
+          [[durable_objects.bindings]]
+          name = "TERMINAL_BROKER"
+          class_name = "TerminalBroker"
+
+          [[migrations]]
+          tag = "terminal-v1"
+          new_sqlite_classes = ["TerminalBroker"]
+
           [vars]
           API_SECRET = "SECRET_PLACEHOLDER"
           API_USER_NAME = "USER_NAME_PLACEHOLDER"

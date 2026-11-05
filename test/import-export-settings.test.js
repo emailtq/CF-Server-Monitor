@@ -5,6 +5,7 @@ import { Miniflare } from 'miniflare';
 import { handleAdminAPI } from '../src/handlers/admin.js';
 import { parseServerBackup } from '../src/frontend/utils/backup.js';
 import { generateToken } from '../src/middleware/auth.js';
+import { ensureTerminalSchema } from '../src/database/terminal.js';
 import {
   clearSiteSettingsCache,
   clearAppearanceSettingsCache,
@@ -71,6 +72,7 @@ const SERVERS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS servers (
 async function createSchema(database) {
   await database.prepare('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)').run();
   await database.prepare(SERVERS_TABLE_SQL).run();
+  await ensureTerminalSchema(database);
 }
 
 await createSchema(db);

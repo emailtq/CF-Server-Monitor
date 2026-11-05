@@ -14,6 +14,10 @@ import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, n
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
+import { getTerminalJwtPrincipal } from '../middleware/auth.js';
+import { revokeTerminalAdmin } from '../database/terminal.js';
+import { handleTerminalAdminAction, disableTerminalAccess, notifyTerminalNodeRevoked, terminalPreviewGuard } from './terminal.js';
+import { revokeTerminalNode } from '../database/terminal.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -247,7 +251,7 @@ async function validateThemeUrlAvailable(themeUrl) {
   }
 }
 
-async function deleteServer(db, id) {
+async function deleteServer(db, id, env) {
   try {
     const stmt1 = db.prepare(`PRAGMA foreign_key_list(metrics_history)`);
     const result1 = await stmt1.all();
@@ -261,7 +265,13 @@ async function deleteServer(db, id) {
       await db.prepare('DELETE FROM metrics_history_old WHERE server_id = ?').bind(id).run();
     }
 
+    await revokeTerminalNode(db, id);
     await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
+    const terminalNode = await db.prepare('SELECT server_id FROM terminal_nodes WHERE server_id = ?').bind(id).first();
+    if (terminalNode) {
+      try { await notifyTerminalNodeRevoked(env, id); }
+      catch (_) { throw new AppError('terminal_broker_notification_failed', 503); }
+    }
   } catch (err) {
     throw err;
   }
@@ -532,7 +542,25 @@ async function handleLoginAction({ request, env, sys, data }) {
   }
 }
 
-function handleLogoutAction({ request }) {
+async function handleLogoutAction({ request, env, sys }) {
+  const owners = new Map();
+  const owner = await getTerminalJwtPrincipal(request, env, sys);
+  if (owner) owners.set(owner.jti, owner);
+  if (request.headers.has('Authorization') && request.headers.has('Cookie')) {
+    const cookieOwner = await getTerminalJwtPrincipal(new Request(request.url, {
+      headers:{Cookie:request.headers.get('Cookie')}
+    }), env, sys);
+    if (cookieOwner) owners.set(cookieOwner.jti, cookieOwner);
+  }
+  if (owners.size) {
+    try { for (const principal of owners.values()) await revokeTerminalAdmin(env.DB, principal.jti, principal.exp); }
+    catch (_) {
+      const headers = new Headers({'Content-Type':'application/json'});
+      headers.append('Set-Cookie', buildClearAuthCookie(request));
+      headers.append('Set-Cookie', buildClearThemePreviewAuthCookie(request));
+      return new Response(JSON.stringify({error:'terminal_revocation_failed', code:503}), {status:503, headers});
+    }
+  }
   return createSuccessResponseWithCookies({
     success: true
   }, [
@@ -572,7 +600,9 @@ async function handleGetSettingsAction({ env, sys, loadFullSettings }) {
   });
 }
 
-async function handleStartThemePreviewAction({ request, data }) {
+async function handleStartThemePreviewAction({ request, data, env, sys }) {
+  const terminalGuard = await terminalPreviewGuard(env);
+  if (terminalGuard) return terminalGuard;
   const normalizedThemeUrl = normalizeThemeUrl(data.theme_url);
   if (!normalizedThemeUrl) {
     return createBadRequestResponse('invalidThemeUrl');
@@ -827,6 +857,7 @@ async function applyImportedSettings({ env, sys, settings }) {
   }
 
   if (siteFields.length > 0) {
+    if (site.picked.theme_url) await disableTerminalAccess(env, sys);
     await saveSiteOptions(env.DB, site.picked);
   }
   if (appearanceFields.length > 0) {
@@ -856,6 +887,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     if (!await checkAuth(request, env, sys)) {
       return simpleAuthResponse();
     }
+
+    const terminalAction = await handleTerminalAdminAction({request, env, sys, data});
+    if (terminalAction) return terminalAction;
 
     const authenticatedActionHandler = AUTHENTICATED_ADMIN_ACTION_HANDLERS[data.action];
     if (authenticatedActionHandler) {
@@ -1031,6 +1065,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           }
         }
       }
+      if (normalizedThemeUrl || settings.terminal_enabled === false || settings.terminal_enabled === 'false') await disableTerminalAccess(env, sys);
       await saveSiteOptions(env.DB, siteOptions);
       // 保存设置后非致命补列：确保 servers 表的告警相关列存在，避免启用月流量阈值后
       // 告警状态因缺列无法持久化而重复发送通知。设置已保存成功，补列失败不回滚、不报错。
@@ -1098,7 +1133,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         return createBadRequestResponse('invalidServerId');
       }
       
-      await deleteServer(env.DB, id);
+      await deleteServer(env.DB, id, env);
       
       clearServersListCache();
       
@@ -1249,7 +1284,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       for (const id of ids) {
-        await deleteServer(env.DB, id);
+        await deleteServer(env.DB, id, env);
       }
       
       clearServersListCache();
