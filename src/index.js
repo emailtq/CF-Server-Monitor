@@ -3,6 +3,7 @@ import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
 import { handleTerminalUpgrade } from './handlers/terminal.js';
+import { cleanupTerminalRecords } from './database/terminal.js';
 import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade, handleUpdateWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
@@ -495,6 +496,11 @@ export default {
         debug('[Cron] 资源负载告警检测完成');
       }
     } else if (cron === '0 * * * *') {
+      try {
+        await cleanupTerminalRecords(env.DB, now.getTime());
+      } catch (error) {
+        console.error('[Terminal] Retention cleanup failed:', error);
+      }
       if (day === 0 && hour === 0) {
         debug('[Cron] 开始执行每周数据清理任务（表轮换）');
         await weeklyCleanup(env.DB);

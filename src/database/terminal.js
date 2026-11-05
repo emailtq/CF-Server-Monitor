@@ -23,7 +23,8 @@ export async function ensureTerminalSchema(db) {
       reason TEXT,
       created_at INTEGER NOT NULL
     )`),
-    db.prepare('CREATE INDEX IF NOT EXISTS terminal_audit_created_at ON terminal_audit(created_at)')
+    db.prepare('CREATE INDEX IF NOT EXISTS terminal_audit_created_at ON terminal_audit(created_at)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS terminal_auth_sessions_expires_at ON terminal_auth_sessions(expires_at)')
   ]);
 }
 
@@ -34,6 +35,30 @@ const isCode = value => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.te
 async function hashToken(token) {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function terminalAuthorizationKey(settings) {
+  return hashToken(settings.jwt_secret || '');
+}
+
+// Recheck outside the broker metadata queue; dashboard caches are never authority.
+export async function verifyTerminalAuthority(db, context, now = Date.now()) {
+  const row = await db.prepare(`SELECT settings.value, n.enabled, n.credential_version, a.expires_at, a.revoked_at
+    FROM settings JOIN servers s ON s.id = ? JOIN terminal_nodes n ON n.server_id = s.id
+    LEFT JOIN terminal_auth_sessions a ON a.jti = ? WHERE settings.key = 'site_options'`)
+    .bind(context.serverId, context.owner || '').first();
+  if (!row || row.enabled !== 1 || row.credential_version !== context.credentialVersion) return false;
+  const settings = JSON.parse(row.value);
+  if (!settings || ![true, 'true'].includes(settings.terminal_enabled) || settings.theme_url) return false;
+  if (context.owner && (row.revoked_at !== null || row.expires_at !== context.ownerExpiry ||
+      row.expires_at * 1000 <= now || context.authorizationKey !== await terminalAuthorizationKey(settings))) return false;
+  return true;
+}
+
+export async function cleanupTerminalRecords(db, now = Date.now()) {
+  if (!isTime(now)) throw new RangeError('Invalid terminal maintenance time');
+  await db.prepare('DELETE FROM terminal_audit WHERE created_at < ?').bind(now - 7 * 86400000).run();
+  await db.prepare('DELETE FROM terminal_auth_sessions WHERE expires_at <= ?').bind(Math.floor(now / 1000)).run();
 }
 
 export async function issueTerminalNodeToken(db, serverId, now = Date.now()) {

@@ -1,10 +1,13 @@
 import { TERMINAL_LIMITS, parseTerminalControl, validateTerminalDataFrame, validateTerminalSize } from '../shared/terminalProtocol.js';
 import { generateRandomSecret } from '../utils/settings.js';
-import { writeTerminalAudit } from '../database/terminal.js';
+import { writeTerminalAudit, verifyTerminalAuthority } from '../database/terminal.js';
 
 const isId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const denied = (code, status = 409) => Response.json({error:code, code:status}, {status});
 const emptyMetadata = () => ({serverId:null, generation:0, credentialVersion:0, sessions:[], closed:[]});
+const validFlow = a => ['forwarded','acked','progressAt'].every(key => Number.isSafeInteger(a[key]) && a[key] >= 0) &&
+  a.acked <= a.forwarded && a.forwarded - a.acked <= TERMINAL_LIMITS.creditBytes &&
+  (a.role !== 'browser' || (Number.isSafeInteger(a.lastUserActivity) && a.lastUserActivity >= 0));
 async function hashTicket(ticket) {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ticket));
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -26,6 +29,10 @@ export class TerminalBroker {
       for (const s of this.meta.sessions) if (s.status === 'reserved') this.mustClose.add(s.id);
       if (this.meta.sessions.some(s => this.needsClosure(s))) await this.recover();
       else await this.scheduleAlarm();
+      for (const s of [...this.meta.sessions]) {
+        const reason = this.expirationReason(s);
+        if (reason) await this.closeSession(s.id, reason);
+      }
     });
   }
 
@@ -60,7 +67,7 @@ export class TerminalBroker {
       const s = this.meta.sessions.find(s => s.id === a?.sessionId);
       const current = a?.serverId === this.meta.serverId && a.generation === this.meta.generation &&
         a.credentialVersion === this.meta.credentialVersion && (a.role === 'agent-control' ||
-          (s && s[a.role] === a.connectionId && s.owner === a.owner));
+          (['browser','agent'].includes(a.role) && s && s[a.role] === a.connectionId && s.owner === a.owner && validFlow(a)));
       if (current && ws.readyState === 1) this.peers.set(a.connectionId, ws);
       else { try { ws.close(1000, reason); } catch (_) {} }
     }
@@ -100,12 +107,46 @@ export class TerminalBroker {
   }
 
   async scheduleAlarm() {
-    const deadlines = this.meta.sessions.map(s => Math.min(s.leaseUntil, s.status === 'running' ? Infinity : s.deadline));
+    const deadlines = this.meta.sessions.map(s => this.sessionDeadline(s));
     const nearest = deadlines.length ? Math.min(...deadlines) : null;
-    if (nearest === this.alarmAt) return;
-    if (nearest === null) await this.state.storage.deleteAlarm();
-    else await this.state.storage.setAlarm(nearest);
+    // Keep an earlier safe wakeup rather than rewriting the alarm on every ACK/renewal.
+    if (nearest === this.alarmAt || (nearest !== null && this.alarmAt !== null && this.alarmAt <= nearest)) return;
+    const previous = this.alarmAt;
     this.alarmAt = nearest;
+    try {
+      if (nearest === null) await this.state.storage.deleteAlarm();
+      else await this.state.storage.setAlarm(nearest);
+    } catch (error) {
+      if (this.alarmAt === nearest) this.alarmAt = previous;
+      throw error;
+    }
+  }
+
+  sessionDeadline(session) {
+    let deadline = Math.min(session.leaseUntil, session.status === 'running' ? Infinity : session.deadline);
+    if (session.status === 'running') {
+      const browser = this.peer(session, 'browser')?.deserializeAttachment();
+      deadline = Math.min(deadline, (browser?.lastUserActivity ?? session.createdAt) + TERMINAL_LIMITS.userIdleMs);
+      for (const role of ['browser', 'agent']) {
+        const a = this.peer(session, role)?.deserializeAttachment();
+        if (a && a.forwarded > a.acked) deadline = Math.min(deadline, a.progressAt + TERMINAL_LIMITS.ackTimeoutMs);
+      }
+    }
+    return deadline;
+  }
+
+  expirationReason(session) {
+    const now = Date.now();
+    if (session.leaseUntil <= now || (session.status !== 'running' && session.deadline <= now)) return 'session_expired';
+    if (session.status === 'running') {
+      const browser = this.peer(session, 'browser')?.deserializeAttachment();
+      if ((browser?.lastUserActivity ?? session.createdAt) + TERMINAL_LIMITS.userIdleMs <= now) return 'user_idle';
+      for (const role of ['browser', 'agent']) {
+        const a = this.peer(session, role)?.deserializeAttachment();
+        if (a && a.forwarded > a.acked && a.progressAt + TERMINAL_LIMITS.ackTimeoutMs <= now) return 'ack_stalled';
+      }
+    }
+    return null;
   }
 
   peer(session, role) {
@@ -123,7 +164,7 @@ export class TerminalBroker {
 
   live(session) {
     return session && session.generation === this.meta.generation && session.credentialVersion === this.meta.credentialVersion &&
-      session.leaseUntil > Date.now() && (session.status === 'running' || session.deadline > Date.now());
+      !this.mustClose.has(session.id) && !this.expirationReason(session);
   }
 
   accept(context, role, session, effects) {
@@ -131,6 +172,8 @@ export class TerminalBroker {
     const connectionId = crypto.randomUUID();
     const attachment = {connectionId, serverId:this.meta.serverId, role, generation:this.meta.generation,
       credentialVersion:context.credentialVersion, sessionId:session?.id || null, owner:session?.owner || null};
+    if (session) Object.assign(attachment, {forwarded:0, acked:0, progressAt:Date.now(),
+      ...(role === 'browser' ? {lastUserActivity:session.createdAt} : {})});
     effects.push(() => {
       this.state.acceptWebSocket(ws, [role, session ? `session:${session.id}` : 'control']);
       ws.serializeAttachment(attachment);
@@ -161,12 +204,19 @@ export class TerminalBroker {
       return Response.json({closed:true});
     }
     if (!Number.isSafeInteger(context.credentialVersion) || context.credentialVersion < 1) return denied('terminal_version_denied', 403);
+    if (operation !== 'close') {
+      const validUntil = context.leaseUntil ?? context.validUntil;
+      if (!Number.isSafeInteger(validUntil) || validUntil <= Date.now() ||
+          validUntil > Date.now() + TERMINAL_LIMITS.authLeaseMs ||
+          !await verifyTerminalAuthority(this.env.DB, context) || validUntil <= Date.now()) return denied('terminal_authority_denied', 403);
+    }
     if (operation === 'control') {
       if (request.headers.get('Upgrade') !== 'websocket') return denied('terminal_upgrade_required', 426);
       if (context.credentialVersion < this.meta.credentialVersion) return denied('terminal_version_denied', 403);
       const generation = await this.replaceControl(context.credentialVersion);
       return this.mutate((effects, meta) => {
-        if (generation === null || generation !== meta.generation || context.credentialVersion !== meta.credentialVersion) return denied('terminal_version_denied', 403);
+        if (generation === null || generation !== meta.generation || context.credentialVersion !== meta.credentialVersion ||
+            (context.validUntil ?? context.leaseUntil) <= Date.now()) return denied('terminal_version_denied', 403);
         return this.accept(context, 'agent-control', null, effects);
       });
     }
@@ -193,7 +243,7 @@ export class TerminalBroker {
       const hash = context.role === 'agent' && typeof context.ticket === 'string' ? await hashTicket(context.ticket) : null;
       const result = await this.mutate((effects, meta) => {
         const s = meta.sessions.find(s => s.id === context.sessionId);
-        if (!this.live(s) || s.status !== 'pending') return denied('terminal_session_not_pending');
+        if (!this.live(s) || s.status !== 'pending' || context.validUntil <= Date.now()) return denied('terminal_session_not_pending');
         if (context.role === 'browser' && context.owner !== s.owner) return denied('terminal_owner_denied', 403);
         if (s[context.role]) return denied('terminal_duplicate_peer');
         if (context.role === 'agent' && (!s.ticketHash || hash !== s.ticketHash || s.deadline <= Date.now())) return denied('terminal_ticket_denied', 403);
@@ -213,12 +263,15 @@ export class TerminalBroker {
     if (!this.live(session) || !Number.isSafeInteger(context.leaseUntil) || context.leaseUntil <= Date.now() || context.leaseUntil > Date.now() + TERMINAL_LIMITS.authLeaseMs) return denied('terminal_session_expired');
     const renewed = await this.mutate((effects, meta) => {
       const current = meta.sessions.find(s => s.id === context.sessionId);
-      if (!this.live(current) || current.owner !== context.owner) return false;
-      current.leaseUntil = context.leaseUntil;
-      return true;
+      if (!this.live(current) || current.owner !== context.owner || !this.control() ||
+          current.generation !== session.generation || context.credentialVersion !== meta.credentialVersion ||
+          context.leaseUntil <= Date.now() || current.ownerExpiry !== context.ownerExpiry ||
+          current.authorizationKey !== context.authorizationKey) return false;
+      current.leaseUntil = Math.max(current.leaseUntil, context.leaseUntil);
+      return current.leaseUntil;
     });
     if (!renewed) return denied('terminal_session_expired');
-    return Response.json({leaseUntil:context.leaseUntil});
+    return Response.json({leaseUntil:renewed});
   }
 
   async open(context, data) {
@@ -238,7 +291,8 @@ export class TerminalBroker {
         if (!this.control()?.deserializeAttachment()?.supported) return denied('terminal_agent_unavailable');
         if (meta.sessions.length >= TERMINAL_LIMITS.maxSessions) return denied('terminal_capacity');
         session = {id:crypto.randomUUID(), clientRequestId:data.clientRequestId, owner:context.owner, cols:data.cols, rows:data.rows,
-          generation:this.meta.generation, credentialVersion:context.credentialVersion, ticketHash, status:'reserved',
+          generation:meta.generation, credentialVersion:context.credentialVersion, ticketHash, status:'reserved',
+          ownerExpiry:context.ownerExpiry, authorizationKey:context.authorizationKey, serverId:context.serverId, createdAt:Date.now(),
           deadline:Date.now() + TERMINAL_LIMITS.startTimeoutMs, leaseUntil:context.leaseUntil, browser:null, agent:null};
         meta.sessions.push(session);
         return null;
@@ -250,6 +304,7 @@ export class TerminalBroker {
     if (reservation) return reservation;
     try {
       await this.audit(session, 'admission', null);
+      if (!await verifyTerminalAuthority(this.env.DB, session)) throw new Error('terminal_authority_denied');
       const admitted = await this.mutate((effects, meta) => {
         const current = meta.sessions.find(s => s.id === session.id);
         const control = this.control();
@@ -277,6 +332,7 @@ export class TerminalBroker {
       });
       if (!claimed) return;
       await this.audit(claimed, 'start', null);
+      if (!await verifyTerminalAuthority(this.env.DB, claimed)) throw new Error('terminal_authority_denied');
       await this.mutate((effects, meta) => {
         const s = meta.sessions.find(s => s.id === id);
         if (!this.live(s) || s.status !== 'admitting') return;
@@ -312,7 +368,8 @@ export class TerminalBroker {
       meta.closed = meta.closed.slice(-32);
     });
     this.mustClose.delete(id);
-    if (closed) { try { await this.audit(closed, 'close', reason); } catch (_) {} }
+    // Best-effort audit cannot pin constructor recovery or unrelated session events.
+    if (closed) this.state.waitUntil(this.audit(closed, 'close', reason).catch(() => {}));
   }
 
   async replaceControl(version, minimumVersion = 0) {
@@ -352,13 +409,25 @@ export class TerminalBroker {
       return;
     }
     const s = this.meta.sessions.find(s => s.id === a.sessionId);
-    if (!this.live(s) || s[a.role] !== a.connectionId || s.owner !== a.owner) { await this.closeSession(a.sessionId, 'session_expired'); return; }
+    if (!this.live(s) || s[a.role] !== a.connectionId || s.owner !== a.owner || !validFlow(a)) { await this.closeSession(a.sessionId, s ? this.expirationReason(s) || 'session_expired' : 'session_expired'); return; }
     try {
       if (typeof message !== 'string') {
         if (s.status !== 'running' || !validateTerminalDataFrame(message)) throw new Error('invalid_data');
         const target = this.peer(s, a.role === 'browser' ? 'agent' : 'browser');
         if (!target) throw new Error('peer_lost');
+        if (!Number.isSafeInteger(a.forwarded + message.byteLength) ||
+            a.forwarded - a.acked + message.byteLength > TERMINAL_LIMITS.creditBytes) throw new Error('credit_exceeded');
+        const wasEmpty = a.forwarded === a.acked;
+        if (message.byteLength) {
+          if (wasEmpty) a.progressAt = Date.now();
+          a.forwarded += message.byteLength;
+          if (a.role === 'browser') a.lastUserActivity = Date.now();
+          ws.serializeAttachment(a);
+        }
+        // DO send is synchronous enqueue, not an 8s transport-write acknowledgement.
+        // Credit bounds the enqueue; consumption ACK/stall bounds a non-reading peer.
         target.send(message);
+        if (wasEmpty && message.byteLength) await this.scheduleAlarm();
         return;
       }
       const frame = parseTerminalControl(message, a.role);
@@ -384,6 +453,17 @@ export class TerminalBroker {
       if (s.status !== 'running') throw new Error('not_ready');
       const target = this.peer(s, a.role === 'browser' ? 'agent' : 'browser');
       if (!target) throw new Error('peer_lost');
+      if (frame.type === 'ack') {
+        const producer = target.deserializeAttachment();
+        if (frame.bytes < producer.acked || frame.bytes > producer.forwarded) throw new Error('invalid_ack');
+        if (frame.bytes === producer.acked) return;
+        producer.acked = frame.bytes;
+        producer.progressAt = Date.now();
+        target.serializeAttachment(producer);
+      } else if (frame.type === 'resize') {
+        a.lastUserActivity = Date.now();
+        ws.serializeAttachment(a);
+      }
       target.send(message);
     } catch (_) { await this.closeSession(s.id, 'protocol_error'); }
   }
@@ -405,8 +485,8 @@ export class TerminalBroker {
     await this.ready;
     if (this.blocked) await this.mutate(() => null);
     this.alarmAt = null;
-    const expired = this.meta.sessions.filter(s => !this.live(s)).map(s => s.id);
-    await Promise.all(expired.map(id => this.closeSession(id, 'session_expired')));
+    const expired = this.meta.sessions.map(s => ({id:s.id, reason:this.expirationReason(s)})).filter(s => s.reason);
+    await Promise.all(expired.map(s => this.closeSession(s.id, s.reason)));
     await this.scheduleAlarm();
   }
 }

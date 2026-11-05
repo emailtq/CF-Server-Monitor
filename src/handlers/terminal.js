@@ -1,5 +1,5 @@
 import { getTerminalAdminPrincipal, validateCredentials } from '../middleware/auth.js';
-import { issueTerminalNodeToken, verifyTerminalNodeToken, revokeTerminalNode } from '../database/terminal.js';
+import { issueTerminalNodeToken, verifyTerminalNodeToken, revokeTerminalNode, terminalAuthorizationKey } from '../database/terminal.js';
 import { saveSiteOptions } from '../utils/settings.js';
 import { validateTerminalSize, TERMINAL_LIMITS } from '../shared/terminalProtocol.js';
 
@@ -55,6 +55,8 @@ function brokerRequest(env, operation, context, data = null) {
 export async function handleTerminalAdminAction({request, env, sys, data}) {
   if (!ACTIONS.has(data.action)) return null;
   if (!sameOrigin(request)) return response('terminal_origin_denied', 403);
+  if (!request.headers.get('Cookie') || request.headers.has('Authorization')) return response('terminal_login_required', 401);
+  const requestedAt = Date.now();
   try {
     const settings = await authority(env, sys);
     const owner = await getTerminalAdminPrincipal(request, env, settings);
@@ -94,8 +96,9 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
       return Response.json({...(await result.json()), enabled});
     }
     if (!enabled) return response('terminal_disabled', 403);
-    const context = {serverId:data.serverId, owner:owner.jti, credentialVersion:node.credential_version,
-      leaseUntil:Math.min(Date.now() + TERMINAL_LIMITS.authLeaseMs, owner.exp * 1000)};
+    const context = {serverId:data.serverId, owner:owner.jti, ownerExpiry:owner.exp,
+      authorizationKey:await terminalAuthorizationKey(settings), credentialVersion:node.credential_version,
+      leaseUntil:Math.min(requestedAt + TERMINAL_LIMITS.authLeaseMs, owner.exp * 1000)};
     if (data.action === 'terminal_open') {
       if (!isId(data.clientRequestId) || !validateTerminalSize(data.cols, data.rows)) return response('terminal_invalid_open', 400);
       const result = await brokerRequest(env, 'open', context, {clientRequestId:data.clientRequestId, cols:data.cols, rows:data.rows});
@@ -111,6 +114,7 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
 }
 
 export async function handleTerminalUpgrade(request, env, sys) {
+  const requestedAt = Date.now();
   const url = new URL(request.url);
   const browser = url.pathname.match(/^\/admin\/api\/terminal\/([A-Za-z0-9_-]{1,128})\/([A-Za-z0-9_-]{1,128})\/ws$/);
   const session = url.pathname.match(/^\/api\/agent\/terminal\/session\/([A-Za-z0-9_-]{1,128})$/);
@@ -128,7 +132,9 @@ export async function handleTerminalUpgrade(request, env, sys) {
       if (!owner) return response('terminal_login_required', 401);
       const node = await nodeAuthority(env, browser[1]);
       if (!node || node.enabled !== 1) return response('terminal_node_disabled', 403);
-      return await brokerRequest(env, 'attach', {serverId:browser[1], sessionId:browser[2], role:'browser', owner:owner.jti, credentialVersion:node.credential_version});
+      return await brokerRequest(env, 'attach', {serverId:browser[1], sessionId:browser[2], role:'browser', owner:owner.jti,
+        ownerExpiry:owner.exp, authorizationKey:await terminalAuthorizationKey(settings),
+        validUntil:Math.min(requestedAt + TERMINAL_LIMITS.authLeaseMs, owner.exp * 1000), credentialVersion:node.credential_version});
     }
     const serverId = request.headers.get('X-CFSM-Server-Id');
     const bearer = request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
@@ -136,7 +142,7 @@ export async function handleTerminalUpgrade(request, env, sys) {
     if (!node) return response('terminal_agent_denied', 401);
     const currentNode = await nodeAuthority(env, serverId);
     if (!currentNode || currentNode.enabled !== 1 || currentNode.credential_version !== node.version) return response('terminal_agent_denied', 401);
-    const context = {serverId, credentialVersion:node.version, role:'agent'};
+    const context = {serverId, credentialVersion:node.version, role:'agent', validUntil:requestedAt + TERMINAL_LIMITS.authLeaseMs};
     if (session) {
       context.sessionId = session[1];
       context.ticket = request.headers.get('X-CFSM-Terminal-Ticket');

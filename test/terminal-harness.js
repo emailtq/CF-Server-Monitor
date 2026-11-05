@@ -10,9 +10,14 @@ export async function harness() {
   const source = `
     import worker from './src/index.js';
     import { TerminalBroker } from './src/durable/TerminalBroker.js';
+    import * as terminalDatabase from './src/database/terminal.js';
     export { MetricsBroadcaster } from './src/index.js';
-    const counts = {d1:0, authReads:0, authWrites:0, timeouts:0, intervals:0};
+    const counts = {d1:0, authReads:0, authWrites:0, timeouts:0, intervals:0, terminalQueries:[], errors:[]};
+    const nativeError = console.error;
+    console.error = (...args) => {counts.errors.push(args.map(value=>value instanceof Error ? value.message : String(value))); nativeError(...args);};
     const nativeTimeout = globalThis.setTimeout, nativeInterval = globalThis.setInterval;
+    const nativeNow = Date.now; let clockOffset = 0;
+    Date.now = () => nativeNow() + clockOffset;
     globalThis.setTimeout = (...args) => {counts.timeouts++; return nativeTimeout(...args);};
     globalThis.setInterval = (...args) => {counts.intervals++; return nativeInterval(...args);};
     function countedDb(db) {
@@ -20,6 +25,7 @@ export async function harness() {
         if (key === 'bind') return (...args) => statement(target.bind(...args), sql);
         if (['run','first','all','raw'].includes(key)) return (...args) => {
           counts.d1++;
+          if (/terminal_(audit|auth_sessions|nodes)/.test(sql)) counts.terminalQueries.push(sql.trim());
           if (sql.includes('terminal_auth_sessions')) {
             if (sql.trim().startsWith('SELECT')) counts.authReads++; else counts.authWrites++;
           }
@@ -48,6 +54,10 @@ export async function harness() {
               if (self.commitThenFail) return target[key](...args).then(() => {throw new Error('test ambiguous write acknowledgement');});
               return Promise.reject(new Error('test storage write outage'));
             }
+            if (key === 'setAlarm' && self.pauseAlarmOnce) {
+              self.pauseAlarmOnce=false;
+              return target[key](...args).then(async result => {self.alarmPending=true; await new Promise(resolve=>{self.releaseAlarm=resolve;}); return result;});
+            }
             return target[key](...args);
           };
         }});
@@ -55,6 +65,14 @@ export async function harness() {
           if (key === 'storage') return storage;
           if (key === 'acceptWebSocket') return (ws, tags) => {
             const close = ws.close.bind(ws);
+            const send = ws.send.bind(ws);
+            ws.send = (...args) => {if (self.failSendSession === ws.deserializeAttachment()?.sessionId) throw new Error('test peer write failure'); return send(...args);};
+            const attach = ws.serializeAttachment.bind(ws);
+            ws.serializeAttachment = value => {
+              self.attachmentWrites = (self.attachmentWrites || 0) + 1;
+              if (self.failAttachmentSession === value.sessionId) {self.failAttachmentSession=null; throw new Error('test attachment write failure');}
+              return attach(value);
+            };
             ws.close = (...args) => {stats.closes++; try {return close(...args);} catch (e) {stats.closeErrors++; throw e;}};
             return target.acceptWebSocket(ws, tags);
           };
@@ -65,6 +83,15 @@ export async function harness() {
             stats.d1++;
             if (self.failAudit && sql.includes('INSERT INTO terminal_audit')) throw new Error('test audit outage');
             const statement = target.prepare(sql);
+            if (sql.includes('FROM settings JOIN servers') && self.delayAuthorityOnceMs) return {bind(...values) {
+              const bound=statement.bind(...values); return {async first() {
+                const result=await bound.first();
+                const delay=self.delayAuthorityOnceMs; self.delayAuthorityOnceMs=0;
+                await target.prepare('UPDATE terminal_auth_sessions SET revoked_at=?').bind(Date.now()).run();
+                clockOffset+=delay;
+                return result;
+              }};
+            }};
             if (sql.includes('INSERT INTO terminal_audit')) return {bind(...values) {
               const bound = statement.bind(...values);
               return {async run() {
@@ -84,6 +111,16 @@ export async function harness() {
       async fetch(request) {
         const path = new URL(request.url).pathname;
         if (path === '/test/stats') return Response.json(this.stats);
+        if (path === '/test/pause-alarm') {this.pauseAlarmOnce=true; return new Response('OK');}
+        if (path === '/test/alarm-pending') return Response.json({pending:!!this.alarmPending});
+        if (path === '/test/release-alarm') {this.alarmPending=false; this.releaseAlarm?.(); return new Response('OK');}
+        if (path === '/test/delay-authority') {this.delayAuthorityOnceMs=Number(new URL(request.url).searchParams.get('advance')); return new Response('OK');}
+        if (path === '/test/attachment-stats') return Response.json({writes:this.attachmentWrites || 0});
+        if (path === '/test/fail-attachment') {this.failAttachmentSession=new URL(request.url).searchParams.get('session'); return new Response('OK');}
+        if (path === '/test/corrupt-attachment') {const query=new URL(request.url).searchParams; const ws=this.state.getWebSockets().find(ws=>ws.deserializeAttachment()?.sessionId===query.get('session') && ws.deserializeAttachment()?.role===query.get('role')); const a=ws.deserializeAttachment(); a.forwarded=Number(query.get('forwarded')); ws.serializeAttachment(a); return new Response('OK');}
+        if (path === '/test/clock') {clockOffset += Number(new URL(request.url).searchParams.get('advance') || 0); return Response.json({now:Date.now()});}
+        if (path === '/test/alarm') {await this.state.storage.deleteAlarm(); await this.broker.alarm(); return new Response('OK');}
+        if (path === '/test/fail-send') {this.failSendSession=new URL(request.url).searchParams.get('session'); return new Response('OK');}
         if (path === '/test/fail-audit') { this.failAudit = true; return new Response('OK'); }
         if (path === '/test/fail-storage-once') {const query=new URL(request.url).searchParams; this.failStorageIn=Number(query.get('nth')||1); this.failStorageOperation=query.get('kind')||'put'; this.commitThenFail=query.get('commit')==='1'; return new Response('OK');}
         if (path === '/test/fail-storage-read') {this.failStorageReads=true; return new Response('OK');}
@@ -102,9 +139,11 @@ export async function harness() {
       webSocketError(...args) { return this.broker.webSocketError(...args); }
       alarm() { return this.broker.alarm(); }
     }
-    export default {fetch(request, env, ctx) {
+    export default {async fetch(request, env, ctx) {
       const url = new URL(request.url);
       if (url.pathname === '/test/worker-stats') return Response.json(counts);
+      if (url.pathname === '/test/cleanup') return terminalDatabase.cleanupTerminalRecords(countedDb(env.DB), Number(url.searchParams.get('now'))).then(() => new Response('OK'));
+      if (url.pathname === '/test/cron') {await worker.scheduled({cron:url.searchParams.get('cron')}, {...env,DB:countedDb(env.DB)}, ctx); return new Response('OK');}
       if (url.pathname.startsWith('/test/')) {
         return env.TERMINAL_BROKER.get(env.TERMINAL_BROKER.idFromName(url.searchParams.get('node') || 'node-a')).fetch(request);
       }
