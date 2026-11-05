@@ -977,6 +977,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
 
       const siteOptions = {};
       for (const field of SITE_FIELDS) {
+        // Terminal consent is changed only by the dedicated, freshly authenticated action.
+        if (field === 'terminal_enabled') continue;
         if (settings[field] !== undefined) {
           if (field === 'password') {
             if (settings[field] && settings[field].length > 0) {

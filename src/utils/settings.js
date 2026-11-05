@@ -13,7 +13,7 @@ import {
 
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
 
-export const SITE_FIELDS = ['auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized', 'ua'];
+export const SITE_FIELDS = ['terminal_enabled', 'auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized', 'ua'];
 
 // 导出/导入服务器时一并迁移站点与外观设置。以下字段与当前部署的环境强绑定，
 // 直接覆盖会让目标站点无法登录、探针失联或告警错位，因此既不导出也不导入：
@@ -25,6 +25,7 @@ export const SITE_FIELDS = ['auto_discovery', 'is_public', 'show_price', 'show_e
 // - servers_optimized：历史分区迁移完成标记，跨库覆盖会让目标库重排 history_partition_id
 // Cloudflare 账号/令牌按需求保留在导入导出内（同账号迁移时需要一起带走）。
 export const SETTINGS_EXCLUDED_FIELDS = [
+  'terminal_enabled',
   'username',
   'password',
   'jwt_secret',
@@ -108,6 +109,7 @@ const defaults = {
   default_language: 'auto',
   theme_options: {},
   auto_discovery: 'false',
+  terminal_enabled: 'false',
   is_public: 'true',
   show_price: 'true',
   show_expire: 'true',
@@ -628,7 +630,7 @@ export function isWssReportEnabled(settings = {}, now = Date.now()) {
 // 这些字段是在旧版「逐 key 存 settings」方案废弃之后才加入的，库里不可能存在对应的旧行，
 // 因此缺失时直接回退默认值即可。把它们排除在 hasMissingFields 之外，避免老部署每次
 // 刷新设置缓存都多做一次 SELECT * FROM settings 的兼容查询。
-const LEGACY_FALLBACK_EXEMPT_FIELDS = new Set(['ua']);
+const LEGACY_FALLBACK_EXEMPT_FIELDS = new Set(['ua', 'terminal_enabled']);
 
 function hasMissingFields(source, fields) {
   if (!source || typeof source !== 'object') return true;
@@ -722,6 +724,7 @@ export async function loadSiteSettings(db, options = {}) {
     result.long_history_points = normalizeLongHistoryPoints(result.long_history_points);
     result.resource_alert_rules = normalizeResourceAlertRules(result.resource_alert_rules);
     result.auto_discovery = normalizeBooleanSetting(result.auto_discovery);
+    result.terminal_enabled = normalizeBooleanSetting(result.terminal_enabled);
     result.show_three_net_details = normalizeBooleanSetting(result.show_three_net_details, defaults.show_three_net_details);
     result.wss_report_enabled = normalizeBooleanSetting(result.wss_report_enabled, defaults.wss_report_enabled);
     result.wss_report_hours = normalizeWssReportHours(result.wss_report_hours);
@@ -897,6 +900,7 @@ export async function saveSiteOptions(db, updates) {
   siteOptions.long_history_points = normalizeLongHistoryPoints(siteOptions.long_history_points);
   siteOptions.resource_alert_rules = normalizeResourceAlertRules(siteOptions.resource_alert_rules);
   siteOptions.auto_discovery = normalizeBooleanSetting(siteOptions.auto_discovery);
+  siteOptions.terminal_enabled = normalizeBooleanSetting(siteOptions.terminal_enabled);
   siteOptions.show_three_net_details = normalizeBooleanSetting(siteOptions.show_three_net_details, defaults.show_three_net_details);
   siteOptions.wss_report_enabled = normalizeBooleanSetting(siteOptions.wss_report_enabled, defaults.wss_report_enabled);
   siteOptions.wss_report_hours = normalizeWssReportHours(siteOptions.wss_report_hours);

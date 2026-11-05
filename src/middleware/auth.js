@@ -1,6 +1,6 @@
 const ALGORITHM = { name: 'HMAC', hash: 'SHA-256' };
 import { verifyPasswordHash } from '../utils/common.js';
-import { isValidJwtSecret } from '../utils/settings.js';
+import { generateRandomSecret, isValidJwtSecret } from '../utils/settings.js';
 
 export const AUTH_COOKIE_NAME = 'cfsm_auth';
 const TOKEN_QUERY_KEYS = ['token', 'auth_token', 'ws_token'];
@@ -110,6 +110,7 @@ async function verifyToken(token, env, sys) {
 export async function generateToken(env, sys) {
   const payload = {
     sub: 'admin',
+    jti: generateRandomSecret(32),
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 604800
   };
@@ -123,6 +124,38 @@ export async function checkAuth(request, env, sys) {
     return true;
   }
   return verifyToken(getCookieValue(request, AUTH_COOKIE_NAME), env, sys);
+}
+
+export async function getTerminalAdminPrincipal(request, env, sys) {
+  if (!isValidJwtSecret(sys?.jwt_secret) || sys.jwt_secret === env.API_SECRET ||
+      sys.jwt_secret === getJwtSecret(env, {})) return null;
+  const token = extractBearerToken(request) || getCookieValue(request, AUTH_COOKIE_NAME);
+  if (!token) return null;
+  try {
+    const payload = await verifyJwt(token, sys.jwt_secret);
+    const now = Math.floor(Date.now() / 1000);
+    if (!payload || payload.sub !== 'admin' || !Number.isSafeInteger(payload.exp) ||
+        payload.exp <= now || typeof payload.jti !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(payload.jti)) return null;
+
+    const authorization = env.DB.prepare(`
+      SELECT expires_at, revoked_at FROM terminal_auth_sessions WHERE jti = ?
+    `).bind(payload.jti);
+    let session = await authorization.first();
+    if (!session) {
+      // Conflict-do-nothing preserves revocations racing the first authorization read.
+      await env.DB.prepare(`
+        INSERT INTO terminal_auth_sessions (jti, expires_at, revoked_at) VALUES (?, ?, NULL)
+        ON CONFLICT(jti) DO NOTHING
+      `).bind(payload.jti, payload.exp).run();
+      session = await authorization.first();
+    }
+    if (!session || session.revoked_at !== null || session.expires_at !== payload.exp ||
+        session.expires_at <= Math.floor(Date.now() / 1000)) return null;
+    return { jti: payload.jti, exp: payload.exp };
+  } catch (_) {
+    return null;
+  }
 }
 
 export async function checkWebSocketAuth(request, env, sys) {
