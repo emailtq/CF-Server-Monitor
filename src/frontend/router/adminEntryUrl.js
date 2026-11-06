@@ -6,7 +6,7 @@
  * popstate，Router 不会跟进。结果是"地址栏写着后台、渲染的却是看板"，看板在私有站点拿到 401 后
  * 又按 pathname 判定"已在后台"而 reload，形成刷新循环。
  *
- * 归一化后形成不变量：只要 pathname 是 /admin，hash 必定是 #/admin（可带 query）。
+ * 归一化后只允许后台首页与明确的内置终端路由（均可带 query）。
  * 于是 /admin 下只会渲染后台，不会再出现"地址栏写着后台、渲染的却是看板"。
  *
  * 兼容说明：第三方主题的入口按 theme-develop.md 的历史约定写作 /admin#admin，
@@ -18,6 +18,7 @@ const ADMIN_HASH = '#/admin'
 // 后台 hash 的新旧两种写法，query 原样保留。
 // $ 边界是必需的：否则 #/administrator、#adminx 这类前缀误匹配会拼出不存在的路由，渲染成空白页
 const ADMIN_HASH_QUERY = /^#\/?admin(\?.*)?$/
+const TERMINAL_HASH_QUERY = /^#\/admin\/terminal\/([A-Za-z0-9_-]{1,128})(\?.*)?$/
 
 // 私有站跳转、主题入口共用的标准后台地址
 export const ADMIN_ENTRY_URL = `${ADMIN_PATH}${ADMIN_HASH}`
@@ -33,6 +34,13 @@ export const isAdminPath = (pathname) => {
  */
 export const resolveAdminEntryUrl = ({ pathname = '', search = '', hash = '' } = {}) => {
   if (!isAdminPath(pathname)) return null
+
+  // A terminal refresh must keep its node locator; no other admin subpath is admitted.
+  const terminal = TERMINAL_HASH_QUERY.exec(hash)
+  if (terminal) {
+    const target = `${ADMIN_PATH}#/admin/terminal/${terminal[1]}${terminal[2] || search}`
+    return target === `${pathname}${search}${hash}` ? null : target
+  }
 
   // 查询参数整体搬进 hash：hash history 会把 location.search 并入 base，
   // 而它之后只用 '#'+path 写地址栏，留在 search 里的 ?foo=1 永远清不掉。

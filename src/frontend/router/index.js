@@ -17,6 +17,12 @@ const routes = [
     component: () => import('../views/admin/index.vue')
   },
   {
+    path: '/admin/terminal/:id',
+    name: 'AdminTerminal',
+    meta: { requiresAdmin: true },
+    component: () => import('../views/admin/Terminal.vue')
+  },
+  {
     path: '/server/:id',
     name: 'Server',
     component: () => import('../views/ServerDetail.vue')

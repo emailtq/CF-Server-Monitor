@@ -133,6 +133,8 @@
           @copy-cmd="copyCmd"
           @edit="openEditModal"
           @delete="openDeleteModal"
+          @terminal="openTerminal"
+          @terminal-access="terminalServer = $event"
         />
 
         <SettingsPanel
@@ -589,13 +591,14 @@
         </div>
       </div>
 
+      <TerminalAccessModal v-if="terminalServer" :server="terminalServer" :api-index="selectedApiIndex" :trans="trans" @close="terminalServer = null" />
       <Footer />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick, inject } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, inject, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../../components/TerminalHeader.vue'
 import Footer from '../../components/Footer.vue'
@@ -611,7 +614,7 @@ import BatchEditServersModal from './components/BatchEditServersModal.vue'
 import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'
 import AutoDiscoveryCommandModal from './components/AutoDiscoveryCommandModal.vue'
-import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, fetchConfig } from '../../utils/api'
+import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, fetchConfig, getTerminalBase, closeTerminalSessions } from '../../utils/api'
 import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
 import { normalizeLanguagePreference, normalizeNotificationLanguagePreference, t, useTranslation } from '../../utils/i18n'
@@ -624,6 +627,15 @@ import { useTurnstile } from './composables/useTurnstile'
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../../utils/server.js'
 
 const trans = useTranslation()
+const TerminalAccessModal = defineAsyncComponent(() => import('./components/TerminalAccessModal.vue'))
+const terminalServer = ref(null)
+const openTerminal = server => {
+  try {
+    const base = getTerminalBase(selectedApiIndex.value)
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(server.id)) throw new Error('terminal_invalid_node')
+    window.open(`${base}/admin#/admin/terminal/${server.id}?apiIndex=${selectedApiIndex.value}`, '_blank', 'noopener,noreferrer')
+  } catch (error) { alertMessage.value = trans.value[error.message] || trans.value.terminalRequestFailed }
+}
 const route = useRoute()
 const router = useRouter()
 const appConfig = inject('appConfig', {})
@@ -1290,6 +1302,8 @@ const handleLogin = async () => {
 }
 
 const logout = async () => {
+  terminalServer.value = null
+  closeTerminalSessions()
   try {
     await adminApiForSite({ action: 'logout' })
   } catch (_) {
@@ -1342,6 +1356,7 @@ const handleApiIndexChange = async (newIndex) => {
 }
 
 const resetAdminContext = () => {
+  terminalServer.value = null
   selectedServers.value = []
   showEditModal.value = false
   showDeleteModal.value = false

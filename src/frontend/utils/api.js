@@ -400,7 +400,36 @@ export const fetchAllHistory = async (id, hours, apiIndex = 0) => {
   return Array.isArray(result.data) ? result.data : []
 }
 
+const TERMINAL_ACTIONS = new Set(['terminal_enable_site', 'terminal_authorize_node', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close'])
+
+export const getTerminalBase = (apiIndex = 0) => {
+  const bases = getApiBases()
+  if (!Number.isInteger(apiIndex) || apiIndex < 0 || apiIndex >= bases.length) throw new Error('terminal_origin_denied')
+  let base
+  try { base = new URL(bases[apiIndex]) } catch (_) { throw new Error('terminal_origin_denied') }
+  if (base.protocol !== 'https:' || base.origin !== window.location.origin || base.username || base.password ||
+      base.pathname !== '/' || base.search || base.hash) throw new Error('terminal_origin_denied')
+  if (!/^\/admin\/?$/.test(window.location.pathname) || new URLSearchParams(window.location.search).has('theme_url')) {
+    throw new Error('terminal_custom_frontend')
+  }
+  return base.origin
+}
+
+export const getTerminalSocketUrl = (serverId, sessionId, browserPath, apiIndex = 0) => {
+  const base = getTerminalBase(apiIndex)
+  if (![serverId, sessionId].every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id)) ||
+      browserPath !== `/admin/api/terminal/${serverId}/${sessionId}/ws`) throw new Error('terminal_invalid_session')
+  return `${base.replace('https:', 'wss:')}${browserPath}`
+}
+
 export const adminApi = async (data, apiIndex = 0) => {
+  if (TERMINAL_ACTIONS.has(data.action)) {
+    try { getTerminalBase(apiIndex) } catch (error) { return { error: error.message, status: 0, code: 0 } }
+    return http.postByIndex('/admin/api', data, apiIndex, {
+      includeAuth: false, includeTurnstile: false, includeTurnstileVerified: false,
+      autoRedirect: false, responsePolicy: 'terminal', timeoutMs: 15000
+    })
+  }
   const result = await http.postByIndex('/admin/api', data, apiIndex)
   return result
 }
@@ -417,7 +446,17 @@ export const login = async (username, password, turnstileToken = '', apiIndex = 
   return result
 }
 
+export const closeTerminalSessions = () => {
+  window.dispatchEvent(new Event('terminal-logout'))
+  if (typeof BroadcastChannel !== 'undefined') {
+    const channel = new BroadcastChannel('cfsm-terminal-logout')
+    channel.postMessage({ type: 'logout' })
+    channel.close()
+  }
+}
+
 export const logout = () => {
+  closeTerminalSessions()
   localStorage.removeItem(STORAGE.JWT_TOKEN)
 }
 

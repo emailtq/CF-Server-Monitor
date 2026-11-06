@@ -64,9 +64,9 @@ const createHeaders = (includeAuth = true, includeTurnstile = true, baseUrl = nu
 }
 
 const handleResponse = async (res, options = {}) => {
-  const { autoRedirect = true, baseUrl = null } = options
+  const { autoRedirect = true, baseUrl = null, responsePolicy = 'default' } = options
   
-  if (res.status === 401) {
+  if (res.status === 401 && responsePolicy !== 'terminal') {
     localStorage.removeItem(STORAGE.JWT_TOKEN)
     if (autoRedirect) {
       redirectToAdminLogin()
@@ -74,7 +74,7 @@ const handleResponse = async (res, options = {}) => {
     return { error: DEFAULT_ERROR_MESSAGES[401], status: 401 }
   }
   
-  if (res.status === 403) {
+  if (res.status === 403 && responsePolicy !== 'terminal') {
     localStorage.removeItem(STORAGE.TURNSTILE_TOKEN)
     localStorage.removeItem(TURNSTILE_VERIFIED_KEY)
     if (autoRedirect) {
@@ -144,7 +144,7 @@ const request = async (method, url, body, options = {}) => {
       body: body != null ? JSON.stringify(body) : undefined,
       credentials: 'include'
     }, timeoutMs)
-    return { ...(await handleResponse(res, { autoRedirect, baseUrl: base })), baseUrl: base }
+    return { ...(await handleResponse(res, { autoRedirect, baseUrl: base, responsePolicy: options.responsePolicy })), baseUrl: base }
   } catch (e) {
     if (e.name === 'AbortError') {
       return { error: 'timeout', status: 0, baseUrl: base, timeout: true }
@@ -164,7 +164,7 @@ const fetchWithBase = async (baseUrl, url, options, method = 'GET', body = null)
       body,
       credentials: 'include'
     }, timeoutMs)
-    const result = await handleResponse(res, { autoRedirect, baseUrl })
+    const result = await handleResponse(res, { autoRedirect, baseUrl, responsePolicy: options.responsePolicy })
     return { ...result, baseUrl }
   } catch (e) {
     if (e.name === 'AbortError') {

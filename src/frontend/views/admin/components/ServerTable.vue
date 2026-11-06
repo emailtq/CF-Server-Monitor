@@ -158,6 +158,8 @@
             <td>
               <div class="action-group">
                 <div class="action-btns">
+                  <button @click="$emit('terminal', server)" class="btn btn-icon btn-green" :disabled="!terminalAvailable" :aria-label="trans.terminalOpen" :title="trans.terminalOpen">&gt;_</button>
+                  <button @click="$emit('terminal-access', server)" class="btn btn-icon" :disabled="!terminalAvailable" :aria-label="trans.terminalAccess" :title="trans.terminalAccess">⚿</button>
                   <button @click="$emit('copy-cmd', server.id)" class="btn btn-icon btn-green" :aria-label="trans.copy">{{ copiedServerId === server.id ? '✅' : '📋' }}</button>
                   <button @click="$emit('edit', server)" class="btn btn-icon btn-blue" :aria-label="trans.edit">✏️</button>
                   <button @click="$emit('delete', server.id)" class="btn btn-icon btn-red" :aria-label="trans.delete">🗑️</button>
@@ -173,7 +175,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { getFlagRegionCode, formatBytes } from '../../../utils/api'
+import { getFlagRegionCode, formatBytes, getTerminalBase } from '../../../utils/api'
 import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
 import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, getLocalizedOptionField, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../utils/server.js'
@@ -200,8 +202,12 @@ const newServerGroup = defineModel('newServerGroup', { type: String, default: ''
 const emit = defineEmits([
   'add-server', 'auto-discovery-cmd', 'batch-edit', 'batch-delete', 'toggle-select-all', 'refresh-cache', 'select-all',
   'drag-start', 'drop', 'toggle-server', 'copy-note',
-  'copy-spec', 'copy-cmd', 'edit', 'delete'
+  'copy-spec', 'copy-cmd', 'edit', 'delete', 'terminal', 'terminal-access'
 ])
+
+const terminalAvailable = computed(() => {
+  try { getTerminalBase(props.selectedApiIndex); return true } catch (_) { return false }
+})
 
 const POINTER_DRAG_THRESHOLD = 6
 const CUSTOM_SERVER_GROUP_VALUE = '__custom__'
