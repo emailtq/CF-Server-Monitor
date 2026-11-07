@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import { parse as parseJS } from '@babel/parser'
 import { createServer } from 'vite'
 import { resolveAdminEntryUrl } from '../src/frontend/router/adminEntryUrl.js'
+import { harness, until, controls, openPair } from './terminal-harness.js'
 
 const source = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -205,6 +206,26 @@ async function fixture(run) {
     await vite.close()
   }
 }
+
+test('actual broker startup controls satisfy the unchanged strict frontend start contract', async () => {
+  const h = await harness()
+  try {
+    const pair = await openPair(h, await h.control())
+    await until(() => controls(pair.agent).some(frame => frame.type === 'start'))
+    pair.agent.ws.send('{"type":"ready"}')
+    await until(() => controls(pair.browser).some(frame => frame.type === 'ready'))
+    const frames = controls(pair.browser)
+    await fixture(async ({ create }) => {
+      const terminal = create()
+      await terminal.open({ addEventListener() {}, removeEventListener() {}, style: {} })
+      const socket = Socket.instances.at(-1)
+      socket.connect()
+      for (const frame of frames) socket.message(frame)
+      assert.equal(terminal.status.value, 'running')
+      assert.equal(Screen.instances.at(-1).options.disableStdin, false)
+    })
+  } finally { await h.dispose() }
+})
 
 test('terminal uses selected same-origin API and Cookie only, rejecting invalid/cross-origin indices', () => fixture(async ({ api, calls }) => {
   window.__APP_API_BASES__ = ['https://other.example', 'https://monitor.example']

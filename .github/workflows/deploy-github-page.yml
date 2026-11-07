@@ -43,7 +43,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm install
+      - run: npm ci
+
+      - run: npm run test:all
 
       - name: Build
         env:

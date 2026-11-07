@@ -25,7 +25,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 
 支持主流 Linux 发行版、Alpine Linux、OpenWrt、macOS、群晖 DSM、飞牛 fnOS、Windows 等系统，并提供 Docker 镜像部署方式。
 
-高安全性：Agent 仅单向上报指标，不提供 WebSSH、远程命令下发或主控通道；支持非 root 运行，可降低监控组件被利用后的影响范围。
+高安全性：默认监控模式下，Agent 仅单向上报指标，终端默认关闭；只有站点、节点授权及 Agent 本地开关均经显式知情同意启用后，才提供可选 Linux Shell 终端。这不是 SSH，也不是文件系统沙箱，Shell 拥有 Agent 服务用户的权限；root Agent 即 root Shell，建议使用非 root 用户降低影响范围。
 
 ## 目录
 
@@ -36,6 +36,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 - [快速部署](#快速部署)
 - [首次使用](#首次使用)
 - [Agent 参数与安全建议](#agent-参数与安全建议)
+- [可选 Linux 终端](#可选-linux-终端)
 - [配置说明](#配置说明)
 - [通知与告警](#通知与告警)
 - [安全建议](#安全建议)
@@ -265,6 +266,36 @@ docker run -d --name cf-probe --restart=unless-stopped --network=host \
 ```bash
 docker rm -f cf-probe && docker volume rm cf-probe-data
 ```
+
+## 可选 Linux 终端
+
+终端不是 SSH：Agent 在本机创建 PTY，通过独立 WSS 与每节点一个 `TerminalBroker` 连接。站点、节点授权和 Agent 本地 `-terminal=1` 必须同时启用，默认关闭；远程监控配置不能开启本地终端。每节点最多四个独立会话，新标签页创建新 Shell，不替换其他会话。
+
+### 启用与权限
+
+1. 先发布支持终端的后端，保持站点关闭。保留原 `v1` / `MetricsBroadcaster`，追加 `terminal-v1` / `TerminalBroker` SQLite DO migration 和 `TERMINAL_BROKER` binding；本地 `wrangler.toml` 与生成它的部署 workflow 必须一致，旧 tag 不可修改。D1 增加 `terminal_nodes`、`terminal_auth_sessions`、`terminal_audit`，不替换监控表。
+2. 更新明确同意参加测试的 Linux Agent，再在内置后台重新登录、显式开启站点并授权节点。启用/授权需再次验证管理员凭据；旧 JWT 缺少 `jti` 时必须重新登录，终端只接受独立 `jwt_secret` 签发的有效管理员 Cookie，不接受 reporting secret 或 Bearer 替代。
+3. 一次性节点 token 与 `API_SECRET` 独立，D1 只存 hash；用安全渠道写入 Agent 所属用户的绝对路径本地文件，再安装/重装时传 `-terminal=1 -terminal-token-file=/absolute/path/node-token`。文件须为 owner-only 普通文件（例如 `chmod 600`），不能是 symlink/FIFO；不把 token 写入命令、截图、日志或仓库。Agent 配置也需仅所属用户可读。参见 [Agent 安装文档](https://github.com/huilang-me/cfsm-agent#readme)。
+
+Shell 权限与 Agent 服务用户相同；root Agent 就是 root Shell，必须明确知情同意，优先非 root。Shell 从该用户 HOME 开始，仅使用固定的无凭据环境，不继承 reporting/token 环境，不读取 bash profile/rc；但这不是文件系统沙箱，同一用户能读取的文件仍能被 Shell 读取。
+
+V1 只在通过可选能力检查的 Linux 开放：需要可用 HOME、Shell、`/bin/sleep`、proc、pidfd、ptmx、descriptor duplication/poll 和可取消 PTY I/O。缺失或 ENOSYS/EPERM 时 fail-closed，普通监控继续，Windows/macOS/FreeBSD 和现有监控平台要求不提高。普通同 SID 子进程清理有回归验证；主动 `setsid` 逃逸及不合作 OS/factory 调用不承诺 containment。
+
+### 使用限制与故障
+
+- 仅 Worker 同源内置后台；自定义前端 `theme_url` 与终端互斥，启用终端时自定义主题预览被拒绝，切换/导入自定义前端会关闭终端并撤销授权。纯 CSS/外观配置不属于这个限制。分离静态前台可以看监控，终端应回到 Worker 内置后台。Cookie 与 exact HTTPS Origin 都必须匹配。
+- 二进制帧最多 16 KiB，控制帧 4 KiB，尺寸为 1..500 整数；每会话每向 256 KiB credit，四会话每端最多 2 MiB 未确认应用数据（不是总 heap 上限）。生产者有界并批量累计 ACK；输出被解析/输入实际写入后才确认。慢会话不应阻塞其他会话。
+- 配对/启动与无 ACK 进展截止 30 秒，Agent 实际写超时 8 秒，30 分钟无用户活动关闭；输出/心跳不刷新用户空闲。管理员租约 60 秒，UI 每 45 秒续约。撤销、登出、节点旋转/删除、控制连接替换、Agent 重启/升级或续约失败都会结束相关会话；alarm 调度可延后实际关闭，DO `send` 是 enqueue，不是物理写完成保证。
+- 断线不 detached 恢复，不自动重建 Shell 或重放输入。手动重新打开创建新会话；轮换 token 后须安全更新本地配置。终端控制独立于 HTTP 上报与 inactive report-WSS hours，不改变既有采样/上报调度。
+- 仅记录生命周期审计，不持久化终端 bytes/命令；审计清理保留七天并复用既有维护 cron。备份/export/import 不带终端凭据或授权，不激活恢复的终端；恢复后重新显式授权。
+
+### 开发、验收与回滚
+
+用 Node 22、`npm ci`、`npm run test:all` 和两种 frontend build；既有部署 CI 先运行全回归。默认分离 Vite `changeOrigin` 代理改变 Host 但保留 Origin，终端 POST/WS 会被严格拒绝；使用 `npm run build:frontend` 后 `npm run dev` 的 Worker-served 内置后台，不重写 Origin 或放松认证。
+
+本地回归/非 root WSL PTY、模拟 DO reconstruction 和 fake-agent 浏览器不等于真实云验收。仍需单独授权非生产 Worker/D1/DO 与两个 Linux 节点，验证多节点 PTY、真实 hibernation/eviction、资源计量和公网延迟；物理手机键盘/IME/panning 细化仍未验证，暂缓打磨。不得将这些门禁标为通过。
+
+回滚先关闭站点并撤销节点，Agent 显式重装 `-terminal=0`（省略参数会保留旧本地配置）；关闭现有会话，不删除 additive tables、binding/migration 历史或更改旧 tag，监控继续。发布顺序为后端默认关闭、更新同意 opt-in 的测试 Agent、最后显式站点/节点授权和本地启用；未获人类批准不能 push main 或部署生产。
 
 ## 配置说明
 

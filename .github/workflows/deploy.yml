@@ -9,8 +9,24 @@ on:
       - '.gitignore'
       - 'LICENSE'
   workflow_dispatch:
+  pull_request:
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:all
+      - run: npm run build:frontend
+      - run: npm run build:github-page
+
   check:
     runs-on: ubuntu-latest
     outputs:
@@ -18,7 +34,7 @@ jobs:
     steps:
       - id: decide
         run: |
-          if [ -n "$CF_ACCOUNT_ID" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || { [ "$EVENT_NAME" = "push" ] && [ -n "$CF_ACCOUNT_ID" ]; }; then
             echo "should_deploy=true" >> $GITHUB_OUTPUT
           else
             echo "should_deploy=false" >> $GITHUB_OUTPUT
@@ -28,7 +44,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
 
   deploy:
-    needs: check
+    needs: [check, verify]
     if: needs.check.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     name: Deploy
@@ -42,7 +58,7 @@ jobs:
           node-version: '22'
 
       - name: 📦 Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: 🏗️ Build frontend assets
         run: npm run build:frontend

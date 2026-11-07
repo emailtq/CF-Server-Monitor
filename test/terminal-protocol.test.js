@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   validateTerminalSize,
@@ -88,4 +89,19 @@ test('terminal control size is bounded in UTF-8 bytes before parsing', () => {
   assert.throws(() => parseTerminalControl(prefix.padEnd(4097), 'browser'), RangeError);
   // Non-ASCII text cannot sneak past a JavaScript character-count bound.
   assert.throws(() => parseTerminalControl('{"type":"error","code":"' + '\u00e9'.repeat(2050) + '"}', 'agent'), RangeError);
+});
+
+test('existing deployment CI gates release with full regressions and preserves additive DO migrations', () => {
+  const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+  const deploy = read('.github/workflows/deploy.yml');
+  assert.match(deploy, /pull_request:/);
+  assert.match(deploy, /verify:[\s\S]*npm ci[\s\S]*npm run test:all[\s\S]*npm run build:frontend[\s\S]*npm run build:github-page/);
+  assert.match(deploy, /needs: \[check, verify\]/);
+  for (const config of [read('wrangler.toml'), deploy]) {
+    assert.match(config, /tag = "v1"\s+new_sqlite_classes = \["MetricsBroadcaster"\]/);
+    assert.match(config, /name = "TERMINAL_BROKER"\s+class_name = "TerminalBroker"/);
+    assert.match(config, /tag = "terminal-v1"\s+new_sqlite_classes = \["TerminalBroker"\]/);
+  }
+  const pages = read('.github/workflows/deploy-github-page.yml');
+  assert.match(pages, /npm ci[\s\S]*npm run test:all[\s\S]*npm run build:github-page/);
 });

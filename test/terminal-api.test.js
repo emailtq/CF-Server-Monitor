@@ -7,6 +7,27 @@ import { saveSiteOptions, loadSiteSettings } from '../src/utils/settings.js';
 import { issueTerminalNodeToken } from '../src/database/terminal.js';
 import { handleTerminalUpgrade, handleTerminalAdminAction } from '../src/handlers/terminal.js';
 
+test('actual export/import omits terminal credentials and cannot activate a restored node', async () => {
+  const h = await harness();
+  try {
+    const exported = await h.action('export_servers');
+    assert.equal(exported.status, 200);
+    const backup = await exported.json();
+    const text = JSON.stringify(backup);
+    for (const value of [h.nodes['node-a'].token, h.nodes['node-b'].token, h.token, h.otherToken]) assert.ok(!text.includes(value));
+    for (const field of ['terminal_enabled', 'terminal_nodes', 'terminal_auth_sessions', 'terminal_audit', 'token_hash']) assert.ok(!text.includes(field));
+    const restored = {...backup.servers[0], id:crypto.randomUUID(), terminal_token:h.nodes['node-a'].token, terminal_enabled:true};
+    const response = await h.action('import_servers', {servers:[restored], settings:{site:{...backup.settings.site, terminal_enabled:'true', terminal_token:h.nodes['node-a'].token}}});
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).imported, 1);
+    assert.equal(await h.db.prepare('SELECT * FROM terminal_nodes WHERE server_id = ?').bind(restored.id).first(), null);
+    assert.deepEqual(await (await h.action('terminal_status', {serverId:restored.id})).json(), {enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0});
+    await saveSiteOptions(h.db, {terminal_enabled:'false'});
+    assert.equal((await h.action('import_servers', {settings:{site:{terminal_enabled:'true'}}})).status, 200);
+    assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'false');
+  } finally { await h.dispose(); }
+});
+
 test('terminal status is an authenticated dispatcher action, contains no credential', async () => {
   const h = await harness();
   try {

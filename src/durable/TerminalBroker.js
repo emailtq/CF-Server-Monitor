@@ -337,8 +337,10 @@ export class TerminalBroker {
         const s = meta.sessions.find(s => s.id === id);
         if (!this.live(s) || s.status !== 'admitting') return;
         const agent = this.peer(s, 'agent');
-        if (!agent || !this.peer(s, 'browser')) throw new Error('terminal_pair_lost');
+        const browser = this.peer(s, 'browser');
+        if (!agent || !browser) throw new Error('terminal_pair_lost');
         s.status = 'starting';
+        effects.push(() => browser.send(JSON.stringify({type:'start', cols:s.cols, rows:s.rows})));
         effects.push(() => agent.send(JSON.stringify({type:'start', cols:s.cols, rows:s.rows})));
       });
     } catch (_) {

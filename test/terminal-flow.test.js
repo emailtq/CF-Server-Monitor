@@ -17,6 +17,37 @@ async function fill(sender, receiver) {
   await until(() => binary(receiver).length === before + 16);
 }
 
+test('local broker saturation and rebuild isolate two same-node sessions from a third node; close reuses a slot', async () => {
+  const h = await harness();
+  try {
+    const control = await h.control();
+    const s1 = await running(h, control), s2 = await running(h, control);
+    const s3 = await openPair(h, await h.control('node-b'), 'third-node', 'node-b');
+    await until(() => controls(s3.agent).some(f => f.type === 'start'));
+    s3.agent.ws.send('{"type":"ready"}');
+    await until(() => controls(s3.browser).some(f => f.type === 'ready'));
+    await fill(s1.agent, s1.browser);
+    await h.fetch('/test/rebuild');
+    for (const [pair, marker] of [[s2, 2], [s3, 3]]) {
+      pair.browser.ws.send(new Uint8Array([marker]));
+      await until(() => binary(pair.agent).length === 1);
+      assert.deepEqual([...new Uint8Array(binary(pair.agent)[0])], [marker]);
+      pair.agent.ws.send(new Uint8Array([marker]));
+      await until(() => binary(pair.browser).length === 1);
+    }
+    const producer = (await snapshot(h)).attachments.find(a => a.sessionId === s1.session.sessionId && a.role === 'agent');
+    assert.equal(producer.forwarded - producer.acked, 262144);
+    await running(h, control);
+    await running(h, control);
+    assert.equal((await h.action('terminal_open', {serverId:'node-a',clientRequestId:'fifth',cols:80,rows:24})).status, 409);
+    assert.equal((await h.action('terminal_close', {serverId:'node-a',sessionId:s1.session.sessionId})).status, 200);
+    await running(h, control);
+    s2.browser.ws.send(new Uint8Array([4]));
+    await until(() => binary(s2.agent).length === 2);
+    assert.equal(s3.agent.ws.readyState, 1);
+  } finally { await h.dispose(); }
+});
+
 for (const role of ['browser', 'agent']) {
   test(`${role} exact 256KiB credit, cumulative ACK and restored counters`, async () => {
     const h = await harness();

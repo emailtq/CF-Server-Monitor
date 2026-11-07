@@ -25,7 +25,7 @@ CF-Server-Monitor is a server monitoring system designed for Cloudflare Workers.
 
 It supports mainstream Linux distributions, Alpine Linux, OpenWrt, macOS, Synology DSM, Feiniu fnOS, Windows, and similar systems, and provides Docker image deployment.
 
-Security is stricter by design: the Agent only reports metrics one way, does not provide WebSSH, remote command delivery, or a controller channel, and can run as a non-root user to reduce blast radius.
+Security is stricter by design: by default, the Agent only reports metrics one way and terminal access is disabled. Optional Linux Shell terminals require explicit consent to enable site access, node authorization, and the Agent's local opt-in. This is not SSH and is not a filesystem sandbox; the Shell has the Agent service user's privileges, so a root Agent grants a root Shell. Prefer a non-root user to reduce blast radius.
 
 ## Contents
 
@@ -36,6 +36,7 @@ Security is stricter by design: the Agent only reports metrics one way, does not
 - [Quick Deployment](#quick-deployment)
 - [First Use](#first-use)
 - [Agent Parameters and Security](#agent-parameters-and-security)
+- [Optional Linux Terminals](#optional-linux-terminals)
 - [Configuration](#configuration)
 - [Notifications and Alerts](#notifications-and-alerts)
 - [Security Notes](#security-notes)
@@ -267,6 +268,36 @@ Collect interval, report interval, ping nodes, network interface, traffic reset 
 ```bash
 docker rm -f cf-probe && docker volume rm cf-probe-data
 ```
+
+## Optional Linux Terminals
+
+This is not SSH. The Agent owns local PTYs and uses separate WSS connections through one `TerminalBroker` per node. Site access, node authorization and local `-terminal=1` consent must all be enabled; defaults are off and remote monitoring configuration cannot opt in. A node permits four independent sessions; a new tab creates a new Shell, not a replacement.
+
+### Enable and Authorize
+
+1. Release the backend with terminal access disabled. Keep the original `v1` / `MetricsBroadcaster` migration immutable and append `terminal-v1` / `TerminalBroker` plus the `TERMINAL_BROKER` binding in both `wrangler.toml` and the workflow that regenerates it. D1 adds `terminal_nodes`, `terminal_auth_sessions` and `terminal_audit` without replacing monitoring tables.
+2. Update the consenting Linux test Agent, log in again to the built-in admin, then explicitly enable the site and authorize the node. These actions require credential step-up. Legacy JWTs without `jti` need a new login; terminals require the independent `jwt_secret` and valid administrator Cookie, never the reporting secret or a Bearer substitute.
+3. Transfer the one-time independent node token securely to an absolute owner-only regular local file (for example mode `600`), then install/reinstall with `-terminal=1 -terminal-token-file=/absolute/path/node-token`. Symlinks/FIFOs are rejected. D1 stores only its hash. Keep token text out of command lines, screenshots, logs and Git, and restrict the Agent config to its owner. See the [Agent installation guide](https://github.com/huilang-me/cfsm-agent#readme).
+
+The Shell has the Agent service user's privileges: a root Agent grants a root Shell and requires explicit informed consent; prefer non-root. Each Shell starts in HOME with a fixed credential-free environment and no bash profile/rc, but it is not a filesystem sandbox: files readable by that user remain readable.
+
+Linux capability is optional and fail-closed: usable HOME/Shell, `/bin/sleep`, proc, pidfd, ptmx, descriptor duplication/poll and cancellable PTY I/O must work. Missing facilities or ENOSYS/EPERM disable terminals while monitoring continues. Windows/macOS/FreeBSD and existing monitoring platform requirements do not change. Cleanup covers ordinary same-SID children, not deliberate `setsid` escape or indefinitely uncooperative OS/factory calls.
+
+### Limits and Failure Behavior
+
+- Worker same-origin built-in admin only. Custom `theme_url` and terminal access are mutually exclusive; custom preview is denied while enabled, and activating/importing a custom frontend disables access and revokes authority. Plain CSS/appearance remains supported. A separated static monitoring frontend must return to the Worker admin for terminals. Exact HTTPS Origin and Cookie ownership are required.
+- Data frames are at most 16 KiB, controls 4 KiB, dimensions integer 1..500. Credit is 256 KiB per direction/session: four sessions permit at most 2 MiB endpoint outstanding application data, not a total heap bound. Bounded producers batch cumulative ACKs after actual input writes/output parsing; one stalled session must not block another.
+- Pair/start and no-ACK-progress deadlines are 30 seconds, Agent actual writes time out at 8 seconds, and user inactivity at 30 minutes. Output/heartbeats do not refresh user idle. Admin leases last 60 seconds with UI renewal every 45 seconds. Logout, revoke, rotation/delete, control replacement, Agent restart/update or failed renewal end affected sessions. Alarm latency may delay physical closure; DO `send` is enqueue, not a physical-write guarantee.
+- No detached restoration, automatic Shell recreation or input replay after disconnect. Explicit reopen creates a new session. Rotation requires safely updating local token configuration. Control is independent of HTTP reports and inactive report-WSS hours; existing monitoring schedules are unchanged.
+- Only lifecycle audit is retained (seven-day cleanup through existing maintenance); terminal bytes/commands are not persisted. Backup/export/import excludes credentials/authority and cannot activate restored terminals; explicitly authorize again after restore.
+
+### Development, Acceptance and Rollback
+
+Use Node 22, `npm ci`, `npm run test:all` and both frontend builds; existing deployment CI gates release with full regressions. The default separated Vite `changeOrigin` proxy changes Host but retains Origin, so strict terminal POST/WS admission rejects it. Build with `npm run build:frontend`, then use `npm run dev` and its Worker-served built-in admin; do not rewrite Origin or loosen authentication.
+
+Local regressions, non-root WSL PTYs, DO reconstruction and fake-agent browser runs do not prove cloud acceptance. A separately authorized non-production Worker/D1/DO and two Linux nodes are still required for multi-node PTYs, actual hibernation/eviction, resource measurements and public-network latency. Physical-phone keyboard/IME/panning refinement remains deferred/unverified, not a passed test.
+
+Rollback disables the site, revokes nodes and explicitly reinstalls the Agent with `-terminal=0` (omitting options preserves old local consent). End sessions but keep additive tables, binding/migration history and immutable tags; monitoring continues. Release order: backend disabled, update the consenting opt-in test Agent, then explicit site/node authorization and local enablement. Production deployment and pushing main require human approval.
 
 ## Configuration
 

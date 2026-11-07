@@ -3,6 +3,28 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { harness, until, controls, openPair } from './terminal-harness.js';
 
+test('browser receives dimensioned start before ready exactly once across duplicate admission and reconstruction', async () => {
+  const h = await harness();
+  try {
+    const pair = await openPair(h, await h.control());
+    await until(() => controls(pair.agent).some(frame => frame.type === 'start'));
+    await h.fetch('/test/rebuild');
+    assert.equal((await h.socket(pair.session.browserPath, {Origin:'https://example.com', Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`})).response.status, 409);
+    assert.equal((await h.socket(`/api/agent/terminal/session/${pair.session.sessionId}`, {...h.agentHeaders(), 'X-CFSM-Terminal-Ticket':pair.open.ticket})).response.status, 409);
+    pair.agent.ws.send('{"type":"ready"}');
+    await until(() => controls(pair.browser).some(frame => frame.type === 'ready'));
+    assert.deepEqual(controls(pair.browser).filter(frame => ['start','ready'].includes(frame.type)), [
+      {type:'start', cols:80, rows:24}, {type:'ready'}
+    ]);
+    assert.equal(controls(pair.agent).filter(frame => frame.type === 'start').length, 1);
+    await h.fetch('/test/rebuild');
+    pair.agent.ws.send(new Uint8Array([65]));
+    await until(() => pair.browser.messages.some(value => typeof value !== 'string'));
+    assert.equal(controls(pair.browser).filter(frame => frame.type === 'start').length, 1);
+    assert.equal(controls(pair.agent).filter(frame => frame.type === 'start').length, 1);
+  } finally { await h.dispose(); }
+});
+
 test('two same-node sessions start only after pairing and ready, then route bytes independently', async () => {
   const h = await harness();
   try {
@@ -105,9 +127,10 @@ test('agent waits for browser and admission audit; wrong ticket/role and input b
     await until(() => controls(agent).some(f => f.type === 'pong'));
     assert.equal(controls(agent).filter(f => f.type === 'start').length, 0);
     await h.fetch('/test/fail-audit');
-    await h.socket(session.browserPath, {Origin:'https://example.com', Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`});
+    const browser = await h.socket(session.browserPath, {Origin:'https://example.com', Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`});
     await until(() => agent.ws.readyState !== 1);
     assert.equal(controls(agent).filter(f => f.type === 'start').length, 0);
+    assert.equal(controls(browser).filter(f => f.type === 'start').length, 0);
   } finally { await h.dispose(); }
 });
 
@@ -166,6 +189,7 @@ test('ready racing a slow admission audit cannot grant input or start, and does 
     await h.fetch('/test/release-audit');
     const browser = await browserPromise;
     assert.equal(controls(agent).filter(f => f.type === 'start').length, 0);
+    assert.equal(controls(browser).filter(f => f.type === 'start').length, 0);
     assert.equal(controls(browser).filter(f => f.type === 'ready').length, 0);
   } finally { await h.fetch('/test/release-audit'); await h.dispose(); }
 });
@@ -365,6 +389,7 @@ test('pairing/start/ready persistence failures close only the affected session w
       assert.equal(agent.response.status,101);
       await until(()=>browser.ws.readyState!==1&&agent.ws.readyState!==1);
       assert.equal(controls(agent).filter(f=>f.type==='start').length,0);
+      assert.equal(controls(browser).filter(f=>f.type==='start').length,0);
       assert.equal((await (await h.fetch('/test/snapshot')).json()).meta.sessions.length,0);
     }
     const pair=await openPair(h,control,'ready-write-fail');

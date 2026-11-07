@@ -1117,6 +1117,8 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 
 > 所有管理操作都通过这一个端点 + `action` 字段路由。
 
+> 终端操作是下述通用 Bearer 规则的例外：必须使用有效管理员 `cfsm_auth` Cookie 和与请求 HTTPS origin 完全相同的 `Origin`，拒绝 `Authorization` header、查询 token 和 reporting secret；详见 3.15。
+
 **Request**
 
 - Method：`POST`
@@ -1765,6 +1767,42 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 全部记录均跳过且未写入设置时仍返回 `200`，`message` 为 `noServersImported`；只导入了设置时 `message` 为 `settingsImported`。
 
 ***
+
+### 3.15 可选终端 API（内置同源后台）
+
+默认关闭；终端与监控 `/api/ws`、`/update` 的认证/传输独立。必须重新登录获得含随机 `jti` 的管理员 JWT，由独立 `jwt_secret` 签名，未过期且未撤销。不能使用 reporting `API_SECRET` 的签名 fallback。以下 JSON 操作都发往 `POST /admin/api`，使用 `Content-Type: application/json`、管理员 Cookie 和 exact HTTPS Origin；不接受 Bearer 替代。`serverId`、`sessionId`、`clientRequestId` 是 1..128 个字母/数字/下划线/连字符。
+
+| action | 额外字段 | 成功结果/语义 |
+| --- | --- | --- |
+| `terminal_enable_site` | 管理员凭据 step-up（沿用 login 字段） | `{enabled:true}`；自定义 `theme_url` 存在则 409 |
+| `terminal_authorize_node` | `serverId`、管理员凭据 step-up | `{token,version}`，64 lowercase hex 一次性独立 token；再次调用轮换版本并关闭旧会话，安全更新本地文件 |
+| `terminal_revoke_node` | `serverId` | `{enabled:false,brokerClosed:true}`；先撤销 D1，通知失败报 503 不代表凭据仍有效 |
+| `terminal_status` | `serverId` | `{enabled,connected,supported,protocol,platform,activeCount}`，无 token；connected 不等于 Linux capability supported |
+| `terminal_open` | `serverId,clientRequestId,cols,rows` | 包含 `sessionId,browserPath`；同 owner/同 requestId/同尺寸幂等，不匹配重试 409；每节点四槽，第五个 409 |
+| `terminal_renew` | `serverId,sessionId` | 只允许原 owner 续租，重新读取当前 D1 权限，失败 fail-closed |
+| `terminal_close` | `serverId,sessionId` | owner 关闭，幂等；不影响其他会话 |
+
+站点关闭走既有 `save_settings` 的 `terminal_enabled:false`；普通设置或 import 不能启用，必须显式 step-up。`logout` 撤销有效 Cookie/JWT 的 `jti`；旧 JWT 缺少 `jti` 必须重新登录。节点旋转、撤销、删除、站点关闭和自定义主题激活/导入都会撤销相关终端权限。租约 60 秒，UI 每 45 秒续约；alarm 调度可能延后物理关闭，不承诺严格第 60 秒断开。
+
+**WebSocket endpoints（GET + Upgrade）**
+
+- Browser：使用 `terminal_open` 返回的 `browserPath`（`/admin/api/terminal/{serverId}/{sessionId}/ws`），同源管理员 Cookie + exact Origin，绑定原 owner；不使用 JWT query、Bearer、`createLiveSocket` 或报告重连。
+- Agent control：`/api/agent/terminal/control`，`Authorization: Bearer <independent-node-token>`、`X-CFSM-Server-Id`。Agent `hello` 需 `protocol:1,platform:"linux",capabilities:["terminal.pty.v1"]` 且本地能力预检成功。
+- Agent session：`/api/agent/terminal/session/{sessionId}`，相同 node headers，加 `X-CFSM-Terminal-Ticket`。ticket 仅限原节点/角色/当前控制 generation，30 秒有效且只能消费一次，永不放 URL 或持久化 plaintext。
+
+控制 `open` 不立即启动 PTY：Browser/Agent 配对和 admission 审计成功后 broker 发 `start`，Agent 才创建 PTY，`ready` 后允许数据。控制替换/Agent restart 会关闭旧会话和 tickets，不 detached 恢复或重放输入。所有这些路径拒绝 query credentials；自定义前端不能获得终端权限。内置后台同源/Origin 是门禁的一部分，不是“来自内置 markup”本身的可信证明。
+
+**协议和资源边界**
+
+Data 是二进制（含看起来像 JSON 的输入），每帧 <=16 KiB；文本 control <=4 KiB UTF-8，拒绝未知字段/角色/type。Browser 发 `resize {cols,rows}` 和 `ack {bytes}`；Agent 发 `ready`、`ack`、`exit {code}`、`error {code}`，broker 转发并发 `start`。尺寸为 1..500 整数；ACK 是对端实际消耗的累计 bytes，不是任意 credit grant，不能倒退或超过已转发值。
+
+每会话每向 256 KiB credit，四会话每端最多 2 MiB outstanding 应用数据（非总 heap）。Agent 与 Browser 生产者有界且 ACK 批处理；慢 S1 不应阻塞 S2。配对/启动、无 ACK 进展 30 秒截止，Agent 实际 write 8 秒、启动 write 5 秒；30 分钟无用户活动关闭，输出/ACK/心跳不延长用户空闲。控制自动响应精确 `{"type":"ping"}` / `{"type":"pong"}`，使用 inbound hibernatable sockets，无永久 broker timer/interval、control-only idle D1 polling 或 per-frame D1 写；DO `send` 表示 enqueue，不保证物理写已完成。
+
+常见错误为 400 尺寸/字段/query 非法、401 登录/step-up/node token 无效、403 Origin/权限/禁用、404 node/session 不存在、409 四槽/票据/generation/自定义 frontend 冲突、426 缺 Upgrade、503 authority/storage/broker 不可用。不得按所有 503 都重试输入；只能显式新开会话。
+
+D1 只存 token hash、管理员授权和七天 lifecycle audit，不存终端 bytes/命令。export/import/backup 不传 terminal credential/authority，不激活 restored terminal。只追加 `terminal_nodes`、`terminal_auth_sessions`、`terminal_audit` 与 `terminal-v1` SQLite DO migration，保留原 `v1` / `MetricsBroadcaster`；本地与部署生成配置均含 `TERMINAL_BROKER`。回滚关闭站点、撤销节点和 Agent 本地 `-terminal=0`，保留 additive tables/immutable migration 历史，监控继续。
+
+V1 Linux 是可选 fail-closed capability，不提高现有监控平台要求；root Agent 授予 root Shell，需明确同意。仅 Worker-served 内置同源后台：分离 Vite 默认 `changeOrigin` 改 Host 保留 Origin 会严格拒绝 POST/WS，请 build 后使用本地 Worker，不放松 Origin。真实非生产 Cloudflare/multi-node PTY/hibernation/eviction/billing 门禁仍需独立环境授权；本地模拟不是云证据，物理手机 IME/键盘/panning 细化仍 deferred/unverified。发布顺序：后端默认关闭、更新知情同意的 opt-in 测试 Agent、最后显式站点/节点与本地启用；不得未授权部署生产。
 
 ## 4. 系统维护端点
 
