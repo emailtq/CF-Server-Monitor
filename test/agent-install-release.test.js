@@ -68,6 +68,12 @@ test('registry lookup rejects path injection before fetch and fails closed on in
   assert.equal(calls,0);
   assert.equal((await checkAgentImage('latest',async url=>Response.json(url.includes('/token?') ? {token:'synthetic'} : {schemaVersion:2}))).available,false);
 });
+test('Docker never falls back to browser registry fetch without an authenticated verifier', async () => {
+  let calls=0;
+  const result=await checkAgentInstallRelease('docker','latest',undefined,async()=>{calls++;throw new Error();});
+  assert.equal(result.available,false);
+  assert.equal(calls,0);
+});
 
 test('image lookup passes the actual authenticated admin boundary and returns availability only', async () => {
   const secret='synthetic-image-admin-secret-at-least-32-bytes';

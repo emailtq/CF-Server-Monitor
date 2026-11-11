@@ -22,6 +22,16 @@ test('admin stylesheet cannot target public UI without an admin boundary', () =>
     for (const selector of rule.selectors) assert.match(selector, /\.admin-ui(?:\b|[\s.:[>])|\.admin-ui-surface\b/, selector);
   });
 });
+test('download stylesheet stays isolated from public UI and other accepted dialogs', () => {
+  const css = postcss.parse(fs.readFileSync('src/frontend/styles/admin-download.css', 'utf8'));
+  css.walkRules(rule => {
+    for (const selector of rule.selectors) {
+      assert.match(selector, /\.admin-ui\b/);
+      assert.match(selector, /download/);
+      assert.doesNotMatch(selector, /admin-dialog-(?:add|edit)|body\.light/);
+    }
+  });
+});
 test('all existing admin dialog consumers compile after container migration', () => {
   for (const name of ['EditServerModal', 'BatchEditServersModal', 'DeleteServerModal', 'CopyCommandModal', 'AutoDiscoveryCommandModal', 'TerminalAccessModal']) {
     const { descriptor, errors } = parse(fs.readFileSync(`${base}${name}.vue`, 'utf8'));
