@@ -2,7 +2,7 @@ import { getAllServers, getLatestMetricsCache, setLatestMetricsCache, getMetrics
 import { saveSiteOptions, debug, normalizeLongHistoryPoints, DEFAULT_LONG_HISTORY_POINTS } from '../utils/settings.js';
 import { attachDiskMetricsObject, flattenDiskMetrics, isDisabledProbeMetric, normalizeProbeMetricRow } from '../utils/metrics.js';
 import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHistoryIdRange } from './indexOptimization.js';
-import { addHistoryColumns } from './updateDatabase.js';
+import { addHistoryColumns, addServerColumns } from './updateDatabase.js';
 import { ensureTerminalSchema } from './terminal.js';
 import {
   buildSparseHistoryQuery,
@@ -118,6 +118,8 @@ export async function initDatabase(db) {
       await ensureServerOptimization(db);
     }
 
+    const serverColumns = await addServerColumns(db);
+    if (!serverColumns.success) throw new Error(serverColumns.error);
     // 确保 metrics_history 表存在（主键 id 已编码分区与时间，无需二级索引）
     await db.prepare(createHistoryTableSql('metrics_history')).run();
     await ensureTerminalSchema(db);

@@ -11,8 +11,8 @@ export async function harness() {
     import worker from './src/index.js';
     import { TerminalBroker } from './src/durable/TerminalBroker.js';
     import * as terminalDatabase from './src/database/terminal.js';
-    export { MetricsBroadcaster } from './src/index.js';
-    const counts = {d1:0, authReads:0, authWrites:0, timeouts:0, intervals:0, terminalQueries:[], errors:[]};
+    import { MetricsBroadcaster } from './src/index.js';
+    const counts = {d1:0, metadataWrites:0, authReads:0, authWrites:0, timeouts:0, intervals:0, terminalQueries:[], errors:[]};
     const nativeError = console.error;
     console.error = (...args) => {counts.errors.push(args.map(value=>value instanceof Error ? value.message : String(value))); nativeError(...args);};
     const nativeTimeout = globalThis.setTimeout, nativeInterval = globalThis.setInterval;
@@ -25,6 +25,7 @@ export async function harness() {
         if (key === 'bind') return (...args) => statement(target.bind(...args), sql);
         if (['run','first','all','raw'].includes(key)) return (...args) => {
           counts.d1++;
+          if (sql.trim().startsWith('UPDATE servers') && sql.includes('SET terminal_local_enabled')) counts.metadataWrites++;
           if (/terminal_(audit|auth_sessions|nodes)/.test(sql)) counts.terminalQueries.push(sql.trim());
           if (sql.includes('terminal_auth_sessions')) {
             if (sql.trim().startsWith('SELECT')) counts.authReads++; else counts.authWrites++;
@@ -37,6 +38,29 @@ export async function harness() {
         if (key === 'prepare') return sql => statement(target.prepare(sql), sql);
         return typeof target[key] === 'function' ? target[key].bind(target) : target[key];
       }});
+    }
+    export class TestMetricsBroadcaster extends MetricsBroadcaster {
+      constructor(state, env) {
+        super(state, {...env, DB:countedDb(env.DB)});
+        const ns=this.env.TERMINAL_BROKER;
+        this.env.TERMINAL_BROKER={idFromName:id=>ns.idFromName(id),get:id=>({fetch:async request=>{
+          if (new URL(request.url).pathname==='/local-disable') {
+            const node=JSON.parse(request.headers.get('X-CFSM-Terminal-Context')).serverId;
+            if (this.failNode===node && this.failNotifications>0) {this.failNotifications--; return new Response('unavailable',{status:503});}
+            if (this.pauseNode===node) {this.notificationPending=true; await new Promise(resolve=>{this.releaseNotification=resolve;});}
+          }
+          return ns.get(id).fetch(request);
+        }})};
+      }
+      async fetch(request) {
+        if (new URL(request.url).pathname === '/test/report-stats') return Response.json({...counts,queues:this.terminalObservationQueues.size,observations:this.terminalObservations.size,notificationPending:!!this.notificationPending});
+        if (new URL(request.url).pathname === '/test/report-fail') {const q=new URL(request.url).searchParams;this.failNode=q.get('node');this.failNotifications=Number(q.get('count'));return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-pause') {this.pauseNode=new URL(request.url).searchParams.get('node');return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-release') {this.pauseNode=null;this.notificationPending=false;this.releaseNotification?.();return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-clock') {clockOffset += Number(new URL(request.url).searchParams.get('advance')); return Response.json({now:Date.now()});}
+        if (new URL(request.url).pathname === '/test/report-rebuild') {this.terminalObservations?.clear(); return new Response('OK');}
+        return super.fetch(request);
+      }
     }
     export class TestBroker {
       constructor(state, env) {
@@ -83,6 +107,12 @@ export async function harness() {
             stats.d1++;
             if (self.failAudit && sql.includes('INSERT INTO terminal_audit')) throw new Error('test audit outage');
             const statement = target.prepare(sql);
+            if (sql.includes('SELECT terminal_local_enabled') && self.pauseLocalObservation) return {bind(...values) {
+              const bound=statement.bind(...values);return {async first() {
+                const result=await bound.first();self.localObservationPending=true;
+                await new Promise(resolve=>{self.releaseLocalObservation=resolve;});return result;
+              }};
+            }};
             if (sql.includes('FROM settings JOIN servers') && self.delayAuthorityOnceMs) return {bind(...values) {
               const bound=statement.bind(...values); return {async first() {
                 const result=await bound.first();
@@ -111,6 +141,9 @@ export async function harness() {
       async fetch(request) {
         const path = new URL(request.url).pathname;
         if (path === '/test/stats') return Response.json(this.stats);
+        if (path === '/test/pause-local-observation') {this.pauseLocalObservation=true;return new Response('OK');}
+        if (path === '/test/local-observation-pending') return Response.json({pending:!!this.localObservationPending});
+        if (path === '/test/release-local-observation') {this.pauseLocalObservation=false;this.localObservationPending=false;this.releaseLocalObservation?.();return new Response('OK');}
         if (path === '/test/pause-alarm') {this.pauseAlarmOnce=true; return new Response('OK');}
         if (path === '/test/alarm-pending') return Response.json({pending:!!this.alarmPending});
         if (path === '/test/release-alarm') {this.alarmPending=false; this.releaseAlarm?.(); return new Response('OK');}
@@ -143,6 +176,8 @@ export async function harness() {
     export default {async fetch(request, env, ctx) {
       const url = new URL(request.url);
       if (url.pathname === '/test/worker-stats') return Response.json(counts);
+      if (url.pathname === '/test/report-stats') return env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global')).fetch(request);
+      if (['/test/report-clock','/test/report-rebuild','/test/report-fail','/test/report-pause','/test/report-release'].includes(url.pathname)) return env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global')).fetch(request);
       if (url.pathname === '/test/cleanup') return terminalDatabase.cleanupTerminalRecords(countedDb(env.DB), Number(url.searchParams.get('now'))).then(() => new Response('OK'));
       if (url.pathname === '/test/cron') {await worker.scheduled({cron:url.searchParams.get('cron')}, {...env,DB:countedDb(env.DB)}, ctx); return new Response('OK');}
       if (url.pathname.startsWith('/test/')) {
@@ -152,7 +187,7 @@ export async function harness() {
     }};
   `;
   const output = await build({ stdin: { contents: source, resolveDir: process.cwd(), sourcefile: 'terminal-test.js' }, bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*'] });
-  const mf = new Miniflare({ modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'MetricsBroadcaster', useSQLite: true} }, bindings: {API_SECRET: 'test-report-secret'} });
+  const mf = new Miniflare({ modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: {API_SECRET: 'test-report-secret'} });
   const db = await mf.getD1Database('DB');
   const { initDatabase } = await import('../src/database/schema.js?fixture=' + crypto.randomUUID());
   await initDatabase(db);

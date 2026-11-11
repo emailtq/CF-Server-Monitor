@@ -57,6 +57,9 @@ function normalizePublicIpFields(item, ensureFields = true) {
 
 function withoutPrivateServerFields(server) {
   const item = { ...server };
+  delete item.terminal_local_enabled;
+  delete item.terminal_local_observed_at;
+  delete item.terminal_local_report_at;
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;

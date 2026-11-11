@@ -1,4 +1,63 @@
 import { generateRandomSecret } from '../utils/settings.js';
+import { patchServerDetailCache } from '../utils/cache.js';
+
+const LOCAL_OBSERVATION_HEARTBEAT_MS = 60000;
+export const terminalObservationMaxAge = server => Math.max(180000, (Number(server.report_interval) || 60) * 3000 + LOCAL_OBSERVATION_HEARTBEAT_MS);
+export const validTerminalObservation = data => !Object.hasOwn(data, 'terminal_enabled') || typeof data.terminal_enabled === 'boolean';
+
+async function withdrawLocalTerminal(env, server) {
+  if (!env.TERMINAL_BROKER || server.terminalLocalDisablePending === false) return;
+  server.terminalLocalDisablePending = true;
+  let timer;
+  try {
+    const result = await Promise.race([
+      env.TERMINAL_BROKER.get(env.TERMINAL_BROKER.idFromName(server.id)).fetch(new Request('https://terminal.internal/local-disable', {
+        headers:{'X-CFSM-Terminal-Context':JSON.stringify({serverId:server.id,
+          observedAt:server.terminal_local_observed_at, reportAt:server.terminalLocalPersistedReportAt ?? server.terminal_local_report_at})}
+      })),
+      new Promise((_, reject) => {timer = setTimeout(() => reject(new Error('terminal_local_disable_unavailable')), 5000);})
+    ]);
+    if (!result.ok) throw new Error('terminal_local_disable_unavailable');
+    server.terminalLocalDisablePending = (await result.json()).closed !== true;
+  } finally {clearTimeout(timer);}
+}
+
+export async function saveTerminalObservation(env, server, data, sampleTimestamp, receivedAt = Date.now()) {
+  if (!Object.hasOwn(data, 'terminal_enabled')) return;
+  if (server.terminalLocalPersistedReportAt === undefined) server.terminalLocalPersistedReportAt = server.terminal_local_report_at;
+  const reportAt = data.time?.accurate_ts ?? data.time?.local_ts ?? sampleTimestamp;
+  // Ignore stale/future envelopes; buffered metrics do not date a current cfg snapshot.
+  if (!Number.isSafeInteger(reportAt) || reportAt <= 0 || reportAt > receivedAt + 60000 || receivedAt - reportAt > terminalObservationMaxAge(server)) return;
+  const enabled = data.terminal_enabled ? 1 : 0;
+  const fresh = receivedAt - (server.terminal_local_observed_at || 0) <= terminalObservationMaxAge(server);
+  if (reportAt <= (server.terminal_local_report_at || 0) && fresh) {
+    if (enabled === 0 && server.terminal_local_enabled === 0) await withdrawLocalTerminal(env, server);
+    return;
+  }
+  if (server.terminal_local_enabled === enabled && receivedAt - (server.terminal_local_observed_at || 0) < LOCAL_OBSERVATION_HEARTBEAT_MS) {
+    server.terminal_local_report_at = reportAt;
+    patchServerDetailCache(server.id, {terminal_local_report_at:reportAt});
+    if (enabled === 0) await withdrawLocalTerminal(env, server);
+    return;
+  }
+  const observation = await env.DB.prepare(`UPDATE servers
+    SET terminal_local_enabled = ?, terminal_local_observed_at = ?, terminal_local_report_at = ?
+    WHERE id = ? AND (terminal_local_report_at IS NULL OR terminal_local_report_at < ? OR terminal_local_observed_at < ?)
+    RETURNING terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at`)
+    .bind(enabled, receivedAt, reportAt, server.id, reportAt, receivedAt - terminalObservationMaxAge(server)).first();
+  if (!observation) {
+    const current = await env.DB.prepare('SELECT terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at FROM servers WHERE id = ?').bind(server.id).first();
+    if (current) { Object.assign(server, current); server.terminalLocalPersistedReportAt = current.terminal_local_report_at; patchServerDetailCache(server.id, current); }
+    if (enabled === 0 && current?.terminal_local_enabled === 0) await withdrawLocalTerminal(env, server);
+    return;
+  }
+  Object.assign(server, observation);
+  server.terminalLocalPersistedReportAt = observation.terminal_local_report_at;
+  patchServerDetailCache(server.id, observation);
+  server.terminalLocalDisablePending = enabled === 0;
+  // Commit denial before notification; a failed close is retried on the same false.
+  if (enabled === 0) await withdrawLocalTerminal(env, server);
+}
 
 export async function ensureTerminalSchema(db) {
   await db.batch([
@@ -52,11 +111,11 @@ export async function terminalAuthorizationKey(settings) {
 
 // Recheck outside the broker metadata queue; dashboard caches are never authority.
 export async function verifyTerminalAuthority(db, context, now = Date.now()) {
-  const row = await db.prepare(`SELECT settings.value, n.enabled, n.credential_version, a.expires_at, a.revoked_at
+  const row = await db.prepare(`SELECT settings.value, s.terminal_local_enabled, n.enabled, n.credential_version, a.expires_at, a.revoked_at
     FROM settings JOIN servers s ON s.id = ? JOIN terminal_nodes n ON n.server_id = s.id
     LEFT JOIN terminal_auth_sessions a ON a.jti = ? WHERE settings.key = 'site_options'`)
     .bind(context.serverId, context.owner || '').first();
-  if (!row || row.enabled !== 1 || row.credential_version !== context.credentialVersion) return false;
+  if (!row || row.enabled !== 1 || row.terminal_local_enabled === 0 || row.credential_version !== context.credentialVersion) return false;
   const settings = JSON.parse(row.value);
   if (!settings || ![true, 'true'].includes(settings.terminal_enabled)) return false;
   if (context.owner && (row.revoked_at !== null || row.expires_at !== context.ownerExpiry ||

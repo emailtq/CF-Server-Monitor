@@ -16,12 +16,12 @@ test('actual export/import omits terminal credentials and cannot activate a rest
     const text = JSON.stringify(backup);
     for (const value of [h.nodes['node-a'].token, h.nodes['node-b'].token, h.token, h.otherToken]) assert.ok(!text.includes(value));
     for (const field of ['terminal_enabled', 'terminal_nodes', 'terminal_auth_sessions', 'terminal_audit', 'token_hash']) assert.ok(!text.includes(field));
-    const restored = {...backup.servers[0], id:crypto.randomUUID(), terminal_token:h.nodes['node-a'].token, terminal_enabled:true};
+    const restored = {...backup.servers[0], id:crypto.randomUUID(), terminal_token:h.nodes['node-a'].token, terminal_enabled:true, terminal_local_enabled:1, terminal_local_observed_at:Date.now(), terminal_local_report_at:Date.now()};
     const response = await h.action('import_servers', {servers:[restored], settings:{site:{...backup.settings.site, terminal_enabled:'true', terminal_token:h.nodes['node-a'].token}}});
     assert.equal(response.status, 200);
     assert.equal((await response.json()).imported, 1);
     assert.equal(await h.db.prepare('SELECT * FROM terminal_nodes WHERE server_id = ?').bind(restored.id).first(), null);
-    assert.deepEqual(await (await h.action('terminal_status', {serverId:restored.id})).json(), {enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0,state:'pending'});
+    assert.deepEqual(await (await h.action('terminal_status', {serverId:restored.id})).json(), {enabled:false,credentialEnabled:false,localEnabled:null,localObservedAt:null,localReportAt:null,localObservationFresh:null,connected:false,supported:false,protocol:null,platform:null,activeCount:0,state:'pending'});
     await saveSiteOptions(h.db, {terminal_enabled:'false'});
     assert.equal((await h.action('import_servers', {settings:{site:{terminal_enabled:'true'}}})).status, 200);
     assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'false');
@@ -281,7 +281,7 @@ test('ordinary node terminal status validates authority but creates no cold brok
     const request=new Request('https://example.com/admin/api',{headers:{Origin:'https://example.com',Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`}});
     const response=await handleTerminalAdminAction({request,env,sys:await loadSiteSettings(h.db,true),data:{action:'terminal_status',serverId:'ordinary-node'}});
     assert.equal(response.status,200);
-    assert.deepEqual(await response.json(),{enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0,state:'pending'});
+    assert.deepEqual(await response.json(),{enabled:false,credentialEnabled:false,localEnabled:null,localObservedAt:null,localReportAt:null,localObservationFresh:null,connected:false,supported:false,protocol:null,platform:null,activeCount:0,state:'pending'});
     assert.equal(calls,0);
   } finally {await h.dispose();}
 });

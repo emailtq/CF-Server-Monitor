@@ -13,6 +13,7 @@
 // - Agent 上报连接使用标准 WebSocket API，避免高频指标消息计为 hibernation wakeup。
 
 import { saveMetricsHistory } from '../database/schema.js';
+import { validTerminalObservation, saveTerminalObservation, terminalObservationMaxAge } from '../database/terminal.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
@@ -288,6 +289,9 @@ export class MetricsBroadcaster {
     this.resourceAlertCacheActiveUntil = 0;
     this.agentServerDetails = new Map();
     this.agentHistoryWrites = new Map();
+    // shortcut: same-value watermarks are in-memory; persist each report if crash-exact ordering is required.
+    this.terminalObservations = new Map();
+    this.terminalObservationQueues = new Map();
     this.standardAgentWebSocketCount = 0;
     this.standardAgentWebSockets = new Set();
     this.lastAgentRealtimeHintAt = 0;
@@ -599,6 +603,8 @@ export class MetricsBroadcaster {
     if (message.type === 'update' && message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload)) {
       const payload = { ...message.payload };
       const inheritedFields = [
+        'terminal_enabled',
+        'time',
         'config_md5',
         'configMd5',
         'agent_config_md5',
@@ -1349,6 +1355,16 @@ export class MetricsBroadcaster {
 
     if (msg?.type === 'pong') return;
 
+    const data = this._normalizeAgentReportData(msg);
+    if (!data) {
+      this._closeWsWithError(ws, 'Invalid report payload', 400);
+      return;
+    }
+    if (!validTerminalObservation(data) || !validTerminalObservation(msg)) {
+      this._closeWsWithError(ws, 'Invalid terminal_enabled', 400);
+      return;
+    }
+
     const scheduleCheckAfter = Number(attachment.wssScheduleCheckAfter);
     if (Number.isFinite(scheduleCheckAfter) && Date.now() >= scheduleCheckAfter) {
       const settings = await loadSiteSettings(this.env.DB);
@@ -1367,12 +1383,11 @@ export class MetricsBroadcaster {
       ws.serializeAttachment(attachment);
     }
 
-    const data = this._normalizeAgentReportData(msg);
-    if (!data) {
-      this._closeWsWithError(ws, 'Invalid report payload', 400);
+    const samples = normalizeMetricSamples(data);
+    if (!this._isCorrectionAck(data) && samples.length === 0) {
+      this._closeWsWithError(ws, 'Missing metrics', 400);
       return;
     }
-
     const context = await this._resolveAgentContext(ws, attachment, data);
     if (!context) return;
 
@@ -1390,13 +1405,8 @@ export class MetricsBroadcaster {
       return;
     }
 
-    const samples = normalizeMetricSamples(data);
-    if (samples.length === 0) {
-      this._closeWsWithError(ws, 'Missing metrics', 400);
-      return;
-    }
-
     const latestSample = samples[samples.length - 1];
+    if (Object.hasOwn(data, 'terminal_enabled')) await this._observeTerminalReport(context.serverId, data, latestSample.ts);
     const latestMetrics = getReportMetrics(data, latestSample);
     const historyAggregate = collectHistoryMetricAggregates(samples);
     const broadcastSamples = toBroadcastSamples(
@@ -1511,10 +1521,58 @@ export class MetricsBroadcaster {
     });
   }
 
+  async _observeTerminalReport(serverId, data, sampleTimestamp) {
+    let queue = this.terminalObservationQueues.get(serverId);
+    if ((!queue && this.terminalObservationQueues.size >= LATEST_REPORT_CACHE_MAX_SERVERS) || queue?.pending >= 8) throw new Error('terminal_observation_busy');
+    if (!queue) {
+      queue = {tail:Promise.resolve(), pending:0};
+      this.terminalObservationQueues.set(serverId, queue);
+    }
+    queue.pending++;
+    const receivedAt = Date.now();
+    const job = queue.tail.catch(() => {}).then(async () => {
+      for (const [id, entry] of this.terminalObservations) {
+        if (receivedAt - entry.usedAt > terminalObservationMaxAge(entry.server)) this.terminalObservations.delete(id);
+      }
+      let entry = this.terminalObservations.get(serverId);
+      if (!entry || receivedAt - entry.loadedAt >= 60000) {
+        const server = await this.env.DB.prepare('SELECT * FROM servers WHERE id = ?').bind(serverId).first();
+        if (!server) throw new Error('terminal_observation_node_missing');
+        server.terminalLocalPersistedReportAt = server.terminal_local_report_at;
+        // Refresh config without discarding this DO's unflushed same-value watermark.
+        if (entry && entry.server.terminal_local_enabled === server.terminal_local_enabled &&
+            (entry.server.terminal_local_observed_at || 0) >= (server.terminal_local_observed_at || 0)) {
+          for (const field of ['terminal_local_report_at','terminal_local_observed_at','terminalLocalDisablePending','terminalLocalPersistedReportAt']) server[field] = entry.server[field];
+        }
+        entry = {server, loadedAt:receivedAt, usedAt:receivedAt};
+      }
+      entry.usedAt = receivedAt;
+      this.terminalObservations.delete(serverId);
+      this.terminalObservations.set(serverId, entry);
+      while (this.terminalObservations.size > LATEST_REPORT_CACHE_MAX_SERVERS) this.terminalObservations.delete(this.terminalObservations.keys().next().value);
+      await saveTerminalObservation(this.env, entry.server, data, sampleTimestamp, receivedAt);
+      const {terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at} = entry.server;
+      return {terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at};
+    });
+    queue.tail = job;
+    try {return await job;} finally {
+      if (--queue.pending === 0) this.terminalObservationQueues.delete(serverId);
+    }
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+
+    if (method === 'POST' && path === '/terminal-observation' && url.origin === 'https://metrics.internal') {
+      try {
+        const data = await request.json();
+        if (!this._isValidServerId(data.id) || typeof data.terminal_enabled !== 'boolean') return new Response('Invalid observation', {status:400});
+        const observation = await this._observeTerminalReport(data.id, {terminal_enabled:data.terminal_enabled, time:{local_ts:data.report_at}}, data.report_at);
+        return Response.json(observation);
+      } catch (_) {return new Response('Observation unavailable', {status:503});}
+    }
 
     if (method === 'GET' && (path === '/update' || path.endsWith('/update'))) {
       return this._handleAgentReportWebSocket(request, url);

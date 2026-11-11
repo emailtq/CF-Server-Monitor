@@ -88,6 +88,8 @@ export function clearServerDetailCache() {
 export function patchServerDetailCache(id, fields) {
   const entry = serverDetailCache.get(id);
   if (entry && entry.data) Object.assign(entry.data, fields);
+  const server = serversListCache?.data?.find(server => server.id === id);
+  if (server) Object.assign(server, fields);
 }
 
 export async function getServerDetail(db, id, includeHidden = false) {

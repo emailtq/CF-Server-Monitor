@@ -1347,7 +1347,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         const notificationConfig = data.includeNotificationSecrets ? await loadNotificationConfig(env.DB, siteSettings) : null;
         return createSuccessResponse({
           success: true,
-          servers: servers.results || [],
+          servers: (servers.results || []).map(({terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at, ...server}) => server),
           settings: { ...pickExportableSettings(siteSettings, appearanceSettings), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
           ...(notificationConfig ? { notificationBackup: { sensitive: true, warning: 'notification_backup_contains_credentials' } } : {}),
           message: 'serversExported'

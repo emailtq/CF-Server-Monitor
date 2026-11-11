@@ -192,7 +192,7 @@ export class TerminalBroker {
     let context;
     try { context = JSON.parse(request.headers.get('X-CFSM-Terminal-Context')); } catch (_) {}
     const operation = new URL(request.url).pathname.slice(1);
-    if (!isId(context?.serverId) || !['status','invalidate','disable','control','attach','open','renew','close'].includes(operation)) return denied('terminal_internal_denied', 403);
+    if (!isId(context?.serverId) || !['status','invalidate','disable','local-disable','control','attach','open','renew','close'].includes(operation)) return denied('terminal_internal_denied', 403);
     if (this.meta.serverId && context.serverId !== this.meta.serverId) return denied('terminal_node_mismatch', 403);
     if (!this.meta.serverId) await this.mutate((effects, meta) => { meta.serverId = context.serverId; });
     if (operation === 'status') {
@@ -213,6 +213,13 @@ export class TerminalBroker {
       return Response.json({closed:true});
     }
     if (operation === 'disable') return this.disable(context);
+    if (operation === 'local-disable') {
+      const generation = this.meta.generation;
+      const node = await this.env.DB.prepare('SELECT terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at FROM servers WHERE id = ?').bind(context.serverId).first();
+      if (node?.terminal_local_enabled !== 0 || node.terminal_local_observed_at !== context.observedAt || node.terminal_local_report_at !== context.reportAt) return Response.json({closed:false});
+      const closed = await this.replaceControl(null, 0, generation);
+      return Response.json({closed:closed !== null});
+    }
     if (!Number.isSafeInteger(context.credentialVersion) || context.credentialVersion < 1) return denied('terminal_version_denied', 403);
     if (operation !== 'close') {
       const validUntil = context.leaseUntil ?? context.validUntil;
@@ -384,8 +391,9 @@ export class TerminalBroker {
     if (closed) this.state.waitUntil(this.audit(closed, 'close', reason).catch(() => {}));
   }
 
-  async replaceControl(version, minimumVersion = 0) {
+  async replaceControl(version, minimumVersion = 0, expectedGeneration = null) {
     const replacement = await this.mutate((effects, meta) => {
+      if (expectedGeneration !== null && meta.generation !== expectedGeneration) return null;
       if (version !== null && version < meta.credentialVersion) return null;
       meta.generation++;
       if (version !== null) meta.credentialVersion = version;

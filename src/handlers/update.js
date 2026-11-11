@@ -1,4 +1,5 @@
 import { saveMetricsHistory } from '../database/schema.js';
+import { validTerminalObservation } from '../database/terminal.js';
 import { getServerDetail, clearServerDetailCache, patchServerDetailCache } from '../utils/cache.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
 import {
@@ -7,7 +8,7 @@ import {
   mergeMetricsIntoServer,
   coerceNumericMetricFields
 } from '../utils/metrics.js';
-import { createErrorResponse, createUnauthorizedResponse, createBadRequestResponse } from '../utils/errors.js';
+import { AppError, createErrorResponse, createUnauthorizedResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getResourceAlertConfig, getWssReportScheduleState, isWssReportConfigured, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
@@ -620,6 +621,7 @@ async function handleUpdateCore(request, env, ctx, discovery, authState = null) 
       return createUnauthorizedResponse('Invalid secret');
     }
     if (authState) authState.ok = true;
+    if (!validTerminalObservation(data)) return createBadRequestResponse('Invalid terminal_enabled');
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
     const agentVersion = normalizeAgentVersion(request.headers.get('X-Agent-Version'));
@@ -745,6 +747,22 @@ async function handleUpdateCore(request, env, ctx, discovery, authState = null) 
     const latestSample = samples[samples.length - 1];
     const latestMetrics = getReportMetrics(data, latestSample);
     const historyMetrics = getHistoryMetrics(data, samples, latestSample);
+    if (Object.hasOwn(data, 'terminal_enabled')) {
+      if (!env.METRICS_BROADCASTER) throw new AppError('terminal_observation_unavailable', 503);
+      const stub = env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global'));
+      // Only authenticated, validated metadata crosses this internal boundary.
+      try {
+        const result = await stub.fetch(new Request('https://metrics.internal/terminal-observation', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({id, terminal_enabled:data.terminal_enabled,
+            report_at:data.time?.accurate_ts ?? data.time?.local_ts ?? latestSample.ts})
+        }));
+        if (!result.ok) throw new Error('terminal_observation_unavailable');
+        const observation = await result.json();
+        Object.assign(serverDetail, observation);
+        patchServerDetailCache(id, observation);
+      } catch (_) {throw new AppError('terminal_observation_unavailable', 503);}
+    }
     await saveMetricsHistory(
       env.DB,
       id,

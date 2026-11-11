@@ -1,5 +1,5 @@
 import { getTerminalAdminPrincipal } from '../middleware/auth.js';
-import { issueTerminalNodeToken, readTerminalNodeToken, ensureTerminalNodeToken, verifyTerminalNodeToken, revokeTerminalNode, terminalAuthorizationKey } from '../database/terminal.js';
+import { issueTerminalNodeToken, readTerminalNodeToken, ensureTerminalNodeToken, verifyTerminalNodeToken, revokeTerminalNode, terminalAuthorizationKey, terminalObservationMaxAge } from '../database/terminal.js';
 import { saveSiteOptions } from '../utils/settings.js';
 import { validateTerminalSize, TERMINAL_LIMITS } from '../shared/terminalProtocol.js';
 
@@ -18,7 +18,7 @@ async function authority(env, sys) {
 }
 
 async function nodeAuthority(env, serverId) {
-  return env.DB.prepare(`SELECT n.enabled, n.credential_version FROM servers s
+  return env.DB.prepare(`SELECT s.terminal_local_enabled, s.terminal_local_observed_at, s.terminal_local_report_at, s.report_interval, n.enabled, n.credential_version FROM servers s
     LEFT JOIN terminal_nodes n ON n.server_id = s.id WHERE s.id = ?`).bind(serverId).first();
 }
 
@@ -46,7 +46,12 @@ function brokerRequest(env, operation, context, data = null) {
 }
 
 async function nodeStatus(env, settings, serverId, node) {
-  const empty = {enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0};
+  const localEnabled = node.terminal_local_enabled == null ? null : node.terminal_local_enabled === 1;
+  const localObservedAt = node.terminal_local_observed_at ?? null;
+  const empty = {enabled:false,credentialEnabled:node.enabled === 1,localEnabled,localObservedAt,
+    localReportAt:node.terminal_local_report_at ?? null,
+    localObservationFresh:localObservedAt === null ? null : Date.now() - localObservedAt <= terminalObservationMaxAge(node),
+    connected:false,supported:false,protocol:null,platform:null,activeCount:0};
   if (!settings.terminal_enabled) return {...empty, state:'terminal_disabled'};
   if (node.credential_version == null) return {...empty, state:'pending'};
   if (node.enabled !== 1) return {...empty, state:'revoked'};
@@ -55,7 +60,8 @@ async function nodeStatus(env, settings, serverId, node) {
     const result = await brokerRequest(env, 'status', {serverId, credentialVersion:node.credential_version});
     if (!result.ok) return {...empty, state:'query_failed', error:'terminal_query_failed'};
     const status = await result.json();
-    return {...status, enabled:true, state:status.connected && status.supported ? 'ready' : status.observed === 'unsupported' ? 'unsupported' : status.observed === 'supported' ? 'offline' : 'pending'};
+    const enabled = localEnabled !== false && (localEnabled === true || status.connected && status.supported);
+    return {...empty, ...status, enabled, state:localEnabled === false ? 'local_disabled' : status.connected && status.supported ? 'ready' : status.observed === 'unsupported' ? 'unsupported' : localEnabled === true || status.observed === 'supported' ? 'offline' : 'pending'};
   } catch (_) { return {...empty, state:'query_failed', error:'terminal_query_failed'}; }
 }
 
@@ -70,7 +76,7 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
     if (!owner) return response('terminal_login_required', 401);
     if (data.action === 'terminal_status' && data.serverIds !== undefined) {
       if (!Array.isArray(data.serverIds) || data.serverIds.length > 1000 || !data.serverIds.every(isId) || new Set(data.serverIds).size !== data.serverIds.length) return response('terminal_invalid_node', 400);
-      const rows = await env.DB.prepare(`SELECT s.id, n.enabled, n.credential_version FROM servers s LEFT JOIN terminal_nodes n ON n.server_id = s.id WHERE s.id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(data.serverIds)).all();
+      const rows = await env.DB.prepare(`SELECT s.id, s.terminal_local_enabled, s.terminal_local_observed_at, s.terminal_local_report_at, s.report_interval, n.enabled, n.credential_version FROM servers s LEFT JOIN terminal_nodes n ON n.server_id = s.id WHERE s.id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(data.serverIds)).all();
       const nodes = Object.create(null);
       const queue = rows.results;
       // Bounded metadata reads only: never create Agent/browser channels from the list.
@@ -123,7 +129,7 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
       return Response.json(status, {status:status.error ? 503 : 200});
     }
     if (!env.TERMINAL_BROKER) return response('terminal_broker_unavailable', 503);
-    const enabled = settings.terminal_enabled && node.enabled === 1;
+    const enabled = settings.terminal_enabled && node.enabled === 1 && node.terminal_local_enabled !== 0;
     if (!enabled) return response('terminal_disabled', 403);
     const context = {serverId:data.serverId, owner:owner.jti, ownerExpiry:owner.exp,
       authorizationKey:await terminalAuthorizationKey(settings), credentialVersion:node.credential_version,

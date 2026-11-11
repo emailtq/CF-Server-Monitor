@@ -91,6 +91,9 @@ export async function addServerColumns(db) {
       traffic_calc_type: "TEXT DEFAULT 'total'",
       traffic_alert_percent: "INTEGER DEFAULT NULL",
       traffic_alert_state: "TEXT",
+      terminal_local_enabled: "INTEGER DEFAULT NULL",
+      terminal_local_observed_at: "INTEGER DEFAULT NULL",
+      terminal_local_report_at: "INTEGER DEFAULT NULL",
       interface: "TEXT DEFAULT ''",
       history_partition_id: "INTEGER DEFAULT 0",
       timestamp: "INTEGER DEFAULT 0"
