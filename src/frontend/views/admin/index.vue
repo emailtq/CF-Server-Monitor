@@ -544,6 +544,7 @@ import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
 import { normalizeLanguagePreference, t, useTranslation } from '../../utils/i18n'
 import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
+import { AGENT_REPOSITORY, AGENT_INSTALL_REF, AGENT_RELEASE_URL } from '../../../shared/agentSource.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
 import { applyMikusThemeOptions } from '../../utils/themeOptions.js'
 import { DEFAULT_SITE_TITLE, FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY, STORAGE } from '../../utils/constants.js'
@@ -588,7 +589,6 @@ const route = useRoute()
 const router = useRouter()
 const appConfig = inject('appConfig', {})
 let startupConfigConsumed = false
-const AGENT_RELEASE_URL = 'https://api.github.com/repos/huilang-me/cfsm-agent/releases/latest'
 const AGENT_RELEASE_FAILURE_TTL = 30 * 1000
 
 let cachedAgentReleaseVersion = ''
@@ -1673,12 +1673,12 @@ const getUninstallCommand = () => {
   const proxy = isGo ? deleteGhProxy.value.trim() : ''
   if (isGo) {
     if (deleteTargetOs.value === 'windows') {
-      const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
+      const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.ps1`)
       const proxyParam = proxy ? ` --install-ghproxy=${quotePowerShellArg(proxy)}` : ''
       return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script uninstall${proxyParam}`
     }
     const sudoPrefix = deleteTargetOs.value === 'mac' ? 'sudo ' : ''
-    const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
+    const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.sh`)
     const proxyParam = proxy ? ` --install-ghproxy=${quotePosixShellArg(proxy)}` : ''
     const uninstallCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | ${sudoPrefix}sh -s -- uninstall${proxyParam}`
     if (deleteTargetOs.value === 'linux' && deleteInstallMode.value === 'cfsm-user') {
@@ -1839,12 +1839,12 @@ const getCustomInstallCommand = () => {
     if (!version || version === 'latest') params.push('-terminal=0')
     const ua = installUserAgent()
     if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
-    const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
+    const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.ps1`)
     return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
   }
   if (targetOs.value === 'docker') {
     const safeTag = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(version) ? version : 'latest'
-    const image = `ghcr.io/huilang-me/cfsm-agent:${safeTag}`
+    const image = `ghcr.io/${AGENT_REPOSITORY}:${safeTag}`
     const ua = installUserAgent()
     const uaEnv = (ua ? ` -e UA=${quotePosixShellArg(ua)}` : '') + ' -e TERMINAL_ENABLED=0'
     return [
@@ -1866,7 +1866,7 @@ const getCustomInstallCommand = () => {
   if (!version || version === 'latest') params.push(terminalOptions.enabled ? `-terminal=1 -terminal-token-file=${quotePosixShellArg(terminalOptions.tokenFile)}` : '-terminal=0')
   const ua = installUserAgent()
   if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
-  const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
+  const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.sh`)
   const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
   if (targetOs.value === 'mac' && version && version !== 'latest') return `test "$(uname -s)" = Darwin && ${installCommand}`
   if (!isDedicatedUserInstall) return installCommand
@@ -1898,7 +1898,7 @@ const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode =
     if (serverName) params.push(`-name=${quotePowerShellArg(serverName)}`)
     const ua = installUserAgent()
     if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
-    const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
+    const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.ps1`)
     return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
   }
 
@@ -1913,7 +1913,7 @@ const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode =
   if (serverName) params.push(`-name=${quotePosixShellArg(serverName)}`)
   const ua = installUserAgent()
   if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
-  const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
+  const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.sh`)
   const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
   if (os !== 'linux' || mode !== 'cfsm-user') return installCommand
 

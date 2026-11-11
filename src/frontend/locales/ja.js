@@ -567,7 +567,7 @@ export default {
   installVersionPlaceholder: 'デフォルトで最新版',
   ghProxy: 'サードパーティ GitHub プロキシ',
   ghProxyTip: 'サードパーティのプロキシはダウンロードしたインストールファイルを閲覧・改変できる可能性があり、セキュリティリスクを招く場合があります。',
-  installVersionTip: '最新版は https://github.com/huilang-me/cfsm-agent/releases から取得してください',
+  installVersionTip: '最新版は https://github.com/emailtq/cfsm-agent/releases から取得してください',
   dockerVersionTip: 'Docker イメージタグ。デフォルトは latest',
   ghProxyPlaceholder: '直接接続',
   pingNodes: 'Ping ノード',
