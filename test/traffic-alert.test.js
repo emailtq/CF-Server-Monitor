@@ -24,8 +24,9 @@ function makeSiteSettings(overrides = {}) {
   };
 }
 
-function makeEnv(siteSettings, { changes = 1 } = {}) {
+function makeEnv(siteSettings, { changes = 1 } = {}, server) {
   const writes = [];
+  let state = server.traffic_alert_state;
   const env = {
     DB: {
       prepare(sql) {
@@ -34,11 +35,14 @@ function makeEnv(siteSettings, { changes = 1 } = {}) {
           bind(...args) { this._args = args; return this; },
           async first() {
             if (sql.includes("key = 'site_options'")) return { value: JSON.stringify(siteSettings) };
+            if (sql.startsWith('SELECT traffic_alert_state')) return { traffic_alert_state: state };
             return null;
           },
           async all() { return { results: [] }; },
           async run() {
             writes.push({ sql, args: this._args || [] });
+            if (changes && sql.includes('SET traffic_alert_state = ?')) state = this._args[0];
+            if (changes && sql.includes('SET traffic_alert_state = NULL')) state = null;
             return { success: true, meta: { changes } };
           }
         };
@@ -70,7 +74,7 @@ globalThis.fetch = async () => {
 async function run(server, metrics, siteSettings, opts) {
   clearSiteSettingsCache();
   fetchCalls = 0;
-  const { env, writes } = makeEnv(siteSettings, opts);
+  const { env, writes } = makeEnv(siteSettings, opts, server);
   const patches = [];
   await evaluateTrafficAlert(env, server, metrics, {
     patchCache: (id, value) => patches.push({ id, value })
@@ -141,7 +145,7 @@ test('未达阈值：不发送、不写', async () => {
   assert.equal(writes.length, 0);
 });
 
-test('首次跨阈值：发一条通知并写入 {u,th,lim}', async () => {
+test('首次跨阈值：CAS 占用后发一条通知并持久化目标成功状态', async () => {
   const used = 820 * GB;
   const { writes, patches, fetchCalls: f } = await run(
     makeServer(),
@@ -149,14 +153,15 @@ test('首次跨阈值：发一条通知并写入 {u,th,lim}', async () => {
     makeSiteSettings({ traffic_alert_threshold: '80' })
   );
   assert.equal(f, 1, '应发送一次');
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   assert.match(writes[0].sql, /SET traffic_alert_state = \?/);
-  const stored = JSON.parse(writes[0].args[0]);
+  const stored = JSON.parse(writes[1].args[0]);
   assert.equal(stored.u, used);
   assert.equal(stored.th, 80);
   assert.equal(stored.lim, 1000);
-  assert.equal(patches.length, 1);
-  assert.equal(patches[0].value, writes[0].args[0]);
+  assert.deepEqual(stored.rules.traffic_default.success, ['legacy_webhook']);
+  assert.equal(patches.length, 2);
+  assert.equal(patches[1].value, writes[1].args[0]);
 });
 
 test('同账期已发（th/lim 一致且未回落）：抑制', async () => {
@@ -248,7 +253,7 @@ test('未配置通知渠道：不发也不写', async () => {
   assert.equal(writes.length, 0);
 });
 
-test('meta.changes=0（并发被抢先写）：发送后不刷新缓存', async () => {
+test('meta.changes=0（并发被抢先写）：不发送、不刷新缓存', async () => {
   const used = 820 * GB;
   const { patches, fetchCalls: f } = await run(
     makeServer(),
@@ -256,6 +261,6 @@ test('meta.changes=0（并发被抢先写）：发送后不刷新缓存', async 
     makeSiteSettings({ traffic_alert_threshold: '80' }),
     { changes: 0 }
   );
-  assert.equal(f, 1, '先通知仍会发出');
+  assert.equal(f, 0, 'CAS 失败不能开始发送');
   assert.equal(patches.length, 0, 'changes=0 不刷缓存');
 });

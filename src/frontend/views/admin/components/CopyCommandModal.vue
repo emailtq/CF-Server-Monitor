@@ -1,15 +1,10 @@
 <template>
-  <div id="copyModal" class="modal-overlay" :class="{ active: show }">
-    <div class="modal-dialog">
-      <div class="modal-header">
-        <div class="modal-title">{{ currentServerName }}</div>
-        <button class="modal-close" @click="$emit('close')">✕</button>
-      </div>
-
+  <AdminDialog :open="show" :title="currentServerName" size="edit" :busy="terminalBusy" @close="$emit('close')">
+    <template #body>
       <div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.targetOs }}</label>
-          <select :value="targetOs" class="form-select" @change="$emit('update:target-os', $event.target.value)">
+          <select :value="targetOs" class="form-select" :disabled="terminalBusy" @change="$emit('update:target-os', $event.target.value)">
             <option value="linux">Linux (systemd)</option>
             <option value="unix">OpenWrt/Alpine/Synology DSM/FreeBSD</option>
             <option value="mac">macOS</option>
@@ -28,6 +23,7 @@
             :value="installVersion"
             class="form-input"
             :placeholder="targetOs === 'docker' ? 'latest' : trans.installVersionPlaceholder"
+            :disabled="terminalBusy"
             @input="$emit('update:install-version', $event.target.value)"
           >
         </div>
@@ -39,7 +35,7 @@
             {{ trans.installMode }}
             <HelpTooltip :text="trans.nonRootInstallTip" />
           </label>
-          <select :value="installMode" class="form-select" @change="$emit('update:install-mode', $event.target.value)">
+          <select :value="installMode" class="form-select" :disabled="terminalBusy" @change="$emit('update:install-mode', $event.target.value)">
             <option value="current-user">{{ trans.installModeCurrentUser }}</option>
             <option value="cfsm-user">{{ trans.installModeCfsmUser }}</option>
           </select>
@@ -50,7 +46,7 @@
             {{ trans.ghProxy }}
             <HelpTooltip :text="trans.ghProxyTip" />
           </label>
-          <select v-model="selectedGhProxy" class="form-select">
+          <select v-model="selectedGhProxy" class="form-select" :disabled="terminalBusy">
             <option v-for="option in ghProxyOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             <option :value="CUSTOM_GH_PROXY_VALUE">{{ trans.custom || 'Custom' }}</option>
           </select>
@@ -60,6 +56,7 @@
             :value="installGhProxy"
             class="form-input mt-2"
             :placeholder="trans.ghProxyPlaceholder"
+            :disabled="terminalBusy"
             @input="$emit('update:install-gh-proxy', $event.target.value)"
           >
         </div>
@@ -132,35 +129,72 @@
       </div>
 
       <div class="form-group">
+        <label class="form-label" data-terminal-label><input v-model="terminalSelected" type="checkbox" data-terminal-install :disabled="!terminalSupported || terminalBusy"> {{ trans.terminalInstallEnable }}</label>
+        <p v-if="!terminalSupported" class="text-secondary">{{ terminalReason }}</p>
+        <p v-if="installBlocked" data-install-blocked role="alert" class="danger-box">{{ trans.terminalInstallOffUnverified }}</p>
+        <template v-if="terminalSelected">
+          <p class="danger-box">{{ trans.terminalRisk }}</p>
+          <p class="text-secondary">{{ trans.terminalInstallSiteConsent }}</p>
+          <p class="text-secondary">{{ trans.terminalRotationWarning }}</p>
+          <template v-if="!terminalToken">
+            <label class="form-label"><input v-model="terminalRisk" type="checkbox" data-terminal-risk :disabled="terminalBusy"> {{ trans.terminalAcceptRisk }}</label>
+            <button class="btn btn-primary" data-terminal-prepare :disabled="terminalBusy || !terminalRisk" @click="prepareTerminal">{{ trans.terminalInstallPrepare }}</button>
+          </template>
+          <template v-else>
+            <p>{{ trans.terminalTokenOnce }}</p>
+            <label for="terminal-install-token" class="form-label">{{ trans.terminalNodeToken }}</label>
+            <div class="form-row">
+              <input id="terminal-install-token" :value="terminalToken" :type="getInputType('token')" readonly class="form-input flex-1" autocomplete="off" spellcheck="false">
+              <button class="btn" :aria-pressed="visibility.token" @click="toggle('token')">{{ trans.terminalShowSecret }}</button>
+              <button class="btn" @click="copyTerminalToken">{{ terminalCopied ? trans.copied : trans.copy }}</button>
+            </div>
+            <p class="text-secondary">{{ trans.terminalInstallTwoSteps }}</p>
+            <p class="text-secondary">{{ installMode === 'cfsm-user' ? trans.terminalInstallDedicatedFile : trans.terminalTokenFile }}</p>
+            <p class="text-secondary">{{ trans.terminalInstallClipboard }}</p>
+            <label for="terminal-install-path" class="form-label">{{ trans.terminalInstallPath }}</label>
+            <input id="terminal-install-path" v-model="terminalPath" data-terminal-path class="form-input" autocomplete="off" spellcheck="false" placeholder="/absolute/owner-only/terminal-token" :aria-invalid="!validTerminalPath">
+            <p v-if="!validTerminalPath" class="text-secondary">{{ trans.terminalInstallPathInvalid }}</p>
+          </template>
+          <p v-if="terminalError" role="alert" class="danger-box">{{ trans[terminalError] || trans.terminalRequestFailed }}</p>
+        </template>
+      </div>
+
+      <div class="form-group">
         <div class="cmd-output-wrapper" :class="{ copied: copiedCmd }">
           <span class="cmd-prompt">{{ targetOs === 'windows' ? 'PS' : '$' }}</span>
           <pre class="cmd-output">{{ installCommand }}</pre>
         </div>
       </div>
-
-      <div class="modal-footer flex-justify-between">
-        <div class="flex items-center gap-2">
-          <button @click="$emit('copy-cmd')" class="btn btn-primary">{{ copiedCmd ? '✅ ' + trans.copied : '📋 ' + trans.copy }}</button> &nbsp; <button @click="$emit('open-edit-from-copy')" class="btn btn-blue">✏️ {{ trans.edit }}</button>
-        </div>
-        <button @click="$emit('close')" class="btn">{{ trans.cancel }}</button>
-      </div>
-    </div>
-  </div>
+    </template>
+    <template #footer>
+      <button @click="$emit('close')" class="btn" :disabled="terminalBusy">{{ trans.cancel }}</button>
+      <button @click="$emit('open-edit-from-copy')" class="btn" :disabled="terminalBusy">{{ trans.edit }}</button>
+      <button @click="$emit('copy-cmd')" data-copy-command class="btn btn-primary" :disabled="terminalBusy || !installCommand">{{ copiedCmd ? trans.copied : trans.copy }}</button>
+    </template>
+  </AdminDialog>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
-import HelpTooltip from '../../../components/HelpTooltip.vue'
+import AdminDialog from './AdminDialog.vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import HelpTooltip from './AdminHelp.vue'
+import { adminApi, getTerminalBase } from '../../../utils/api.js'
+import { copyTextToClipboard } from '../../../utils/clipboard.js'
+import { usePasswordVisibility } from '../../../composables/usePasswordVisibility.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
   settings: { type: Object, default: () => ({}) },
   show: { type: Boolean, default: false },
+  serverId: { type: String, default: '' },
+  apiIndex: { type: Number, default: 0 },
+  requestOwner: { type: Function, default: undefined },
   currentServerName: { type: String, default: '' },
   targetOs: { type: String, default: 'linux' },
   installMode: { type: String, default: 'current-user' },
   installGhProxy: { type: String, default: '' },
   installVersion: { type: String, default: '' },
+  installBlocked: { type: Boolean, default: false },
   collectInterval: { type: [Number, String], default: 0 },
   reportInterval: { type: [Number, String], default: 60 },
   wssReportInterval: { type: [Number, String], default: 2 },
@@ -187,8 +221,58 @@ const emit = defineEmits([
   'update:target-os',
   'update:install-mode',
   'update:install-gh-proxy',
-  'update:install-version'
+  'update:install-version',
+  'terminal-options'
 ])
+
+const terminalSelected = ref(false)
+const terminalRisk = ref(false)
+const terminalToken = ref('')
+const terminalPath = ref('')
+const terminalBusy = ref(false)
+const terminalError = ref('')
+const terminalCopied = ref(false)
+const { visibility, toggle, getInputType, reset } = usePasswordVisibility(['token'])
+let terminalEpoch = 0
+const terminalReason = computed(() => {
+  try { getTerminalBase(props.apiIndex) } catch (error) { return props.trans[error.message] || props.trans.terminalRequestFailed }
+  if (props.settings.theme_url) return props.trans.terminal_custom_frontend
+  if (props.targetOs !== 'linux') return props.trans.terminalInstallPlatformUnsupported
+  if (props.installVersion.trim() && props.installVersion.trim() !== 'latest') return props.trans.terminalInstallVersionUnverified
+  return ''
+})
+const terminalSupported = computed(() => !terminalReason.value)
+const validTerminalPath = computed(() => /^\/(?!\/)(?:[A-Za-z0-9_. -]+\/)*[A-Za-z0-9_. -]+$/.test(terminalPath.value) && !terminalPath.value.split('/').some(part => part === '.' || part === '..'))
+const clearTerminal = () => {
+  terminalEpoch++
+  terminalSelected.value = terminalRisk.value = terminalBusy.value = terminalCopied.value = false
+  terminalToken.value = terminalPath.value = terminalError.value = ''
+  reset()
+}
+watch([() => props.show, () => props.serverId, () => props.apiIndex, () => props.trans, () => props.targetOs, () => props.installMode, () => props.installVersion, () => props.installGhProxy, () => props.settings.theme_url, () => props.requestOwner], clearTerminal, {flush:'sync'})
+watch(terminalSelected, value => { if (!value) { terminalEpoch++; terminalToken.value = terminalPath.value = terminalError.value = ''; terminalRisk.value = terminalCopied.value = false; reset() } }, {flush:'sync'})
+watch([terminalSelected, terminalToken, terminalPath], () => emit('terminal-options', {selected:terminalSelected.value, enabled:terminalSelected.value && !!terminalToken.value && validTerminalPath.value, tokenFile:terminalPath.value}), {flush:'sync'})
+const prepareTerminal = async () => {
+  if (terminalBusy.value || terminalToken.value || !terminalSelected.value || !terminalRisk.value || !terminalSupported.value) return
+  const epoch = terminalEpoch, owner = props.requestOwner
+  const current = () => epoch === terminalEpoch && props.show && (!owner || owner())
+  terminalBusy.value = true
+  terminalError.value = ''
+  try {
+    const result = await adminApi({action:'terminal_prepare_install',serverId:props.serverId,terminal:true,acceptRisk:true}, props.apiIndex, current)
+    if (!current()) return
+    if (result.error) { terminalError.value = result.error; return }
+    if (!/^[a-f0-9]{64}$/.test(result.data?.token || '')) { terminalError.value = 'terminal_request_failed'; return }
+    terminalToken.value = result.data.token
+  } catch (_) { if (current()) terminalError.value = 'terminal_request_failed' }
+  finally { if (current()) { terminalBusy.value = false; reset() } }
+}
+const copyTerminalToken = async () => {
+  const epoch = terminalEpoch
+  const copied = await copyTextToClipboard(terminalToken.value)
+  if (epoch === terminalEpoch) terminalCopied.value = copied
+}
+onBeforeUnmount(clearTerminal)
 
 const CUSTOM_GH_PROXY_VALUE = '__custom__'
 const ghProxyOptions = [

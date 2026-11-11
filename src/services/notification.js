@@ -5,7 +5,6 @@ import {
   getExpireReminderDays,
   getResourceAlertConfig,
   getResourceAlertRuleThresholds,
-  getTgNotifyMinutes,
   loadSiteSettings,
   normalizeExpireNotificationTime,
   normalizeBooleanSetting,
@@ -34,6 +33,22 @@ import {
   RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT
 } from '../utils/config.js';
 import { getNotificationMessages } from './notificationMessages.js';
+import { identifyNotificationProvider, migrateLegacyNotifications } from '../shared/notificationConfig.js';
+import { loadNotificationConfig, notificationChannelSettings } from '../database/notifications.js';
+import { dispatchNotificationEvents, notificationDeliveryKey } from './notificationRouting.js';
+import { notificationRuleSignature as ruleSignature, createNotificationRuleIdentity, matchesNotificationRuleIdentity } from './notificationState.js';
+
+function inRuleScope(rule, serverId) {
+  return rule.scope.mode === 'all' || rule.scope.serverIds.includes(String(serverId));
+}
+
+function notificationSettings(config) {
+  return { notification_timezone: config.timezone, notification_language: config.language };
+}
+
+async function dispatch(config, events, send) {
+  return dispatchNotificationEvents(config, events, { send: send || ((channel, msg, context) => sendNotification(notificationChannelSettings(channel, config), msg, context)) });
+}
 
 const RESOURCE_ALERT_STATE_ACTIVE = 'active';
 const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
@@ -261,6 +276,10 @@ function getResourceAlertRuleStateKey(rule, serverId) {
 
 function getResourceAlertRuleServerIds(rule, servers) {
   const allServerIds = servers.map(server => String(server.id)).filter(Boolean);
+  if (rule.scope) {
+    const selected = new Set(rule.scope.serverIds);
+    return rule.scope.mode === 'all' ? allServerIds : allServerIds.filter(id => selected.has(id));
+  }
   if (!Array.isArray(rule.servers) || rule.servers.length === 0) {
     return allServerIds;
   }
@@ -643,19 +662,10 @@ async function sendCustomWebhookNotification(settings, context) {
 // 格式: smtp://<user>:<password>@<host>:<port>?from=<from>&to=<to1,to2>&secure=<auto|tls|starttls>
 export function isSmtpNotificationTarget(token) {
   // 与前端保持一致：协议头大小写不敏感（SMTP:// 同样识别）
-  return String(token || '').trim().toLowerCase().indexOf('smtp:') === 0;
+  return identifyNotificationProvider(token) === 'smtp';
 }
 
-function hasNotificationTarget(settings) {
-  if (normalizeBooleanSetting(settings?.notification_webhook_enabled) === 'true') {
-    return String(settings?.notification_webhook_url || '').trim().length > 0;
-  }
-  // 内置渠道（含 SMTP）只要 tg_bot_token 非空即视为已配置目标
-  return String(settings?.tg_bot_token || '').trim().length > 0;
-}
-
-// ===== 月流量阈值告警（上报路径触发，账期重置=数值回落，状态={u,th,lim}）=====
-const TRAFFIC_ALERT_STATE_KEY = 'traffic_alert_state';
+// Report-triggered traffic state keeps the original rollover marker and per-rule audiences.
 const TRAFFIC_ALERT_RESET_FACTOR = 0.5;
 
 function parseTrafficAlertState(raw) {
@@ -673,72 +683,87 @@ function parseTrafficAlertState(raw) {
 export async function evaluateTrafficAlert(env, server, metrics, hooks = {}) {
   try {
     if (!env?.DB || !server || !metrics) return;
-
     const limit = normalizeTrafficLimitGb(server.traffic_limit);
-    if (limit <= 0) return; // 未设限额：不监控
-
+    if (limit <= 0) return;
     const settings = await loadSiteSettings(env.DB);
-    const globalPct = normalizePct(settings?.traffic_alert_threshold);
-    // 逐台阈值三态：null/未设置 → 跟随全局；数字（含 0）→ 覆盖，0 = 显式关闭该服务器告警
-    const pctServer = normalizePctOrNull(server.traffic_alert_percent);
-    const effectivePct = pctServer === null ? globalPct : pctServer;
-    if (effectivePct <= 0) return;                 // 阈值关闭 / 该服务器显式关闭
-    if (!hasNotificationTarget(settings)) return;  // 未配置通知渠道：不发也不写
-
-    const used = Math.round(getTrafficUsageBytes(
-      metrics.net_rx_monthly,
-      metrics.net_tx_monthly,
-      server.traffic_calc_type
-    ));
-    const limitBytes = limit * GB;
-    const percent = (used / limitBytes) * 100;
-
-    const oldStr = server[TRAFFIC_ALERT_STATE_KEY] == null ? '' : String(server[TRAFFIC_ALERT_STATE_KEY]);
-    const state = parseTrafficAlertState(server[TRAFFIC_ALERT_STATE_KEY]);
-
-    if (state) {
-      // ① 回落=新账期/重装/大校正 → 持久清零（不可只在内存即时重算）
-      if (used < state.u * TRAFFIC_ALERT_RESET_FACTOR) {
-        const { meta } = await env.DB.prepare(
-          `UPDATE servers SET traffic_alert_state = NULL WHERE id = ? AND COALESCE(traffic_alert_state,'') = ?`
-        ).bind(server.id, oldStr).run();
-        if (meta && meta.changes > 0) hooks.patchCache?.(server.id, null);
-        return;
-      }
-      // ② 规则签名一致且未回落 → 同账期已发，抑制
-      if (state.th === effectivePct && state.lim === limit) return;
-      // ③ th/lim 变 → 重新可发，继续
+    const config = await loadNotificationConfig(env.DB, settings);
+    const rules = config.rules.filter(r => r.type === 'traffic' && r.enabled && inRuleScope(r, server.id));
+    if (!rules.length) return;
+    const identities = new Map(await Promise.all(rules.map(async r => [r.id, await createNotificationRuleIdentity(r)])));
+    const override = normalizePctOrNull(server.traffic_alert_percent);
+    if (override === 0) return;
+    const used = Math.round(getTrafficUsageBytes(metrics.net_rx_monthly, metrics.net_tx_monthly, server.traffic_calc_type));
+    const row = await env.DB.prepare('SELECT traffic_alert_state FROM servers WHERE id = ?').bind(server.id).first();
+    if (!row) return;
+    const oldStr = row.traffic_alert_state == null ? '' : String(row.traffic_alert_state);
+    let raw = null;
+    try { raw = oldStr ? JSON.parse(oldStr) : null; } catch (_) {}
+    const legacy = parseTrafficAlertState(oldStr);
+    const state = raw?.schema === 2 && raw.rules && typeof raw.rules === 'object' && !Array.isArray(raw.rules)
+      ? raw : { schema: 2, rules: {} };
+    if (state.claim && state.claim.until > Date.now()) return;
+    if (legacy && used < legacy.u * TRAFFIC_ALERT_RESET_FACTOR) {
+      const result = await env.DB.prepare("UPDATE servers SET traffic_alert_state = NULL WHERE id = ? AND COALESCE(traffic_alert_state,'') = ?").bind(server.id, oldStr).run();
+      if (getD1Changes(result)) hooks.patchCache?.(server.id, null);
+      return;
     }
-
-    if (percent < effectivePct) return; // 未达阈值
-
-    // 先发后写
-    const serverName = server.name || server.id;
-    const messages = getNotificationMessages(settings);
-    const usage = messages.trafficUsed({
-      usedGb: (used / GB).toFixed(1),
-      limitGb: limit,
-      percent: percent.toFixed(1),
-      threshold: effectivePct
-    });
-    const msg = `${serverName}  ${usage}`;
-    const err = await sendNotification(settings, msg, {
-      event: messages.events.trafficAlert,
-      emoji: '📈',
-      clients: [serverName],
-      count: 1,
-      message: msg
-    });
-    if (err) return; // 失败：不写，下次上报重试
-
-    const newStr = JSON.stringify({ u: used, th: effectivePct, lim: limit });
-    const { meta } = await env.DB.prepare(
-      `UPDATE servers SET traffic_alert_state = ? WHERE id = ? AND COALESCE(traffic_alert_state,'') = ?`
-    ).bind(newStr, server.id, oldStr).run();
-    if (meta && meta.changes > 0) hooks.patchCache?.(server.id, newStr);
-  } catch (e) {
-    console.error('[traffic-alert] evaluate failed:', e);
-  }
+    const before = JSON.stringify(state);
+    delete state.claim;
+    const ruleIds = new Set(config.rules.filter(r => r.type === 'traffic').map(r => r.id));
+    for (const id of Object.keys(state.rules)) if (!ruleIds.has(id)) delete state.rules[id];
+    const events = [];
+    const activeTargets = new Set(config.channels.filter(c => c.enabled).map(c => c.id));
+    const messages = getNotificationMessages(notificationSettings(config));
+    let promotedLegacyDefault = false;
+    for (const rule of rules) {
+      const threshold = override === null ? rule.options.threshold : override;
+      if (threshold <= 0) continue;
+      const percent = used / (limit * GB) * 100;
+      const identity = identities.get(rule.id);
+      const signature = identity.signature;
+      let entry = state.rules[rule.id];
+      const baseline = entry?.baseline;
+      if (baseline && percent < threshold) { delete state.rules[rule.id]; continue; }
+      if (!entry && raw?.schema !== 2 && rule.id === 'traffic_default' && legacy?.th === threshold && legacy?.lim === limit) {
+        const targets = rule.targetIds.filter(id => activeTargets.has(id));
+        entry = { u: legacy.u, th: threshold, lim: limit, signature, targets, success: [...targets] };
+        state.rules[rule.id] = entry;
+        state.u = Math.max(legacy.u, Number(state.u) || 0);
+        promotedLegacyDefault = true;
+      }
+      if (percent < threshold) continue;
+      if (baseline || !entry || entry.th !== threshold || entry.lim !== limit || !matchesNotificationRuleIdentity(entry.signature, identity)) {
+        entry = { u: used, th: threshold, lim: limit, signature, targets: baseline ? [] : rule.targetIds.filter(id => activeTargets.has(id)), success: [] };
+        state.rules[rule.id] = entry;
+      }
+      entry.signature = signature;
+      // Targets are the event's original audience, not today's expanded audience.
+      const targetIds = entry.targets.filter(id => rule.targetIds.includes(id) && activeTargets.has(id) && !entry.success.includes(id));
+      state.u = Math.max(entry.u, Number(state.u) || 0); state.th = threshold; state.lim = limit;
+      if (!targetIds.length) continue;
+      const name = server.name || server.id;
+      const msg = name + '  ' + messages.trafficUsed({ usedGb: (used / GB).toFixed(1), limitGb: limit, percent: (used / (limit * GB) * 100).toFixed(1), threshold });
+      events.push({ ruleId: rule.id, serverId: server.id, eventKey: 'trafficAlert', targetIds, msg,
+        context: { event: messages.events.trafficAlert, emoji: '📈', clients: [name] } });
+    }
+    if (!events.length && (JSON.stringify(state) === before || (promotedLegacyDefault && Object.keys(state.rules).length === 1))) return;
+    if (events.length) state.claim = { id: crypto.randomUUID(), until: Date.now() + 5 * 60000 };
+    const claimed = JSON.stringify(state);
+    const update = value => env.DB.prepare("UPDATE servers SET traffic_alert_state = ? WHERE id = ? AND COALESCE(traffic_alert_state,'') = ?").bind(value, server.id, oldStr).run();
+    const claim = await update(claimed);
+    if (!getD1Changes(claim)) return;
+    hooks.patchCache?.(server.id, claimed);
+    if (!events.length) return;
+    const results = await dispatch(config, events, hooks.send);
+    for (const event of events) {
+      const entry = state.rules[event.ruleId];
+      for (const id of event.targetIds) if (results.some(r => r.deliveryKey === notificationDeliveryKey(id, server.id, event.eventKey) && r.success) && !entry.success.includes(id)) entry.success.push(id);
+    }
+    delete state.claim;
+    const value = JSON.stringify(state);
+    const result = await env.DB.prepare("UPDATE servers SET traffic_alert_state = ? WHERE id = ? AND COALESCE(traffic_alert_state,'') = ?").bind(value, server.id, claimed).run();
+    if (getD1Changes(result)) hooks.patchCache?.(server.id, value);
+  } catch (_) { console.error('[Notification] traffic evaluation failed'); }
 }
 
 const SMTP_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -852,6 +877,19 @@ async function sendSmtpNotification(settings, context, formattedMsg) {
   }
 }
 
+export function validateNotificationTransport(settings) {
+  if (normalizeBooleanSetting(settings?.notification_webhook_enabled) === 'true') {
+    const context = buildNotificationContext(settings, 'test');
+    context.notification = 'test';
+    const method = normalizeNotificationWebhookMethod(settings.notification_webhook_method);
+    buildWebhookUrl(settings, context, method);
+    new Headers(parseWebhookHeaders(settings.notification_webhook_headers, context));
+    if (method !== 'GET') buildWebhookBody(settings, context, normalizeNotificationWebhookFormat(settings.notification_webhook_format));
+  } else if (isSmtpNotificationTarget(settings?.tg_bot_token)) {
+    parseSmtpNotificationConfig(settings.tg_bot_token);
+  }
+}
+
 export async function sendNotification(settings, msg, notificationContext = {}) {
   const context = buildNotificationContext(settings || {}, msg, notificationContext);
   const formattedMsg = formatNotificationMessage(settings || {}, msg, context);
@@ -869,11 +907,12 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
   }
 
   if(!settings.tg_bot_token) return;
-  if (isSmtpNotificationTarget(settings.tg_bot_token)) {
+  const provider = identifyNotificationProvider(settings.tg_bot_token);
+  if (provider === 'smtp') {
     // SMTP 邮件通知（前缀协议: smtp://...），置于内置渠道分发链最前
     return await sendSmtpNotification(settings, context, formattedMsg);
   }
-  if(settings.tg_bot_token.indexOf("onebot:") == 0) {
+  if(provider === 'onebot') {
     // OneBot 协议 (QQ 等)，私聊格式: onebot:http://127.0.0.1:3000/send_private_msg?access_token=xxx
     // 群聊格式: onebot:http://127.0.0.1:3000/send_group_msg?access_token=xxx
     let onebotUrl = settings.tg_bot_token.replace("onebot:", "");
@@ -903,7 +942,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
     } catch (e) {
       return "OneBot 通知发送失败: " + e.message;
     }
-  }else if(settings.tg_bot_token.includes("open.feishu.cn")) {
+  }else if(provider === 'feishu') {
     // 飞书机器人 Webhook
     try {
       await fetchWithRetry(settings.tg_bot_token, {
@@ -921,7 +960,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
     } catch (e) {
       return "飞书通知发送失败: " + e.message;
     }
-  }else if(settings.tg_bot_token.includes("oapi.dingtalk.com") || settings.tg_bot_token.includes("api.dingtalk.com")) {
+  }else if(provider === 'dingtalk') {
     // 钉钉机器人 Webhook
     try {
       await fetchWithRetry(settings.tg_bot_token, {
@@ -935,7 +974,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
     } catch (e) {
       return "钉钉通知发送失败: " + e.message;
     }
-  }else if(settings.tg_bot_token.includes("https://api.day.app/") || settings.tg_bot_token.indexOf("bark:") == 0) {
+  }else if(provider === 'bark') {
     let barkUrl = settings.tg_bot_token;
     if(barkUrl.indexOf("bark:") == 0) {
       barkUrl = barkUrl.replace("bark:", "");
@@ -953,7 +992,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
     } catch (e) {
       return "Bark通知发送失败: " + e.message;
     }
-  }else if(settings.tg_bot_token.includes("https://qyapi.weixin.qq.com")){
+  }else if(provider === 'wecom'){
     try {
       await fetchWithRetry(settings.tg_bot_token, {
         method: 'POST',
@@ -969,7 +1008,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
       return "企业微信通知发送失败: " + e.message;
     }
   // Server 酱（使用 sendkey）
-  }else if(settings.tg_bot_token.includes("https://sctapi.ftqq.com/") || settings.tg_bot_token.indexOf("server:") == 0) {
+  }else if(provider === 'serverchan') {
     let serverUrl = settings.tg_bot_token;
     if(serverUrl.indexOf("server:") == 0) {
       serverUrl = serverUrl.replace("server:", "");
@@ -986,7 +1025,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
     } catch (e) {
       return "Server酱通知发送失败: " + e.message;
     }
-  }else if(settings.tg_bot_token.includes("https://wxpusher.zjiecode.com/api/send/message/SPT_")) {
+  }else if(provider === 'wxpusher') {
     const match = settings.tg_bot_token.match(/\/message\/([^/]+)/);
     const spt = match ? match[1] : null;
     if (!spt) return "WxPusher 通知失败: 无法提取 SPT";
@@ -1004,7 +1043,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
     } catch (e) {
       return "WxPusher通知发送失败: " + e.message;
     }
-  }else if(settings.tg_bot_token.includes("/message?token=")) {
+  }else if(provider === 'gotify') {
     try {
       await fetchWithRetry(settings.tg_bot_token, {
         method: 'POST',
@@ -1041,96 +1080,52 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
 }
 
 export async function checkOfflineNodes(db, options = {}) {
-  const siteSettings = options.siteSettings ?? await loadSiteSettings(db);
-  const tgNotifyMinutes = getTgNotifyMinutes(siteSettings.tg_notify);
-
-  if (tgNotifyMinutes === 0 || !hasNotificationTarget(siteSettings)) return;
-
   try {
-    const servers = (await getAllServers(db)).filter(server => server.offline_notify_disabled !== '1');
-    if (servers.length === 0) return;
-
-    const latestTimestampsMap = await getLatestTimestampsForAllServers(db, { servers });
-    if (!latestTimestampsMap) {
-      // 获取失败时跳过本次检测，避免把所有服务器误判为离线
-      debug('[Cron] 获取最新上报时间戳失败，跳过本次离线检测');
-      return;
-    }
-
-    let alertState = {};
-    const stateRes = await db.prepare(
-      "SELECT value FROM settings WHERE key = 'alert_state'"
-    ).first();
-    
-    if (stateRes) {
-      try {
-        alertState = JSON.parse(stateRes.value);
-      } catch (e) {
-        alertState = {};
+    const config = options.notificationConfig ?? await loadNotificationConfig(db, options.siteSettings);
+    const rules = config.rules.filter(r => r.type === 'offline' && r.enabled);
+    if (!rules.length) return;
+    const servers = (await getAllServers(db)).filter(s => s.offline_notify_disabled !== '1' && rules.some(r => inRuleScope(r, s.id)));
+    if (!servers.length) return;
+    const latest = await getLatestTimestampsForAllServers(db, { servers });
+    if (!latest) return;
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'alert_state'").first();
+    let stored = {};
+    try { stored = row ? JSON.parse(row.value) : {}; } catch (_) {}
+    const state = stored.schema === 2 ? stored : { schema: 2, legacy: stored, rules: {} };
+    const before = JSON.stringify(state);
+    const configuredIds = new Set(config.rules.filter(r => r.type === 'offline').map(r => r.id));
+    for (const id of Object.keys(state.rules)) if (!configuredIds.has(id)) delete state.rules[id];
+    const settings = notificationSettings(config);
+    const messages = getNotificationMessages(settings);
+    const events = [];
+    for (const rule of rules) {
+      const signature = ruleSignature(rule);
+      let entry = state.rules[rule.id];
+      if (!entry || entry.signature !== signature) {
+        entry = { signature, ...(entry?.baseline ? { baseline: true } : {}), servers: !entry && rule.id === 'offline_default' ? { ...state.legacy } : {} };
       }
-    }
-
-    const now = Date.now();
-    const offlineThreshold = tgNotifyMinutes * 60 * 1000;
-    const offlineNodes = [];
-    const recoveredNodes = [];
-
-    for (const s of servers) {
-      const hasLatestReport = latestTimestampsMap.has(s.id);
-      const lastReportTime = latestTimestampsMap.get(s.id);
-
-      let isOffline = true;
-      if (hasLatestReport) {
-        isOffline = now - lastReportTime > offlineThreshold;
+      for (const server of servers) {
+        if (!inRuleScope(rule, server.id)) continue;
+        const last = latest.get(server.id);
+        const offline = !latest.has(server.id) || Date.now() - last > rule.options.minutes * 60000;
+        const wasOffline = Boolean(entry.servers[server.id]);
+        if (offline === wasOffline) continue;
+        if (offline) entry.servers[server.id] = true;
+        else delete entry.servers[server.id];
+        if (entry.baseline) continue;
+        const msg = offline ? server.name + '  ' + messages.lastReport(formatLastReportTime(last, settings)) : server.name;
+        events.push({ ruleId: rule.id, serverId: server.id, eventKey: offline ? 'offline' : 'recovered', msg,
+          context: { event: offline ? messages.events.offline : messages.events.recovered, emoji: offline ? '❌' : '✅', clients: [server.name] } });
       }
-
-      if (isOffline && !alertState[s.id]) {
-        offlineNodes.push({
-          name: s.name,
-          lastReportTime
-        });
-        alertState[s.id] = true;
-      } else if (!isOffline && alertState[s.id]) {
-        recoveredNodes.push(s);
-        delete alertState[s.id];
-      }
+      // Preserve disabled/deleted-node legacy entries without resetting the whole site's state.
+      state.rules[rule.id] = entry;
+      delete entry.baseline;
     }
-
-    if (offlineNodes.length > 0 || recoveredNodes.length > 0) {
-      await db.prepare(
-        'INSERT INTO settings (key, value) VALUES ("alert_state", ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-      ).bind(JSON.stringify(alertState)).run();
+    if (events.length || (stored.schema === 2 && JSON.stringify(state) !== before)) {
+      await db.prepare('INSERT INTO settings (key, value) VALUES ("alert_state", ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(JSON.stringify(state)).run();
     }
-
-    const messages = getNotificationMessages(siteSettings);
-    if (offlineNodes.length > 0) {
-      const nodeList = offlineNodes
-        .map(n => `${n.name}  ${messages.lastReport(formatLastReportTime(n.lastReportTime, siteSettings))}`)
-        .join('\n');
-      const msg = nodeList;
-      await sendNotification(siteSettings, msg, {
-        event: messages.events.offline,
-        emoji: '❌',
-        clients: offlineNodes.map(n => n.name),
-        count: offlineNodes.length,
-        message: nodeList
-      });
-    }
-
-    if (recoveredNodes.length > 0) {
-      const nodeList = recoveredNodes.map(n => n.name).join('\n');
-      const msg = nodeList;
-      await sendNotification(siteSettings, msg, {
-        event: messages.events.recovered,
-        emoji: '✅',
-        clients: recoveredNodes.map(n => n.name),
-        count: recoveredNodes.length,
-        message: nodeList
-      });
-    }
-  } catch (e) {
-    console.error('离线检测失败:', e);
-  }
+    await dispatch(config, events, options.send);
+  } catch (_) { console.error('[Notification] offline evaluation failed'); }
 }
 
 export async function checkResourceAlerts(env, options = {}) {
@@ -1141,25 +1136,17 @@ export async function checkResourceAlerts(env, options = {}) {
   // 每 2 分钟强制刷新一次设置，其余分钟复用缓存（TTL 120s），降低每分钟的 CPU 开销
   const forceRefresh = minute % 2 === 0;
   const siteSettings = options.siteSettings ?? await loadSiteSettings(db, { forceRefresh });
-  if (!hasNotificationTarget(siteSettings)) return;
-
-  const resourceConfig = getResourceAlertConfig(siteSettings);
-
-  if (!resourceConfig.enabled || !resourceConfig.hasRules) {
-    if (!resourceAlertStateKnownEmpty) {
-      await clearResourceAlertState(db);
-    }
-    return;
-  }
 
   try {
+    const config = options.notificationConfig ?? await loadNotificationConfig(db, siteSettings);
+    const rules = await Promise.all(config.rules.filter(r => r.type === 'resource' && r.enabled).map(async r => ({ ...r, ...r.options, servers: r.scope.serverIds, identity: await createNotificationRuleIdentity(r) })));
+    if (!rules.length) return;
+    const settings = notificationSettings(config);
     const allServers = await getAllServers(db);
-    if (allServers.length === 0) {
-      await clearResourceAlertState(db);
-      return;
-    }
+    if (!allServers.length) return;
 
     const serverMap = new Map(allServers.map(server => [String(server.id), server]));
+    const scopedIds = new Map(config.rules.filter(r => r.type === 'resource').map(r => [r.id, getResourceAlertRuleServerIds(r, allServers)]));
     const id = env.METRICS_BROADCASTER.idFromName('global');
     const stub = env.METRICS_BROADCASTER.get(id);
     const activeMap = new Map();
@@ -1169,9 +1156,8 @@ export async function checkResourceAlerts(env, options = {}) {
     const evaluatedRuleServers = [];
 
     const configSignature = JSON.stringify({
-      rules: resourceConfig.rules.map(rule => ({
+      rules: rules.map(rule => ({
         id: rule.id,
-        name: rule.name,
         metric: rule.metric,
         threshold: rule.threshold,
         servers: rule.servers,
@@ -1180,8 +1166,8 @@ export async function checkResourceAlerts(env, options = {}) {
       }))
     });
 
-    for (const rule of resourceConfig.rules) {
-      const serverIds = getResourceAlertRuleServerIds(rule, allServers);
+    for (const rule of rules) {
+      const serverIds = scopedIds.get(rule.id);
       if (serverIds.length === 0) continue;
 
       const ruleServers = [];
@@ -1200,10 +1186,7 @@ export async function checkResourceAlerts(env, options = {}) {
       configuredRules.push({ rule, serverIds, ruleServers });
     }
 
-    if (configuredRuleServers.length === 0) {
-      await clearResourceAlertState(db);
-      return;
-    }
+    if (!configuredRuleServers.length) return;
 
     const evaluationResults = await evaluateResourceAlertRules(stub, configuredRules);
     for (const { rule, ruleServers } of configuredRules) {
@@ -1229,8 +1212,25 @@ export async function checkResourceAlerts(env, options = {}) {
     const now = Date.now();
     const alertNodes = [];
     const recoveredNodes = [];
-    const validStateKeys = new Set(configuredRuleServers.map(item => item.key));
+    const validStateKeys = new Set([...scopedIds].flatMap(([ruleId, ids]) => ids.map(id => `${ruleId}:${id}`)));
     let stateChanged = hadStoredState && parsedState.signature !== configSignature;
+
+    const legacyRules = getResourceAlertConfig(siteSettings).rules;
+    const migratedRules = migrateLegacyNotifications(siteSettings).rules.filter(r => r.type === 'resource');
+    for (let index = 0; index < migratedRules.length; index++) {
+      const migrated = migratedRules[index];
+      const legacy = legacyRules[index];
+      if (!legacy || legacy.id === migrated.id || !rules.some(r => r.id === migrated.id && r.identity.legacySignature === ruleSignature(migrated))) continue;
+      for (const serverId of serverMap.keys()) {
+        const oldKey = getResourceAlertRuleStateKey(legacy, serverId);
+        const key = getResourceAlertRuleStateKey(migrated, serverId);
+        if (alertState[oldKey] && !alertState[key]) {
+          alertState[key] = alertState[oldKey];
+          delete alertState[oldKey];
+          stateChanged = true;
+        }
+      }
+    }
 
     for (const key of Object.keys(alertState)) {
       if (!validStateKeys.has(key)) {
@@ -1242,11 +1242,32 @@ export async function checkResourceAlerts(env, options = {}) {
     for (const { key, rule, server } of evaluatedRuleServers) {
       const active = activeMap.get(key);
       const alert = active?.alert;
-      const currentState = alertState[key];
+      const signature = rule.identity.signature;
+      let currentState = alertState[key];
+      if (!currentState?.pending && currentState?.signature && !matchesNotificationRuleIdentity(currentState.signature, rule.identity)) {
+        delete alertState[key];
+        currentState = null;
+        stateChanged = true;
+      }
+      if (currentState && !currentState.pending && currentState.signature !== signature) {
+        currentState.signature = signature;
+        stateChanged = true;
+      }
       const currentStatus = currentState
         ? getResourceAlertStateStatus(currentState)
         : '';
       const ruleIntervalMs = getResourceAlertRuleIntervalMs(rule);
+
+      if (currentState?.pending) {
+        if (alert) {
+          alertState[key] = { signature, status: RESOURCE_ALERT_STATE_ACTIVE, alertAt: now, lastTriggeredAt: now, metrics: getStoredResourceAlertMetrics(alert) };
+          stateChanged = true;
+        } else if (canRecoverResourceAlert(expandResourceAlertEvaluation(evaluationMap.get(key)))) {
+          delete alertState[key];
+          stateChanged = true;
+        }
+        continue;
+      }
 
       if (alert) {
         const isActiveAlert = currentStatus === RESOURCE_ALERT_STATE_ACTIVE;
@@ -1260,6 +1281,7 @@ export async function checkResourceAlerts(env, options = {}) {
         if (!isActiveAlert) {
           alertNodes.push({ rule, server, alert });
           alertState[key] = {
+            signature,
             status: RESOURCE_ALERT_STATE_ACTIVE,
             alertAt: now,
             lastTriggeredAt: now,
@@ -1271,6 +1293,7 @@ export async function checkResourceAlerts(env, options = {}) {
           if (lastTriggeredAt === 0 || now - lastTriggeredAt >= ruleIntervalMs) {
             alertState[key] = {
               ...currentState,
+              signature,
               status: RESOURCE_ALERT_STATE_ACTIVE,
               alertAt: getResourceAlertStateTimestamp(currentState, 'alertAt') || now,
               lastTriggeredAt: now,
@@ -1289,6 +1312,7 @@ export async function checkResourceAlerts(env, options = {}) {
           recoveredNodes.push({ rule, server, metrics: evaluation?.metrics || [] });
           alertState[key] = {
             ...currentState,
+            signature,
             status: RESOURCE_ALERT_STATE_RECOVERED,
             recoveredAt: now,
             metrics: evaluation?.metrics || currentState.metrics
@@ -1308,108 +1332,102 @@ export async function checkResourceAlerts(env, options = {}) {
       await saveResourceAlertState(db, configSignature, alertState, hadStoredState);
     }
 
-    const notificationPayloads = buildResourceAlertNotificationPayloads(alertNodes, recoveredNodes, siteSettings);
-    for (const payload of notificationPayloads) {
-      const notificationError = await sendNotification(siteSettings, payload.msg, payload.context);
-      if (notificationError) {
-        console.warn('[ResourceAlert] notification failed:', notificationError);
+    const events = [];
+    for (const [nodes, eventKey] of [[alertNodes, 'resourceAlert'], [recoveredNodes, 'resourceRecovered']]) {
+      for (const item of nodes) {
+        const payloads = buildResourceAlertNotificationPayloads(eventKey === 'resourceAlert' ? [item] : [], eventKey === 'resourceRecovered' ? [item] : [], settings);
+        for (const payload of payloads) events.push({ ruleId: item.rule.id, serverId: item.server.id, eventKey, ...payload });
       }
     }
-  } catch (e) {
-    console.error('资源负载告警检测失败:', e);
+    await dispatch(config, events, options.send);
+  } catch (_) {
+    console.error('[Notification] resource evaluation failed');
   }
 }
 
 export async function checkExpiringServers(db, options = {}) {
-  const siteSettings = await loadSiteSettings(db);
-  const now = Number(options?.now || Date.now());
-
-  if (options?.scheduled && !isExpireNotificationTimeDue(siteSettings, now)) {
-    return false;
-  }
-
   try {
-    const allServers = await getAllServers(db);
-    const expiringServers = [];
-    const reminderDays = getExpireReminderDays(siteSettings.expire_reminder);
-    const shouldNotify = reminderDays > 0 && hasNotificationTarget(siteSettings);
-    const renewedServers = [];
-    const currentDateSerial = getZonedDateSerial(now, siteSettings.notification_timezone);
-
-    for (const s of allServers) {
-      if (!s.expire_date) continue;
-
-      const billingCycle = normalizeBillingCycle(detectBillingCycle(s.price) || s.billing_cycle);
-      // 续费时机 = 到期日 - min(提醒天数, 5)，最长提前 5 天
-      const renewal = renewExpireDateIfNeeded(s.expire_date, billingCycle, s.auto_renewal, now, Math.min(reminderDays, 5));
-      if (renewal.renewed) {
-        await db.prepare(
-          'UPDATE servers SET expire_date = ?, billing_cycle = ? WHERE id = ?'
-        ).bind(renewal.expire_date, billingCycle, s.id).run();
-        s.expire_date = renewal.expire_date;
-        s.billing_cycle = billingCycle;
-        renewedServers.push({ name: s.name, expire_date: renewal.expire_date });
-        debug(`[Cron] 服务器 ${s.name} 已自动续费，到期日期更新为 ${s.expire_date}`);
-      }
-
-      // 勾选自动续费的节点只走「续费成功」提醒，不计入到期提醒
-      if (isEnabledFlag(s.auto_renewal)) continue;
-
-      if (!shouldNotify) continue;
-
-      const expireDateSerial = parseDateSerial(s.expire_date);
-      if (!Number.isFinite(expireDateSerial) || !Number.isFinite(currentDateSerial)) continue;
-
-      const days = expireDateSerial - currentDateSerial;
-
-      debug(`[Cron] 检测到服务器 ${s.name} 到期日期 ${s.expire_date}，剩余天数 ${days} 天`);
-
-      if (days > 0 && days <= reminderDays) {
-        expiringServers.push({ name: s.name, expire_date: s.expire_date, days });
-      }
-    }
-
-    const messages = getNotificationMessages(siteSettings);
-    if (renewedServers.length > 0) {
-      clearServersListCache();
-
-      // 续费成功提醒：与「到期提醒」开关解耦，只要配置了通知渠道就发送
-      if (hasNotificationTarget(siteSettings)) {
-        const renewalList = renewedServers.map(s => `${s.name}  ${messages.renewedUntil(s.expire_date)}`).join('\n');
-        debug(`[Cron] 发送自动续费成功通知: ${renewalList}`);
-        try {
-          await sendNotification(siteSettings, renewalList, {
-            event: messages.events.renewed,
-            emoji: '✅',
-            clients: renewedServers.map(s => s.name),
-            count: renewedServers.length,
-            message: renewalList
-          });
-        } catch (e) {
-          console.error('自动续费成功通知发送失败:', e);
+    const siteSettings = options.siteSettings ?? await loadSiteSettings(db);
+    let config = null;
+    try { config = options.notificationConfig ?? await loadNotificationConfig(db, siteSettings); }
+    catch (_) { console.error('[Notification] expiry delivery configuration unavailable'); }
+    const now = Number(options.now || Date.now());
+    const expiryRules = config?.rules.filter(r => r.type === 'expiry') || [];
+    const rules = expiryRules.filter(r => r.enabled);
+    const identities = new Map(await Promise.all(rules.map(async r => [r.id, await createNotificationRuleIdentity(r)])));
+    const scopeSets = new Map(expiryRules.map(r => [r.id, new Set(r.scope.serverIds)]));
+    const applies = (rule, id) => rule.scope.mode === 'all' || scopeSets.get(rule.id).has(String(id));
+    const timezone = config?.timezone ?? siteSettings.notification_timezone;
+    const dueRules = rules.filter(r => !options.scheduled || Number(getZonedDateParts(now, timezone)?.hour) === r.options.hour);
+    if (options.scheduled && !dueRules.length && !isExpireNotificationTimeDue(siteSettings, now)) return false;
+    const servers = await getAllServers(db);
+    const settings = config ? notificationSettings(config) : siteSettings;
+    const currentDate = getZonedDateSerial(now, timezone);
+    const messages = getNotificationMessages(settings);
+    const row = config ? await db.prepare("SELECT value FROM settings WHERE key = 'expiry_notification_state'").first() : null;
+    let state = {};
+    try { state = row ? JSON.parse(row.value) : {}; } catch (_) {}
+    const before = JSON.stringify(state);
+    const events = [];
+    let renewed = false;
+    const validRules = new Set(expiryRules.map(r => r.id));
+    for (const id of Object.keys(state)) if (!validRules.has(id)) delete state[id];
+    for (const server of servers) {
+      const observedRules = rules.filter(r => applies(r, server.id));
+      const baselines = new Set();
+      for (const rule of observedRules) {
+        if (state[rule.id]?.[server.id]?.baseline) {
+          baselines.add(rule.id);
+          delete state[rule.id][server.id];
         }
       }
-    }
-
-    if (expiringServers.length > 0) {
-      const serverList = expiringServers.map(s => `${s.name}  ${messages.daysLeft(s.days)}  ${s.expire_date}`).join('\n');
-      const msg = serverList;
-      debug(`[Cron] 发送到期提醒通知: ${msg}`);
-      try {
-        await sendNotification(siteSettings, msg, {
-          event: messages.events.expiring,
-          emoji: '⚠️',
-          clients: expiringServers.map(s => s.name),
-          count: expiringServers.length,
-          message: serverList
-        });
-      } catch (e) {
-        console.error('服务器到期提醒通知发送失败:', e);
+      if (!server.expire_date) continue;
+      const billingCycle = normalizeBillingCycle(detectBillingCycle(server.price) || server.billing_cycle);
+      const applicable = observedRules.filter(r => dueRules.includes(r));
+      const days = expiryRules.length ? Math.max(0, ...expiryRules.filter(r => applies(r, server.id)).map(r => r.options.days)) : getExpireReminderDays(siteSettings.expire_reminder);
+      const original = server.expire_date;
+      const renewal = renewExpireDateIfNeeded(original, billingCycle, server.auto_renewal, now, Math.min(days, 5));
+      let eventKey = '';
+      let msg = '';
+      if (renewal.renewed) {
+        const result = await db.prepare('UPDATE servers SET expire_date = ?, billing_cycle = ? WHERE id = ? AND expire_date = ?').bind(renewal.expire_date, billingCycle, server.id, original).run();
+        if (getD1Changes(result)) {
+          server.expire_date = renewal.expire_date; server.billing_cycle = billingCycle; renewed = true;
+          eventKey = 'renewed'; msg = server.name + '  ' + messages.renewedUntil(server.expire_date);
+        }
+      }
+      const left = parseDateSerial(server.expire_date) - currentDate;
+      for (const rule of eventKey === 'renewed' ? observedRules : applicable) {
+        let key = eventKey;
+        let body = msg;
+        if (!key && !isEnabledFlag(server.auto_renewal) && left > 0 && left <= rule.options.days) {
+          key = 'expiring'; body = server.name + '  ' + messages.daysLeft(left) + '  ' + server.expire_date;
+        }
+        if (!key) continue;
+        const predicate = identities.get(rule.id);
+        const identity = JSON.stringify([key, currentDate, server.expire_date, predicate.signature]);
+        const entry = state[rule.id] || (state[rule.id] = {});
+        const baseline = baselines.has(rule.id);
+        if (entry[server.id] === identity) continue;
+        let previous;
+        if (typeof entry[server.id] === 'string') {
+          try { previous = JSON.parse(entry[server.id]); } catch (_) {}
+        }
+        if (previous?.[0] === key && previous[1] === currentDate && previous[2] === server.expire_date && matchesNotificationRuleIdentity(previous[3], predicate)) {
+          entry[server.id] = identity;
+          continue;
+        }
+        entry[server.id] = identity;
+        if (baseline && key !== 'renewed') continue;
+        events.push({ ruleId: rule.id, serverId: server.id, eventKey: key, msg: body,
+          context: { event: messages.events[key], emoji: key === 'renewed' ? '✅' : '⚠️', clients: [server.name] } });
       }
     }
+    if (renewed) clearServersListCache();
+    const currentIds = new Set(servers.map(s => String(s.id)));
+    for (const entry of Object.values(state)) for (const id of Object.keys(entry)) if (!currentIds.has(id)) delete entry[id];
+    if (JSON.stringify(state) !== before) await db.prepare("INSERT INTO settings(key,value) VALUES('expiry_notification_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(JSON.stringify(state)).run();
+    if (config) await dispatch(config, events, options.send);
     return true;
-  } catch (e) {
-    console.error('到期检测失败:', e);
-    return false;
-  }
+  } catch (_) { console.error('[Notification] expiry evaluation failed'); return false; }
 }

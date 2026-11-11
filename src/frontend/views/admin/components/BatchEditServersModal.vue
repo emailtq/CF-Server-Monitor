@@ -1,11 +1,6 @@
 <template>
-  <div class="modal-overlay" :class="{ active: show }">
-    <div class="modal-dialog batch-edit-modal">
-      <div class="modal-header">
-        <div class="modal-title">{{ trans.batchEdit }} [{{ selectedCount }}]</div>
-        <button class="modal-close" @click="$emit('close')">×</button>
-      </div>
-
+  <AdminDialog :open="show" :title="`${trans.batchEdit} [${selectedCount}]`" size="edit" :busy="saving" @close="$emit('close')">
+    <template #body>
       <div class="batch-edit-grid">
         <div class="batch-edit-section">
           <div class="section-subtitle">{{ trans.basicInfo || 'Basic' }}</div>
@@ -158,16 +153,17 @@
           </BatchEditField>
         </div>
       </div>
-
-      <div class="modal-footer flex-justify-between">
-        <button @click="$emit('save')" class="btn btn-primary" :disabled="!hasEnabledFields">{{ saving ? trans.saving : trans.save }}</button>
-        <button @click="$emit('close')" class="btn">{{ trans.cancel }}</button>
-      </div>
-    </div>
-  </div>
+      <p v-if="error" class="text-red" role="alert">{{ error }}</p>
+    </template>
+    <template #footer>
+      <button @click="$emit('close')" class="btn" :disabled="saving">{{ trans.cancel }}</button>
+      <button @click="$emit('save')" class="btn btn-primary" :disabled="saving || !hasEnabledFields">{{ saving ? trans.saving : trans.save }}</button>
+    </template>
+  </AdminDialog>
 </template>
 
 <script setup>
+import AdminDialog from './AdminDialog.vue'
 import { computed } from 'vue'
 import BatchEditField from './BatchEditField.vue'
 import { currentLang } from '../../../utils/i18n.js'
@@ -182,6 +178,7 @@ defineProps({
   selectedCount: { type: Number, default: 0 },
   settings: { type: Object, required: true },
   isWssReportEnabled: { type: Boolean, default: false },
+  error: String,
   saving: { type: Boolean, default: false }
 })
 

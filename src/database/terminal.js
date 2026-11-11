@@ -90,8 +90,25 @@ export async function verifyTerminalNodeToken(db, serverId, token) {
   return { serverId, version: row.credential_version };
 }
 
-export async function revokeTerminalNode(db, serverId, now = Date.now()) {
+export async function revokeTerminalNode(db, serverId, now = Date.now(), context = null) {
   if (!isId(serverId) || !isTime(now)) throw new RangeError('Invalid terminal node revocation');
+  if (context) {
+    const row = await db.prepare(`SELECT settings.value, a.expires_at, a.revoked_at, n.enabled
+      FROM settings JOIN terminal_auth_sessions a ON a.jti = ?
+      JOIN terminal_nodes n ON n.server_id = ? WHERE settings.key = 'site_options'`)
+      .bind(context.owner, serverId).first();
+    if (!row || row.revoked_at !== null || row.expires_at !== context.ownerExpiry ||
+        row.expires_at * 1000 <= now || context.authorizationKey !== await terminalAuthorizationKey(JSON.parse(row.value))) return null;
+    // CAS binds rotation, logout and the exact uncached settings snapshot to this write.
+    const revoked = await db.prepare(`UPDATE terminal_nodes SET enabled = 0, updated_at = ?,
+      credential_version = MIN(credential_version + enabled, 9007199254740991)
+      WHERE server_id = ? AND credential_version = ? AND enabled = ?
+        AND EXISTS (SELECT 1 FROM settings WHERE key = 'site_options' AND value = ?)
+        AND EXISTS (SELECT 1 FROM terminal_auth_sessions WHERE jti = ? AND revoked_at IS NULL AND expires_at = ? AND expires_at * 1000 > ? AND expires_at > unixepoch())
+      RETURNING credential_version`)
+      .bind(now, serverId, context.credentialVersion, row.enabled, row.value, context.owner, context.ownerExpiry, now).first();
+    return revoked ? {...revoked, wasEnabled:row.enabled === 1} : null;
+  }
   await db.prepare(`
     UPDATE terminal_nodes SET enabled = 0, updated_at = ?,
       credential_version = MIN(credential_version + 1, 9007199254740991)

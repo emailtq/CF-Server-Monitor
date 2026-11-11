@@ -1,11 +1,11 @@
 <template>
   <div id="tab-theme-store" class="tab-content" :class="{ active: activeTab === 'themeStore' }">
     <div class="settings-section">
-      <div class="section-title"><span>▸</span> {{ trans.themeStore }}</div>
+      <div class="section-title">{{ trans.themeStore }}</div>
 
       <div class="warning-box mb-4">
         <div class="flex-center-gap-sm">
-          <span class="warning-icon text-xl">⚠️</span>
+
           <span style="color: var(--accent-yellow); font-weight: 600;">{{ trans.themeStoreWarning }}</span>
         </div>
         <p class="text-secondary text-sm mt-2" style="line-height: 1.6;">{{ trans.themeStoreWarningDesc }}</p>
@@ -37,32 +37,32 @@
             @click="previewCustomTheme"
             class="btn"
             :disabled="!customThemeUrl || previewingThemeId === '__custom__'"
-          >👁 {{ previewingThemeId === '__custom__' ? trans.saving : trans.preview }}</button>
+          > {{ previewingThemeId === '__custom__' ? trans.saving : trans.preview }}</button>
           <button
             @click="applyCustomTheme"
             class="btn btn-primary"
             :disabled="!customThemeUrl || applyingThemeId === '__custom__'"
-          >⇄ {{ applyingThemeId === '__custom__' ? trans.saving : trans.applyCustomTheme }}</button>
+          >{{ applyingThemeId === '__custom__' ? trans.saving : trans.applyCustomTheme }}</button>
           <button
             v-if="currentThemeUrl"
             @click="clearTheme"
             class="btn"
             :disabled="applyingThemeId === '__builtin__'"
-          >↩ {{ trans.useBuiltinTheme }}</button>
+          > {{ trans.useBuiltinTheme }}</button>
         </div>
       </div>
 
       <div v-if="loading" class="theme-loading">
         <div class="loading-spinner"></div>
-        <div class="loading-text">$ {{ trans.themeStoreLoading }}...</div>
+        <div class="loading-text">{{ trans.themeStoreLoading }}</div>
       </div>
 
       <div v-else-if="error" class="danger-box mb-4">
         <div class="flex-center-gap-sm">
-          <span class="danger-icon text-xl">❌</span>
+
           <span class="danger-label">{{ error }}</span>
         </div>
-        <button @click="loadThemes" class="btn btn-lg mt-2">↻ {{ trans.refresh }}</button>
+        <button @click="loadThemes" class="btn btn-lg mt-2">{{ trans.refresh }}</button>
       </div>
 
       <div class="theme-grid">
@@ -86,14 +86,14 @@
                 class="btn btn-sm"
                 :class="{ 'btn-primary': applyingThemeId !== '__mikus_enable__' && !isMikusThemeActive }"
                 :disabled="applyingThemeId === '__mikus_enable__' || isMikusThemeActive"
-              >✓ {{ applyingThemeId === '__mikus_enable__' ? trans.saving : trans.enable }}</button>
+              >{{ applyingThemeId === '__mikus_enable__' ? trans.saving : trans.enable }}</button>
               <button
                 @click="disableMikusTheme"
                 class="btn btn-sm"
                 :class="{ 'btn-primary': applyingThemeId !== '__mikus_disable__' && isMikusThemeActive }"
                 :disabled="applyingThemeId === '__mikus_disable__' || !isMikusThemeActive"
-              >✕ {{ applyingThemeId === '__mikus_disable__' ? trans.saving : trans.close }}</button>
-              <a href="https://github.com/mikus-loli/komari-mikus" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.view }}</a>
+              >{{ applyingThemeId === '__mikus_disable__' ? trans.saving : trans.close }}</button>
+              <a href="https://github.com/mikus-loli/komari-mikus" target="_blank" rel="noopener noreferrer" class="btn btn-sm"> {{ trans.view }}</a>
             </div>
           </div>
         </div>
@@ -112,12 +112,12 @@
             </div>
             <p v-if="getThemeDescription(theme)" class="theme-desc">{{ getThemeDescription(theme) }}</p>
             <div v-if="theme.author" class="theme-author">by {{ theme.author }}</div>
-            
+
             <!-- 版本选择 -->
             <div v-if="theme.versions && theme.versions.length > 0" class="theme-version-selector">
               <label class="version-label">{{ trans.version }}</label>
-              <select 
-                :value="selectedVersions[theme.id] || 0" 
+              <select
+                :value="selectedVersions[theme.id] || 0"
                 @change="selectVersion(theme.id, $event.target.value)"
                 class="version-select"
               >
@@ -137,7 +137,7 @@
             <!-- 当前选中版本信息 -->
             <div v-if="getSelectedVersion(theme)" class="theme-version-info">
               <div v-if="getSelectedVersion(theme).releaseDate" class="version-date">
-                📅 {{ getSelectedVersion(theme).releaseDate }}
+                 {{ getSelectedVersion(theme).releaseDate }}
               </div>
               <div v-if="getSelectedVersion(theme).changelog" class="version-changelog">
                 <div class="changelog-label">{{ trans.changelog }}</div>
@@ -150,13 +150,13 @@
                 @click="previewTheme(theme)"
                 class="btn btn-sm"
                 :disabled="!getSelectedThemeUrl(theme) || previewingThemeId === theme.id"
-              >👁 {{ previewingThemeId === theme.id ? trans.saving : trans.preview }}</button>
+              > {{ previewingThemeId === theme.id ? trans.saving : trans.preview }}</button>
               <button
                 @click="applyTheme(theme)"
                 class="btn btn-sm btn-primary"
                 :disabled="!getSelectedThemeUrl(theme) || applyingThemeId === theme.id"
-              >⇄ {{ applyingThemeId === theme.id ? trans.saving : trans.switchTheme }}</button>
-              <a v-if="getSafeExternalUrl(theme.url)" :href="getSafeExternalUrl(theme.url)" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.view }}</a>
+              >{{ applyingThemeId === theme.id ? trans.saving : trans.switchTheme }}</button>
+              <a v-if="getSafeExternalUrl(theme.url)" :href="getSafeExternalUrl(theme.url)" target="_blank" rel="noopener noreferrer" class="btn btn-sm"> {{ trans.view }}</a>
             </div>
           </div>
         </div>
@@ -166,20 +166,23 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, reactive } from 'vue'
+import { computed, ref, watch, reactive, onBeforeUnmount } from 'vue'
 import http from '../../../utils/http'
 import { currentLang } from '../../../utils/i18n'
 import { adminApi } from '../../../utils/api'
 import { normalizeDisplayMode } from '../../../utils/displayMode'
 import { isMikusThemeEnabled } from '../../../utils/themeOptions'
-import { APPEARANCE_FIELDS } from '../../../../utils/settings'
+const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options']
+let active = true
+onBeforeUnmount(() => { active = false })
 
 const props = defineProps({
   trans: { type: Object, required: true },
   activeTab: { type: String, default: '' },
   selectedApiIndex: { type: Number, default: 0 },
   currentThemeUrl: { type: String, default: '' },
-  settings: { type: Object, default: () => ({}) }
+  settings: { type: Object, default: () => ({}) },
+  requestOwner: Function
 })
 
 const emit = defineEmits(['theme-applied', 'theme-options-applied', 'alert-message'])
@@ -218,14 +221,7 @@ const currentThemeLabel = computed(() => isMikusThemeActive.value ? 'Mikus' : (p
 const mikusThemeTags = computed(() => [props.trans.mikusThemeTagBuiltin, 'Mikus', props.trans.mikusThemeTagSakura])
 const mikusThemeDescription = computed(() => props.trans.mikusThemeDescription)
 
-// Derive the appearance payload from the shared APPEARANCE_FIELDS constant so it
-// always stays in sync with the backend. The theme store re-sends appearance on
-// every apply/switch/Mikus toggle, and the backend overwrites the whole
-// appearance_options row — any omitted field would be wiped (e.g. custom_bg_mobile).
-// NOTE: this relies on props.settings carrying the current value for every field in
-// APPEARANCE_FIELDS. If a field is added to APPEARANCE_FIELDS later, make sure it is
-// also populated in the get_settings mapping in views/admin/index.vue, otherwise it
-// will be sent as '' here and effectively reset on save.
+// Appearance saves replace the row, so preserve every current draft field.
 const buildAppearanceSettings = (themeOptions) => {
   const source = props.settings || {}
   const settings = {}
@@ -290,7 +286,8 @@ const fetchThemeStoreFromRaw = async () => {
 }
 
 const fetchThemeStore = async () => {
-  const result = await http.get('/theme')
+  const result = await http.getByIndex('/theme', props.selectedApiIndex, { requestOwner: props.requestOwner })
+  if (!active || result.stale) return null
   if (!result.error) return normalizeThemeStore(result.data)
 
   return fetchThemeStoreFromRaw()
@@ -303,12 +300,14 @@ const loadThemes = async () => {
   error.value = ''
   try {
     const themeStore = await fetchThemeStore()
+    if (!active || (props.requestOwner && !props.requestOwner())) return
     themes.value = themeStore.themes
-    
+
     // 初始化选中版本为最新版本（索引0）
     initSelectedVersions(true)
     loaded.value = true
   } catch (e) {
+    if (!active || (props.requestOwner && !props.requestOwner())) return
     error.value = getThemeStoreLoadFailed()
     showThemeMessage(getThemeStoreNetworkError())
     loaded.value = false
@@ -508,6 +507,7 @@ const loadThemeVersions = async (theme) => {
   loadingVersions[key] = true
   try {
     const result = await fetchThemeCommitVersions(theme)
+    if (!active || (props.requestOwner && !props.requestOwner())) return
     if (result.failed || !result.versions.length) {
       showThemeMessage(getThemeStoreNetworkError())
       return
@@ -567,8 +567,9 @@ const previewThemeUrl = async (themeUrl, previewingId) => {
     const result = await adminApi({
       action: 'start_theme_preview',
       theme_url: themeUrl
-    }, props.selectedApiIndex)
+    }, props.selectedApiIndex, props.requestOwner)
 
+    if (!active) return
     if (result.error) {
       showThemeMessage(props.trans[result.error] || result.error || props.trans.themeApplyFailed)
       return
@@ -582,6 +583,7 @@ const previewThemeUrl = async (themeUrl, previewingId) => {
 
     window.open(previewUrl, '_blank', 'noopener,noreferrer')
   } catch (e) {
+    if (!active) return
     showThemeMessage(e.message || props.trans.themeApplyFailed)
   } finally {
     previewingThemeId.value = ''
@@ -620,8 +622,9 @@ const saveThemeUrl = async (themeUrl, applyingId) => {
         ...buildAppearanceSettings(themeOptions),
         theme_url: themeUrl
       }
-    }, props.selectedApiIndex)
+    }, props.selectedApiIndex, props.requestOwner)
 
+    if (!active) return
     if (result.error) {
       showThemeMessage(props.trans[result.error] || result.error || props.trans.themeApplyFailed)
       return
@@ -631,6 +634,7 @@ const saveThemeUrl = async (themeUrl, applyingId) => {
     emit('theme-options-applied', themeOptions)
     showThemeMessage(props.trans.themeApplied)
   } catch (e) {
+    if (!active) return
     showThemeMessage(e.message || props.trans.themeApplyFailed)
   } finally {
     applyingThemeId.value = ''
@@ -655,8 +659,9 @@ const saveMikusTheme = async (enabled, applyingId) => {
         ...buildAppearanceSettings(themeOptions),
         theme_url: ''
       }
-    }, props.selectedApiIndex)
+    }, props.selectedApiIndex, props.requestOwner)
 
+    if (!active) return
     if (result.error) {
       showThemeMessage(props.trans[result.error] || result.error || props.trans.themeApplyFailed)
       return
@@ -666,6 +671,7 @@ const saveMikusTheme = async (enabled, applyingId) => {
     emit('theme-options-applied', themeOptions)
     showThemeMessage(props.trans.themeApplied)
   } catch (e) {
+    if (!active) return
     showThemeMessage(e.message || props.trans.themeApplyFailed)
   } finally {
     applyingThemeId.value = ''

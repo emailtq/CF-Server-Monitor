@@ -21,7 +21,7 @@ test('actual export/import omits terminal credentials and cannot activate a rest
     assert.equal(response.status, 200);
     assert.equal((await response.json()).imported, 1);
     assert.equal(await h.db.prepare('SELECT * FROM terminal_nodes WHERE server_id = ?').bind(restored.id).first(), null);
-    assert.deepEqual(await (await h.action('terminal_status', {serverId:restored.id})).json(), {enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0});
+    assert.deepEqual(await (await h.action('terminal_status', {serverId:restored.id})).json(), {enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0,state:'pending'});
     await saveSiteOptions(h.db, {terminal_enabled:'false'});
     assert.equal((await h.action('import_servers', {settings:{site:{terminal_enabled:'true'}}})).status, 200);
     assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'false');
@@ -47,8 +47,8 @@ test('terminal actions require exact Origin and fresh independent administrator 
     for (const origin of ['', 'https://evil.example', 'https://example.com.evil', 'null']) {
       assert.equal((await h.action('terminal_status', {serverId:'node-a'}, {headers:{Origin:origin}})).status, 403);
     }
-    assert.equal((await h.action('terminal_enable_site', {password:'wrong'})).status, 401);
-    assert.equal((await h.action('terminal_authorize_node', {serverId:'node-a', password:'wrong'})).status, 401);
+    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true}, {headers:{Cookie:''}})).status, 401);
+    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true})).status, 400);
   } finally { await h.dispose(); }
 });
 
@@ -80,18 +80,18 @@ test('an invalid bearer header cannot shadow the valid logout Cookie and two val
   } finally {await h.dispose();}
 });
 
-test('site/node enable require step-up, ordinary settings cannot enable, custom previews are blocked', async () => {
+test('confirmed installation enables the site without step-up while custom previews stay blocked', async () => {
   const h = await harness();
   try {
-    assert.equal((await h.action('terminal_authorize_node', {serverId:'node-a', password:'test-report-secret'})).status, 200);
+    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 200);
     await saveSiteOptions(h.db, {terminal_enabled:'false'});
-    assert.equal((await h.action('terminal_enable_site', {password:'test-report-secret'})).status, 200);
+    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 200);
     const sys = await loadSiteSettings(h.db, true);
     const preview = new Request('https://example.com/?theme_url=https://github.com/test/theme/tree/main', {headers:{Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`}});
     assert.equal((await serveFrontend(preview, {DB:h.db}, sys)).status, 409);
     assert.equal((await h.action('start_theme_preview', {theme_url:'https://github.com/test/theme/tree/main'})).status, 409);
     await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main', terminal_enabled:'false'});
-    assert.equal((await h.action('terminal_enable_site', {password:'test-report-secret'})).status, 409);
+    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 409);
   } finally { await h.dispose(); }
 });
 
@@ -268,7 +268,7 @@ test('ordinary node terminal status validates authority but creates no cold brok
     const request=new Request('https://example.com/admin/api',{headers:{Origin:'https://example.com',Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`}});
     const response=await handleTerminalAdminAction({request,env,sys:await loadSiteSettings(h.db,true),data:{action:'terminal_status',serverId:'ordinary-node'}});
     assert.equal(response.status,200);
-    assert.deepEqual(await response.json(),{enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0});
+    assert.deepEqual(await response.json(),{enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0,state:'pending'});
     assert.equal(calls,0);
   } finally {await h.dispose();}
 });

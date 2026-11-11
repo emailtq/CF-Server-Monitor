@@ -1,6 +1,6 @@
 import { TERMINAL_LIMITS, parseTerminalControl, validateTerminalDataFrame, validateTerminalSize } from '../shared/terminalProtocol.js';
 import { generateRandomSecret } from '../utils/settings.js';
-import { writeTerminalAudit, verifyTerminalAuthority } from '../database/terminal.js';
+import { writeTerminalAudit, verifyTerminalAuthority, revokeTerminalNode } from '../database/terminal.js';
 
 const isId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const denied = (code, status = 409) => Response.json({error:code, code:status}, {status});
@@ -18,6 +18,7 @@ export class TerminalBroker {
     this.state = state;
     this.env = env;
     this.jobs = new Map();
+    this.disables = new Map();
     this.mustClose = new Set();
     this.tail = Promise.resolve();
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
@@ -191,18 +192,27 @@ export class TerminalBroker {
     let context;
     try { context = JSON.parse(request.headers.get('X-CFSM-Terminal-Context')); } catch (_) {}
     const operation = new URL(request.url).pathname.slice(1);
-    if (!isId(context?.serverId) || !['status','invalidate','control','attach','open','renew','close'].includes(operation)) return denied('terminal_internal_denied', 403);
+    if (!isId(context?.serverId) || !['status','invalidate','disable','control','attach','open','renew','close'].includes(operation)) return denied('terminal_internal_denied', 403);
     if (this.meta.serverId && context.serverId !== this.meta.serverId) return denied('terminal_node_mismatch', 403);
     if (!this.meta.serverId) await this.mutate((effects, meta) => { meta.serverId = context.serverId; });
     if (operation === 'status') {
-      const control = this.control();
-      const supported = control?.deserializeAttachment()?.supported === true;
-      return Response.json({connected:!!control, supported, protocol:supported ? 1 : null, platform:supported ? 'linux' : null, activeCount:this.meta.sessions.length});
+      const current = context.credentialVersion === undefined || context.credentialVersion === this.meta.credentialVersion;
+      let control = current ? this.control() : null;
+      let supported = control?.deserializeAttachment()?.supported === true;
+      if (supported && this.meta.hello?.version !== this.meta.credentialVersion) {
+        await this.mutate((effects, meta) => { if (control === this.control() && control.deserializeAttachment()?.supported === true) meta.hello = {version:meta.credentialVersion, supported:true}; });
+        control = context.credentialVersion === undefined || context.credentialVersion === this.meta.credentialVersion ? this.control() : null;
+        supported = control?.deserializeAttachment()?.supported === true;
+      }
+      const hello = this.meta.hello?.version === context.credentialVersion ? this.meta.hello : null;
+      return Response.json({connected:!!control, supported, protocol:supported ? 1 : null, platform:supported ? 'linux' : null, activeCount:this.meta.sessions.length, observed:hello ? hello.supported ? 'supported' : 'unsupported' : null});
     }
     if (operation === 'invalidate') {
+      if (context.credentialVersion < this.meta.credentialVersion) return Response.json({closed:false});
       await this.replaceControl(null, context.credentialVersion);
       return Response.json({closed:true});
     }
+    if (operation === 'disable') return this.disable(context);
     if (!Number.isSafeInteger(context.credentialVersion) || context.credentialVersion < 1) return denied('terminal_version_denied', 403);
     if (operation !== 'close') {
       const validUntil = context.leaseUntil ?? context.validUntil;
@@ -392,10 +402,75 @@ export class TerminalBroker {
     return replacement.generation;
   }
 
+  async disable(context) {
+    if (!isId(context.owner) || !Number.isSafeInteger(context.credentialVersion) || context.credentialVersion < 1) return denied('terminal_internal_denied', 403);
+    const control = this.control();
+    const a = control?.deserializeAttachment();
+    const captured = a?.credentialVersion === context.credentialVersion ? control : null;
+    const operationId = crypto.randomUUID();
+    const revoked = await revokeTerminalNode(this.env.DB, context.serverId, Date.now(), context);
+    if (!revoked) return denied('terminal_authority_denied', 409);
+    if (!revoked.wasEnabled) return Response.json({enabled:false, serverRevoked:true, localConfirmed:false, localReason:'already_revoked'});
+    let localReason = captured ? a.disableSupported ? 'timeout' : 'unsupported' : 'offline';
+    let localConfirmed = false;
+    let timer;
+    let pending;
+    for (const session of this.meta.sessions) if (session.credentialVersion <= context.credentialVersion) this.mustClose.add(session.id);
+    try {
+      // Fence old data immediately, but retain the exact old control for disable/ACK only.
+      await this.mutate((effects, meta) => {
+        for (const session of meta.sessions) if (session.credentialVersion <= context.credentialVersion) this.mustClose.add(session.id);
+        if (meta.credentialVersion <= context.credentialVersion) {
+          meta.credentialVersion = revoked.credential_version;
+          meta.generation++;
+        }
+        for (const [id, ws] of this.peers) if (ws !== captured && ws.deserializeAttachment()?.credentialVersion <= context.credentialVersion) {
+          effects.push(() => { try { ws.close(1000, 'node_revoked'); } catch (_) {} this.peers.delete(id); });
+        }
+      });
+      for (const session of [...this.meta.sessions]) if (session.credentialVersion <= context.credentialVersion) await this.closeSession(session.id, 'node_revoked');
+      if (captured && a.disableSupported && captured.readyState === 1 && this.peers.get(a.connectionId) === captured) {
+        const frame = {type:'disable', operationId, serverId:context.serverId, connectionId:a.connectionId,
+          generation:a.generation, credentialVersion:a.credentialVersion};
+        const ack = new Promise(resolve => { pending = {ws:captured, frame, resolve}; });
+        this.disables.set(a.connectionId, pending);
+        timer = setTimeout(() => pending.resolve(false), TERMINAL_LIMITS.disableTimeoutMs);
+        captured.send(JSON.stringify(frame));
+        localConfirmed = await ack;
+        localReason = localConfirmed ? 'confirmed' : 'unconfirmed';
+      }
+    } catch (_) { localReason = 'broker_failure'; }
+    finally {
+      clearTimeout(timer);
+      if (pending && this.disables.get(a.connectionId) === pending) this.disables.delete(a.connectionId);
+      if (captured) {
+        try { captured.close(1000, 'node_revoked'); } catch (_) {}
+        if (this.peers.get(a.connectionId) === captured) this.peers.delete(a.connectionId);
+      }
+    }
+    const current = await this.env.DB.prepare('SELECT enabled, credential_version FROM terminal_nodes WHERE server_id = ?').bind(context.serverId).first();
+    if (!current || current.enabled !== 0 || current.credential_version !== revoked.credential_version) {
+      return Response.json({error:'terminal_authority_denied', code:409, serverRevoked:current?.enabled === 0,
+        localConfirmed:false, localReason:'identity_changed'}, {status:409});
+    }
+    return Response.json({enabled:false, serverRevoked:true, localConfirmed, localReason});
+  }
+
   async webSocketMessage(ws, message) {
     await this.ready;
     if (this.blocked) { try { ws.close(1000, 'storage_error'); } catch (_) {} return; }
     const a = ws.deserializeAttachment();
+    const disable = this.disables.get(a?.connectionId);
+    if (disable?.ws === ws) {
+      try {
+        const frame = parseTerminalControl(message, 'agent-control');
+        if (frame.type === 'ping') { ws.send('{"type":"pong"}'); return; }
+        if (frame.type === 'pong') return;
+        if (frame.type !== 'disabled' || Object.keys(disable.frame).some(key => key !== 'type' && frame[key] !== disable.frame[key])) throw new Error('invalid_disabled');
+        disable.resolve(true);
+      } catch (_) { disable.resolve(false); try { ws.close(1000, 'invalid_disabled'); } catch (_) {} }
+      return;
+    }
     if (!a || this.peers.get(a.connectionId) !== ws || a.generation !== this.meta.generation || a.credentialVersion !== this.meta.credentialVersion) {
       try { ws.close(1000, 'stale_connection'); } catch (_) {}
       return;
@@ -405,9 +480,30 @@ export class TerminalBroker {
         const frame = parseTerminalControl(message, 'agent-control');
         if (frame.type === 'hello') {
           if (a.supported) throw new Error('duplicate_hello');
-          a.supported = true; ws.serializeAttachment(a);
+          await this.mutate((effects, meta) => {
+            if (a.generation !== meta.generation || a.credentialVersion !== meta.credentialVersion) return;
+            meta.hello = {version:a.credentialVersion, supported:true};
+            effects.push(() => {
+              a.supported = true;
+              a.disableSupported = frame.capabilities.includes('terminal.disable.v1');
+              ws.serializeAttachment(a);
+              if (a.disableSupported) ws.send(JSON.stringify({type:'bound', serverId:a.serverId, connectionId:a.connectionId,
+                generation:a.generation, credentialVersion:a.credentialVersion}));
+            });
+          });
         } else if (frame.type === 'ping') ws.send('{"type":"pong"}');
-      } catch (_) { await this.replaceControl(null); }
+        else if (frame.type !== 'pong') throw new Error('unexpected_control');
+      } catch (_) {
+        // Diagnostic observation only; the strict protocol parser still rejects this peer.
+        if (typeof message === 'string' && new TextEncoder().encode(message).byteLength <= TERMINAL_LIMITS.controlFrameBytes && !a.supported) {
+          let frame;
+          try { frame = JSON.parse(message); } catch (_) {}
+          if (frame?.type === 'hello' && Object.keys(frame).length === 4 && Number.isSafeInteger(frame.protocol) && typeof frame.platform === 'string' && /^[a-z]{1,32}$/.test(frame.platform) && Array.isArray(frame.capabilities) && frame.capabilities.length <= 16 && frame.capabilities.every(value => typeof value === 'string' && value.length <= 64)) {
+            await this.mutate((effects, meta) => { if (a.generation === meta.generation && a.credentialVersion === meta.credentialVersion) meta.hello = {version:a.credentialVersion, supported:false}; });
+          }
+        }
+        await this.replaceControl(null);
+      }
       return;
     }
     const s = this.meta.sessions.find(s => s.id === a.sessionId);
@@ -473,6 +569,7 @@ export class TerminalBroker {
   async webSocketClose(ws) {
     await this.ready;
     const a = ws.deserializeAttachment();
+    this.disables.get(a?.connectionId)?.resolve(false);
     try { ws.close(1000, 'peer_disconnected'); } catch (_) {}
     if (!a || this.peers.get(a.connectionId) !== ws) return;
     this.peers.delete(a.connectionId);

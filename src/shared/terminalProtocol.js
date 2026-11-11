@@ -2,7 +2,7 @@ export const TERMINAL_LIMITS = Object.freeze({
   protocol: 1, maxSessions: 4, dataFrameBytes: 16384,
   controlFrameBytes: 4096, creditBytes: 262144,
   maxDimension: 500, startTimeoutMs: 30000, ackTimeoutMs: 30000,
-  userIdleMs: 1800000, authLeaseMs: 60000
+  userIdleMs: 1800000, authLeaseMs: 60000, disableTimeoutMs: 5000
 });
 
 export function validateTerminalSize(cols, rows) {
@@ -17,8 +17,8 @@ export function validateTerminalDataFrame(data) {
 
 // Roles name the sender, not the receiving socket.
 const ROLE_TYPES = {
-  'agent-control': ['hello', 'ping', 'pong'],
-  'broker-control': ['open', 'close', 'ping', 'pong'],
+  'agent-control': ['hello', 'disabled', 'ping', 'pong'],
+  'broker-control': ['open', 'close', 'bound', 'disable', 'ping', 'pong'],
   browser: ['resize', 'ack', 'ping', 'pong'],
   agent: ['ready', 'ack', 'exit', 'error', 'ping', 'pong'],
   broker: ['start', 'ready', 'resize', 'ack', 'exit', 'error', 'ping', 'pong']
@@ -27,6 +27,9 @@ const CONTROL_FIELDS = {
   hello: ['type', 'protocol', 'platform', 'capabilities'],
   open: ['type', 'protocol', 'sessionId', 'ticket', 'cols', 'rows'],
   close: ['type', 'sessionId', 'reason'],
+  bound: ['type', 'serverId', 'connectionId', 'generation', 'credentialVersion'],
+  disable: ['type', 'operationId', 'serverId', 'connectionId', 'generation', 'credentialVersion'],
+  disabled: ['type', 'operationId', 'serverId', 'connectionId', 'generation', 'credentialVersion'],
   start: ['type', 'cols', 'rows'],
   resize: ['type', 'cols', 'rows'],
   ack: ['type', 'bytes'],
@@ -62,8 +65,17 @@ export function parseTerminalControl(text, role) {
   switch (frame.type) {
     case 'hello':
       valid = frame.protocol === TERMINAL_LIMITS.protocol && frame.platform === 'linux' &&
-        Array.isArray(frame.capabilities) && frame.capabilities.length === 1 &&
-        frame.capabilities[0] === 'terminal.pty.v1';
+        Array.isArray(frame.capabilities) && [1, 2].includes(frame.capabilities.length) &&
+        frame.capabilities[0] === 'terminal.pty.v1' &&
+        (frame.capabilities.length === 1 || frame.capabilities[1] === 'terminal.disable.v1');
+      break;
+    case 'bound':
+    case 'disable':
+    case 'disabled':
+      valid = isId(frame.serverId) && isId(frame.connectionId) &&
+        Number.isSafeInteger(frame.generation) && frame.generation >= 1 &&
+        Number.isSafeInteger(frame.credentialVersion) && frame.credentialVersion >= 1 &&
+        (frame.type === 'bound' || isId(frame.operationId));
       break;
     case 'open':
       valid = frame.protocol === TERMINAL_LIMITS.protocol && isId(frame.sessionId) &&

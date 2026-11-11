@@ -1,11 +1,6 @@
 <template>
-  <div id="autoDiscoveryModal" class="modal-overlay" :class="{ active: show }">
-    <div class="modal-dialog">
-      <div class="modal-header">
-        <div class="modal-title">{{ trans.autoAdd }}</div>
-        <button class="modal-close" @click="$emit('close')">✕</button>
-      </div>
-
+  <AdminDialog :open="show" :title="trans.autoAdd" size="edit" @close="$emit('close')">
+    <template #body>
       <div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.targetOs }}</label>
@@ -96,18 +91,18 @@
           <pre class="cmd-output">{{ installCommand }}</pre>
         </div>
       </div>
-
-      <div class="modal-footer flex-justify-between">
-        <button @click="$emit('copy-cmd')" class="btn btn-primary">{{ copied ? '✅ ' + trans.copied : '📋 ' + trans.copy }}</button>
-        <button @click="$emit('close')" class="btn">{{ trans.cancel }}</button>
-      </div>
-    </div>
-  </div>
+    </template>
+    <template #footer>
+      <button @click="$emit('close')" class="btn">{{ trans.cancel }}</button>
+      <button @click="$emit('copy-cmd')" class="btn btn-primary">{{ copied ? ' ' + trans.copied : ' ' + trans.copy }}</button>
+    </template>
+  </AdminDialog>
 </template>
 
 <script setup>
+import AdminDialog from './AdminDialog.vue'
 import { computed, ref, watch } from 'vue'
-import HelpTooltip from '../../../components/HelpTooltip.vue'
+import HelpTooltip from './AdminHelp.vue'
 
 const props = defineProps({
   trans: { type: Object, required: true },

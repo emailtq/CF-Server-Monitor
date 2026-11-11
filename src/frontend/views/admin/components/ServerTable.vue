@@ -1,171 +1,36 @@
-﻿<template>
+<template>
   <div id="tab-servers" class="tab-content" :class="{ active: activeTab === 'servers' }">
-    <div class="alert alert-info alert-stack">
-      <div class="alert-line">
-        <span>{{ trans.installCommand }}</span>
-        <HelpTooltip>
-          <span>{{ trans.clickToCopy }} <strong>📋</strong> {{ trans.installCommand }}</span>
-        </HelpTooltip>
-      </div>
-    </div>
-
     <div class="toolbar">
-      <input type="text" v-model="newServerName" class="toolbar-input" :placeholder="'> ' + trans.serverName + '...'">
-      <div class="toolbar-select-wrapper">
-        <select v-model="selectedServerGroup" class="toolbar-select">
-          <option v-for="group in serverGroupOptions" :key="group.value" :value="group.value">{{ group.label }}</option>
-          <option :value="CUSTOM_SERVER_GROUP_VALUE">{{ trans.custom || 'Custom' }}</option>
-        </select>
-        <input
-          v-if="showCustomServerGroup"
-          type="text"
-          v-model="newServerGroup"
-          class="toolbar-select toolbar-custom-input"
-          :placeholder="trans.default || 'Default'"
-        >
-        <button v-if="newServerGroup" @click="newServerGroup = ''" class="toolbar-select-clear" aria-label="Clear">✕</button>
+      <div class="admin-filter-group">
+        <label class="admin-search"><input v-model="search" type="search" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes"><AdminIcon name="search" /></label>
+        <select v-model="filterGroup" class="toolbar-select" :aria-label="trans.adminFilterGroup"><option value="">{{ trans.adminAllGroups }}</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select>
       </div>
-      <button @click="$emit('add-server')" class="btn btn-primary">+ {{ trans.addServer }}</button>
-      <button @click="$emit('auto-discovery-cmd')" class="btn">🤖 {{ trans.autoAdd }}</button>
+      <button @click="$emit('groups')" class="btn"><AdminIcon name="layers" />{{ trans.group }}</button>
+      <button @click="$emit('auto-discovery-cmd')" class="btn"><AdminIcon name="server" />{{ trans.adminBulkAdd }}</button>
+      <button @click="$emit('add-server')" class="btn btn-primary"><AdminIcon name="plus" />{{ trans.adminAddNode }}</button>
     </div>
-
-    <div class="batch-actions">
-      <button @click="$emit('batch-edit')" class="btn btn-blue" :disabled="selectedServers.length === 0">✏️ {{ trans.batchEdit }}</button>
-      <button @click="$emit('batch-delete')" class="btn btn-red">🗑 {{ trans.batchDelete }}</button>
-      <button @click="$emit('toggle-select-all')" class="btn">☐ {{ trans.toggleAll }}</button>
-      <button @click="$emit('refresh-cache')" class="btn" :disabled="cacheRefreshing">{{ cacheRefreshing ? '⏳' : '🔄' }} {{ trans.refreshCache }}</button>
-    </div>
-
-    <div class="table-wrapper">
-      <table class="terminal-table">
-        <thead>
-          <tr>
-            <th class="table-center-cell col-width-35">
-              <HelpTooltip :text="trans.dragSort" />
-            </th>
-            <th class="col-width-30"><input type="checkbox" id="select-all" @change="$emit('select-all', $event)" class="checkbox-accent-green"></th>
-            <th>{{ trans.hostname.toUpperCase() }}</th>
-            <th>IP</th>
-            <th>{{ trans.group.toUpperCase() }}</th>
-            <th>{{ trans.tags.toUpperCase() }}</th>
-            <th>{{ trans.note.toUpperCase() }}</th>
-            <th>{{ trans.price.toUpperCase() }}</th>
-            <th>{{ trans.expirationDate.toUpperCase() }}</th>
-            <th>{{ trans.autoRenewal.toUpperCase() }}</th>
-            <th>{{ trans.traffic.toUpperCase() }}</th>
-            <th>{{ trans.agentVersion.toUpperCase() }}</th>
-            <th>{{ trans.status.toUpperCase() }}</th>
-            <th>{{ trans.actions.toUpperCase() }}</th>
-          </tr>
-        </thead>
+    <div class="table-wrapper" :aria-label="trans.adminNodes" tabindex="0">
+      <table class="terminal-table admin-node-table">
+        <thead><tr><th class="admin-col-name">{{ trans.adminNodeName }}</th><th class="admin-col-ip">IP</th><th>{{ trans.status }}</th><th>{{ trans.traffic }}</th><th>{{ trans.price }}<span class="admin-expiry-inline"> / {{ trans.adminExpiry }}</span></th><th class="admin-expiry-column">{{ trans.adminExpiry }}</th><th class="admin-col-actions">{{ trans.actions }}</th></tr></thead>
         <tbody>
-          <tr v-if="servers.length === 0">
-            <td colspan="14" class="empty-state"><span class="empty-icon">📦</span> {{ trans.noServers }}</td>
-          </tr>
-          <tr
-            v-for="server in servers"
-            :key="server.id"
-            class="server-row"
-            :data-server-id="server.id"
-          >
-            <td
-              class="drag-handle table-center-cell"
-              :aria-label="trans.dragSort"
-              draggable="false"
-              @pointerdown="handlePointerDown($event, server.id)"
-              @pointermove="handlePointerMove"
-              @pointerup="handlePointerUp"
-              @pointercancel="handlePointerCancel"
-            >⋮⋮</td>
-            <td class="table-center-cell"><input type="checkbox" class="server-checkbox" :value="server.id" :checked="selectedServers.includes(server.id)" @change="$emit('toggle-server', server.id)"></td>
-            <td>
-              <div class="server-info">
-                <span v-if="server.region && server.region !== 'xx'" class="country-os-icons">
-                  <img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(server.region) + '.svg')" :alt="server.region" class="flag-img">
-                  <OsIcon :os="server.os" />
-                </span>
-                <span v-else class="country-os-icons">
-                  <span class="flag-fallback">🏳️</span>
-                  <OsIcon :os="server.os" />
-                </span>
-                <a
-                  :href="getServerDetailHref(server)"
-                  class="server-name-link"
-                >{{ server.name }}</a>
-              </div>
-            </td>
-            <td>
-              <div
-                v-if="getServerIpRows(server).length"
-                class="server-ip-list"
-              >
-                <span
-                  v-for="ipItem in getServerIpRows(server)"
-                  :key="ipItem.copyField"
-                  class="server-ip-line"
-                  :class="{ 'spec-copied': isSpecCopied(server, ipItem.copyField) }"
-                  @click.stop="emitCopySpec(server, ipItem.copyField, ipItem.address)"
-                >
-                  <span class="server-ip-value">{{ ipItem.address }}</span>
-                </span>
-              </div>
-              <span v-else>-</span>
-            </td>
-            <td>{{ server.server_group || trans.default }}</td>
-            <td>
-              <div v-if="splitTags(server.tags).length" class="tag-list admin-tag-list">
-                <span v-for="(tag, index) in splitTags(server.tags)" :key="tag" :class="['badge', 'badge-tag', tagColorClass(index)]">{{ tag }}</span>
-              </div>
-              <span v-else>-</span>
-            </td>
-            <td>
-              <span
-                class="note-text"
-                :class="{ 'note-copied': copiedNoteServerId === server.id }"
-                @click.stop="$emit('copy-note', server)"
-              >{{ server.note || '-' }}</span>
-            </td>
-            <td>
-              <span
-                class="spec-text"
-                :class="{ 'spec-copied': isSpecCopied(server, 'price') }"
-                @click.stop="emitCopySpec(server, 'price', formatServerPrice(server))"
-              >{{ formatServerPrice(server) }}</span>
-            </td>
-            <td><span class="date-text">{{ server.expire_date || '-' }}</span></td>
-            <td>
-              <span
-                class="renewal-text"
-              >{{ isServerAutoRenewal(server) ? trans.enabled : trans.disabled }}</span>
-            </td>
-            <td>
-              <span
-                class="spec-text"
-                :class="{ 'spec-copied': isSpecCopied(server, 'traffic_limit') }"
-                @click.stop="emitCopySpec(server, 'traffic_limit', server.traffic_limit ? formatBytes(server.traffic_limit * 1024 * 1024 * 1024) : '')"
-              >{{ server.traffic_limit ? formatBytes(server.traffic_limit * 1024 * 1024 * 1024) : '-' }}</span>
-            </td>
-            <td>
-              <span
-                class="spec-text"
-                :class="[getAgentVersionClass(server.agent_version), { 'spec-copied': isSpecCopied(server, 'agent_version') }]"
-                @click.stop="emitCopySpec(server, 'agent_version', server.agent_version)"
-              >{{ server.agent_version || '●' }}</span>
-            </td>
-            <td>
-              <span :style="{ color: server.is_online ? 'var(--accent-green)' : 'var(--accent-red)' }" class="font-bold">{{ (server.is_online ? '● ' + trans.online : '● ' + trans.offline).toUpperCase() }}</span>
-            </td>
-            <td>
-              <div class="action-group">
-                <div class="action-btns">
-                  <button @click="$emit('terminal', server)" class="btn btn-icon btn-green" :disabled="!terminalAvailable" :aria-label="trans.terminalOpen" :title="trans.terminalOpen">&gt;_</button>
-                  <button @click="$emit('terminal-access', server)" class="btn btn-icon" :disabled="!terminalAvailable" :aria-label="trans.terminalAccess" :title="trans.terminalAccess">⚿</button>
-                  <button @click="$emit('copy-cmd', server.id)" class="btn btn-icon btn-green" :aria-label="trans.copy">{{ copiedServerId === server.id ? '✅' : '📋' }}</button>
-                  <button @click="$emit('edit', server)" class="btn btn-icon btn-blue" :aria-label="trans.edit">✏️</button>
-                  <button @click="$emit('delete', server.id)" class="btn btn-icon btn-red" :aria-label="trans.delete">🗑️</button>
-                </div>
-              </div>
-            </td>
+          <tr v-if="filteredServers.length === 0"><td colspan="7" class="empty-state">{{ trans.noServers }}<button v-if="sortingDisabled" class="btn" @click="search = ''; filterGroup = ''">{{ trans.clear }}</button></td></tr>
+          <tr v-for="server in filteredServers" :key="server.id" class="server-row" :data-server-id="server.id">
+            <td><div class="admin-node-name">
+              <button type="button" class="drag-handle btn btn-icon" :disabled="sortingDisabled" :aria-label="trans.dragSort" draggable="false" @pointerdown="handlePointerDown($event, server.id)" @pointermove="handlePointerMove" @pointerup="handlePointerUp" @pointercancel="handlePointerCancel"><AdminIcon name="grip-vertical" /></button>
+              <div><div class="server-info"><span class="country-os-icons"><img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(server.region || 'xx') + '.svg')" :alt="server.region || 'xx'" class="flag-img"><OsIcon :os="server.os" /></span><button class="server-name-link" :title="server.name" @click="$emit('edit', server)">{{ server.name }}</button></div><div class="server-secondary">{{ server.server_group || trans.default }} · {{ server.os || '-' }}</div></div>
+            </div></td>
+            <td><div v-if="getServerIpRows(server).length" class="server-ip-list"><button v-for="ip in getServerIpRows(server)" :key="ip.copyField" class="admin-copy-value" :class="{ 'spec-copied': isSpecCopied(server, ip.copyField) }" :aria-label="trans.copy + ': ' + ip.address" @click="emitCopySpec(server, ip.copyField, ip.address)">{{ ip.address }}</button></div><span v-else>-</span></td>
+            <td><div class="admin-status-stack"><span class="admin-node-status" :class="{ 'is-offline': !server.is_online }">{{ server.is_online ? trans.online : trans.offline }}</span><span v-if="isEnabledFlag(server.is_hidden)" class="admin-private-status">{{ trans.adminPrivateNode }}</span><span v-if="!server.is_online && server.timestamp" class="server-secondary">{{ offlineAge(server) }}</span></div></td>
+            <td><span class="admin-traffic-used" :class="{ 'admin-near-limit': trafficBytes(server) !== null && server.traffic_limit > 0 && trafficBytes(server) / (server.traffic_limit * 1024 ** 3) >= 0.8 }">{{ formatTraffic(server) }}</span> <small class="server-secondary admin-traffic-limit">/ {{ server.traffic_limit ? server.traffic_limit + ' GB' : '-' }}</small></td>
+            <td><button class="admin-copy-value" @click="emitCopySpec(server, 'price', formatServerPrice(server))">{{ formatServerPrice(server) }}</button><small class="server-secondary admin-expiry-inline">{{ server.expire_date || '-' }}</small></td>
+            <td class="admin-expiry-column">{{ server.expire_date || '-' }}</td>
+            <td><div class="action-btns">
+              <span class="terminal-entry" tabindex="0" :aria-label="terminalReason(server)"><button @click="$emit('terminal', server)" class="btn btn-icon" :disabled="!terminalReady(server) || !!terminalOpening" :aria-label="trans.terminalOpen" :aria-describedby="'terminal-reason-' + server.id"><AdminIcon name="terminal" /></button><small :id="'terminal-reason-' + server.id" class="terminal-reason">{{ terminalReason(server) }}</small></span>
+              <button @click="$emit('copy-cmd', server.id)" class="btn btn-icon" :aria-label="trans.copy" :title="trans.installCommand"><AdminIcon name="download" /></button>
+              <button @click="$emit('edit', server)" class="btn btn-icon" :aria-label="trans.edit" :title="trans.edit"><AdminIcon name="pencil" /></button>
+              <button @click="$emit('renew', server)" class="btn btn-icon" :aria-label="trans.adminRenew" :title="trans.adminRenew"><AdminIcon name="calendar-clock" /></button>
+              <button @click="$emit('delete', server.id)" class="btn btn-icon btn-red" :aria-label="trans.delete" :title="trans.delete"><AdminIcon name="trash-2" /></button>
+            </div></td>
           </tr>
         </tbody>
       </table>
@@ -179,8 +44,10 @@ import { getFlagRegionCode, formatBytes, getTerminalBase } from '../../../utils/
 import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
 import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, getLocalizedOptionField, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../utils/server.js'
+import { normalizeTimestamp } from '../../../utils/time.js'
+import { getTrafficUsageBytes } from '../../../composables/useServerCardData.js'
 import OsIcon from '../../../components/OsIcon.vue'
-import HelpTooltip from '../../../components/HelpTooltip.vue'
+import AdminIcon from './AdminIcon.vue'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -189,6 +56,8 @@ const props = defineProps({
   groups: { type: Array, default: () => ['Default'] },
   activeTab: { type: String, default: 'servers' },
   selectedApiIndex: { type: Number, default: 0 },
+  terminalStatuses: { type: Object, default: () => ({}) },
+  terminalOpening: { type: String, default: '' },
   latestAgentVersion: { type: String, default: '' },
   cacheRefreshing: { type: Boolean, default: false },
   copiedServerId: { type: [String, Number], default: null },
@@ -200,66 +69,34 @@ const newServerName = defineModel('newServerName', { type: String, default: '' }
 const newServerGroup = defineModel('newServerGroup', { type: String, default: '' })
 
 const emit = defineEmits([
-  'add-server', 'auto-discovery-cmd', 'batch-edit', 'batch-delete', 'toggle-select-all', 'refresh-cache', 'select-all',
+  'groups', 'add-server', 'auto-discovery-cmd', 'batch-edit', 'batch-delete', 'toggle-select-all', 'refresh-cache', 'select-all',
   'drag-start', 'drop', 'toggle-server', 'copy-note',
-  'copy-spec', 'copy-cmd', 'edit', 'delete', 'terminal', 'terminal-access'
+  'copy-spec', 'copy-cmd', 'edit', 'delete', 'terminal', 'terminal-access', 'renew'
 ])
 
 const terminalAvailable = computed(() => {
   try { getTerminalBase(props.selectedApiIndex); return true } catch (_) { return false }
 })
+const terminalReady = server => {
+  const status = props.terminalStatuses[server.id]
+  return terminalAvailable.value && status?.state === 'ready' && status.enabled && status.connected && status.supported
+}
+const terminalReason = server => {
+  if (!terminalAvailable.value) return props.trans.terminal_origin_denied
+  const state = props.terminalStatuses[server.id]?.state || 'query_failed'
+  return state === 'ready' ? props.trans.terminalOpen : props.trans[state.startsWith('terminal_') ? state : 'terminal_' + state] || props.trans.terminal_query_failed
+}
 
 const POINTER_DRAG_THRESHOLD = 6
-const CUSTOM_SERVER_GROUP_VALUE = '__custom__'
 let pointerDragState = null
-
-const serverGroupOptions = computed(() => {
-  const defaultLabel = props.trans.default || 'Default'
-  const seen = new Set(['', defaultLabel])
-  const options = [{ value: '', label: defaultLabel }]
-  for (const group of props.groups) {
-    const value = String(group || '').trim()
-    if (!value || seen.has(value)) continue
-    seen.add(value)
-    options.push({ value, label: value })
-  }
-  return options
+const search = ref('')
+const filterGroup = ref('')
+const sortingDisabled = computed(() => !!search.value.trim() || !!filterGroup.value)
+const filteredServers = computed(() => {
+  const term = search.value.trim().toLocaleLowerCase()
+  return props.servers.filter(server => (!filterGroup.value || (server.server_group || props.trans.default) === filterGroup.value) && (!term || [server.name, server.ip_v4, server.ip_v6, server.region, server.server_group, server.os].some(value => String(value || '').toLocaleLowerCase().includes(term))))
 })
-
-const manualCustomServerGroup = ref(false)
-const isKnownServerGroup = (value) => serverGroupOptions.value.some(group => group.value === String(value || '').trim())
-
-const selectedServerGroup = computed({
-  get: () => {
-    const currentGroup = String(newServerGroup.value || '').trim()
-    if (manualCustomServerGroup.value || (!isKnownServerGroup(currentGroup) && currentGroup)) {
-      return CUSTOM_SERVER_GROUP_VALUE
-    }
-    return currentGroup
-  },
-  set: (value) => {
-    if (value === CUSTOM_SERVER_GROUP_VALUE) {
-      manualCustomServerGroup.value = true
-      if (isKnownServerGroup(newServerGroup.value)) {
-        newServerGroup.value = ''
-      }
-      return
-    }
-    manualCustomServerGroup.value = false
-    newServerGroup.value = value
-  }
-})
-
-const showCustomServerGroup = computed(() => selectedServerGroup.value === CUSTOM_SERVER_GROUP_VALUE)
-
-watch(
-  newServerGroup,
-  (value) => {
-    if (!String(value || '').trim() || isKnownServerGroup(value)) {
-      manualCustomServerGroup.value = false
-    }
-  }
-)
+watch(() => props.selectedApiIndex, () => { search.value = ''; filterGroup.value = ''; cleanupPointerDrag() })
 
 const emitDragStart = (event, serverId) => {
   emit('drag-start', event, serverId)
@@ -361,7 +198,7 @@ const startPointerDrag = (event) => {
 }
 
 const handlePointerDown = (event, serverId) => {
-  if (event.isPrimary === false) return
+  if (sortingDisabled.value || event.isPrimary === false) return
   if (event.pointerType === 'mouse' && event.button !== 0) return
   const row = getServerRow(event.target)
   if (!row) return
@@ -440,11 +277,6 @@ const emitCopySpec = (server, field, value) => {
   })
 }
 
-const splitTags = (value) => String(value || '')
-  .split(',')
-  .map(tag => tag.trim())
-  .filter(Boolean)
-const tagColorClass = (index) => `tag-color-${index % 6}`
 const normalizePublicIpValue = (value) => String(value ?? '').trim()
 const isPublicIpAvailable = (value) => {
   const normalized = normalizePublicIpValue(value)
@@ -467,16 +299,25 @@ const formatServerPrice = (server) => {
   const currency = normalizeCurrency(server.currency || detectCurrencySymbol(server.price))
   const option = getBillingCycleOption(detectBillingCycle(server.price) || server.billing_cycle)
   const cycleLabel = getLocalizedOptionField(option, 'shortLabel', currentLang.value)
-  return `${currency}${trimDisplayPrice(price)}/${cycleLabel}`
+  return `${currency} ${trimDisplayPrice(price)} / ${cycleLabel}`
 }
-const isServerAutoRenewal = (server) => isEnabledFlag(server.auto_renewal)
-const normalizeVersion = (version) => String(version || '').trim()
-const getAgentVersionClass = (version) => {
-  const latest = normalizeVersion(props.latestAgentVersion)
-  if (!latest) return ''
-  return normalizeVersion(version) === latest ? 'text-green' : 'text-red'
+const offlineAge = (server) => {
+  const timestamp = normalizeTimestamp(server.timestamp)
+  if (!timestamp) return '-'
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
+  return minutes >= 60 ? Math.floor(minutes / 60) + ' ' + props.trans.adminHours : minutes + ' ' + props.trans.adminMinutes
 }
-const getServerQuery = () => props.selectedApiIndex ? `?apiIndex=${props.selectedApiIndex}` : ''
-// 详情页是公开页面，走域名根路径入口 /#/server/:id
-const getServerDetailHref = (server) => `/#/server/${encodeURIComponent(server.id)}${getServerQuery()}`
+const trafficBytes = (server) => {
+  const rx = server.net_rx_monthly, tx = server.net_tx_monthly
+  const required = server.traffic_calc_type === 'ul' ? [tx] : server.traffic_calc_type === 'dl' ? [rx] : [rx, tx]
+  if (required.some(value => !['number', 'string'].includes(typeof value) || String(value).trim() === '' || !Number.isFinite(Number(value)) || Number(value) < 0)) return null
+  return getTrafficUsageBytes(server)
+}
+const formatTraffic = server => trafficBytes(server) === null ? '-' : formatBytes(trafficBytes(server))
 </script>
+
+<style scoped>
+.terminal-entry { position: relative; display: inline-flex; }
+.terminal-reason { display: none; position: absolute; right: 0; top: 100%; z-index: 5; width: 200px; padding: 8px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); white-space: normal; }
+.terminal-entry:focus .terminal-reason, .terminal-entry:focus-within .terminal-reason, .terminal-entry:hover .terminal-reason { display: block; }
+</style>

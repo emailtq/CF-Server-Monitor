@@ -1,13 +1,6 @@
 <template>
-  <div id="editModal" class="modal-overlay" :class="{ active: show }">
-    <div class="modal-dialog edit-server-modal">
-      <div class="modal-header">
-        <div class="modal-title">{{ currentServerName }}</div>
-        <button class="modal-close" @click="$emit('close')">✕</button>
-      </div>
-      <input type="hidden" v-model="editForm.id">
-
-      <div class="form-row">
+  <AdminDialog :open="show" :title="currentServerName" size="edit" :busy="saving" @close="$emit('close')">
+    <template #body><input type="hidden" v-model="editForm.id"><div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.hostnameLabel }} <span class="required">*</span></label>
           <input type="text" name="edit_name" autocomplete="off" v-model="editForm.name" class="form-input" placeholder="e.g. My Server">
@@ -18,7 +11,7 @@
           <input type="text" name="edit_server_group" autocomplete="off" v-model="editForm.server_group" class="form-input" placeholder="e.g. US VPS">
         </div>
       </div>
-      <div class="form-row">
+<div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.tags }}</label>
           <input type="text" name="edit_tags" autocomplete="off" v-model="editForm.tags" class="form-input" :placeholder="trans.tagsPlaceholder">
@@ -29,39 +22,46 @@
           <input type="text" name="edit_region" autocomplete="off" v-model.trim="editForm.region" class="form-input" :placeholder="trans.regionPlaceholder">
         </div>
       </div>
-
-      <div class="form-group">
+<div class="form-group">
         <label class="form-label">{{ trans.note }}</label>
         <textarea name="edit_note" autocomplete="off" v-model="editForm.note" class="form-textarea" rows="2" :placeholder="trans.notePlaceholder"></textarea>
-      </div>
-
-      <div class="form-row mobile-two-row">
+      </div><div class="form-row">
         <div class="form-group flex-1">
-          <label class="form-label">{{ trans.currency }}</label>
-          <select v-model="editForm.currency" class="form-select">
-            <option v-for="item in currencySelectOptions" :key="item.symbol" :value="item.symbol">{{ currencyLabel(item) }}</option>
-          </select>
+          <label class="checkbox-item no-margin">
+            <input type="checkbox" v-model="editForm.auto_renewal">
+            <span>
+              <b>{{ trans.autoRenewal }}</b>
+            </span>
+          </label>
         </div>
 
-        <div class="form-group flex-1">
-          <label class="form-label">{{ trans.price }}</label>
-          <input type="text" name="edit_price" autocomplete="off" inputmode="decimal" v-model="editForm.price" class="form-input" placeholder="40.00" @blur="normalizePriceInput">
+        <div class="form-group">
+          <label class="checkbox-item no-margin">
+            <input type="checkbox" :checked="editForm.auto_update" @change="handleAutoUpdateChange">
+            <span>
+              <b>{{ trans.autoUpdate }}</b>
+            </span>
+          </label>
         </div>
 
-        <div class="form-group flex-1">
-          <label class="form-label">{{ trans.billingCycle }}</label>
-          <select v-model="editForm.billing_cycle" class="form-select">
-            <option v-for="item in billingCycleOptions" :key="item.value" :value="item.value">{{ cycleLabel(item) }}</option>
-          </select>
+        <div class="form-group">
+          <label class="checkbox-item no-margin">
+            <input type="checkbox" v-model="editForm.is_hidden">
+            <span>
+              <b>{{ trans.hideFromPublic }}</b>
+            </span>
+          </label>
         </div>
 
-        <div class="form-group flex-1">
-          <label class="form-label">{{ trans.expirationDate }}</label>
-          <input type="date" name="edit_expire_date" autocomplete="off" v-model="editForm.expire_date" class="form-input" @click="openDatePicker">
+        <div v-if="hasNodeNotificationOptions" class="form-group">
+          <label class="checkbox-item no-margin">
+            <input type="checkbox" v-model="editForm.offline_notify_disabled">
+            <span>
+              <b>{{ trans.disableOfflineNotify }}</b>
+            </span>
+          </label>
         </div>
-      </div>
-
-      <div class="form-row mobile-two-row">
+      </div><section class="admin-form-section"><h4>{{ trans.traffic }}</h4><div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.trafficLimit }} (GB)</label>
           <input type="number" name="edit_traffic_limit" autocomplete="off" v-model="editForm.traffic_limit" class="form-input" placeholder="e.g. 1000" min="0" step="1">
@@ -92,9 +92,31 @@
           </label>
           <input type="number" name="edit_traffic_alert_percent" autocomplete="off" v-model="editForm.traffic_alert_percent" class="form-input" min="0" max="100" step="1">
         </div>
-      </div>
+      </div></section><details class="admin-details"><summary>{{ trans.billing }}</summary><div class="form-row mobile-two-row">
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.currency }}</label>
+          <select v-model="editForm.currency" class="form-select">
+            <option v-for="item in currencySelectOptions" :key="item.symbol" :value="item.symbol">{{ currencyLabel(item) }}</option>
+          </select>
+        </div>
 
-      <div class="form-row mobile-two-row">
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.price }}</label>
+          <input type="text" name="edit_price" autocomplete="off" inputmode="decimal" v-model="editForm.price" class="form-input" placeholder="40.00" @blur="normalizePriceInput">
+        </div>
+
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.billingCycle }}</label>
+          <select v-model="editForm.billing_cycle" class="form-select">
+            <option v-for="item in billingCycleOptions" :key="item.value" :value="item.value">{{ cycleLabel(item) }}</option>
+          </select>
+        </div>
+
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.expirationDate }}</label>
+          <input type="date" name="edit_expire_date" autocomplete="off" v-model="editForm.expire_date" class="form-input" @click="openDatePicker">
+        </div>
+      </div></details><details class="admin-details"><summary>{{ trans.agentVersion }}</summary><p class="text-muted text-sm">{{ agentVersion || '-' }}</p><div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ trans.collectInterval }}
@@ -134,8 +156,7 @@
           </select>
         </div>
       </div>
-
-      <div class="form-row mobile-two-row">
+<div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ trans.pingMode }}
@@ -168,8 +189,7 @@
           <input type="number" name="edit_tx_correction" autocomplete="off" v-model="editForm.tx_correction" class="form-input" placeholder="0" min="0" step="0.1">
         </div>
       </div>
-
-      <div class="form-row">
+<div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ settings.custom_ct_name || trans.customCt }}
@@ -187,7 +207,7 @@
           <p v-if="pingNodeErrors.custom_cu" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cu }}</p>
         </div>
       </div>
-      <div class="form-row">
+<div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ settings.custom_cm_name || trans.customCm }}
@@ -205,7 +225,7 @@
           <p v-if="pingNodeErrors.custom_bd" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_bd }}</p>
         </div>
       </div>
-      <div class="form-row">
+<div class="form-row">
         <div v-for="(field, index) in ['node_1', 'node_2']" :key="field" class="form-group flex-1">
           <label class="form-label">
             {{ settings[`${field}_name`] || `Node ${index + 1}` }}
@@ -215,7 +235,7 @@
           <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
         </div>
       </div>
-      <div class="form-row">
+<div class="form-row">
         <div v-for="(field, index) in ['node_3', 'node_4']" :key="field" class="form-group flex-1">
           <label class="form-label">
             {{ settings[`${field}_name`] || `Node ${index + 3}` }}
@@ -224,55 +244,18 @@
           <input type="text" :name="`edit_${field}`" autocomplete="off" v-model.trim="editForm[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" :placeholder="settings[field] || 'host[:port] / [IPv6]:port'">
           <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
         </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group flex-1">
-          <div class="checkbox-item no-margin">
-            <input type="checkbox" v-model="editForm.auto_renewal">
-            <label>
-              <b>{{ trans.autoRenewal }}</b>
-            </label>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <div class="checkbox-item no-margin">
-            <input type="checkbox" :checked="editForm.auto_update" @change="handleAutoUpdateChange">
-            <label>
-              <b>{{ trans.autoUpdate }}</b>
-            </label>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <div class="checkbox-item no-margin">
-            <input type="checkbox" v-model="editForm.is_hidden">
-            <label>
-              <b>{{ trans.hideFromPublic }}</b>
-            </label>
-          </div>
-        </div>
-
-        <div v-if="hasNodeNotificationOptions" class="form-group">
-          <div class="checkbox-item no-margin">
-            <input type="checkbox" v-model="editForm.offline_notify_disabled">
-            <label>
-              <b>{{ trans.disableOfflineNotify }}</b>
-            </label>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer flex-justify-between">
-        <button @click="$emit('save')" class="btn btn-primary" :disabled="hasPingNodeErrors">{{ trans.save }}</button>
-        <button @click="$emit('close')" class="btn">{{ trans.cancel }}</button>
-      </div>
-    </div>
-  </div>
+      </div><div class="admin-form-actions"><a class="btn admin-quiet" :href="`/#/server/${encodeURIComponent(editForm.id)}?apiIndex=${selectedApiIndex}`">{{ trans.view }}</a><button type="button" class="btn" @click="$emit('terminal-access')">{{ trans.terminalAccess }}</button></div></details><p v-if="error" class="text-red" role="alert">{{ error }}</p></template>
+    <template #footer>
+      <button @click="$emit('close')" class="btn" :disabled="saving">{{ trans.cancel }}</button>
+      <button @click="$emit('save')" class="btn btn-primary" :disabled="saving || hasPingNodeErrors">{{ saving ? trans.saving : trans.save }}</button>
+    </template>
+  </AdminDialog>
 </template>
 
 <script setup>
+import AdminDialog from './AdminDialog.vue'
 import { computed, watch } from 'vue'
-import HelpTooltip from '../../../components/HelpTooltip.vue'
+import HelpTooltip from './AdminHelp.vue'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 import { currentLang } from '../../../utils/i18n.js'
 import { BILLING_CYCLES, CURRENCY_OPTIONS, getLocalizedOptionField, normalizePrice, renewExpireDateIfNeeded } from '../../../utils/server.js'
@@ -282,7 +265,9 @@ const editForm = defineModel('editForm', { type: Object, required: true })
 const props = defineProps({
   trans: { type: Object, required: true },
   show: { type: Boolean, default: false },
+  saving: { type: Boolean, default: false },
   currentServerName: { type: String, default: '' },
+  agentVersion: String, error: String, selectedApiIndex: { type: Number, default: 0 },
   settings: { type: Object, required: true }
 })
 
@@ -371,7 +356,7 @@ watch(
   { immediate: true }
 )
 
-const emit = defineEmits(['save', 'close', 'toggle-auto-update'])
+const emit = defineEmits(['save', 'close', 'toggle-auto-update', 'terminal-access'])
 
 const handleAutoUpdateChange = (event) => {
   const nextValue = event.target.checked

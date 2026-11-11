@@ -400,7 +400,7 @@ export const fetchAllHistory = async (id, hours, apiIndex = 0) => {
   return Array.isArray(result.data) ? result.data : []
 }
 
-const TERMINAL_ACTIONS = new Set(['terminal_enable_site', 'terminal_authorize_node', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close'])
+const TERMINAL_ACTIONS = new Set(['terminal_prepare_install', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close'])
 
 export const getTerminalBase = (apiIndex = 0) => {
   const bases = getApiBases()
@@ -422,23 +422,25 @@ export const getTerminalSocketUrl = (serverId, sessionId, browserPath, apiIndex 
   return `${base.replace('https:', 'wss:')}${browserPath}`
 }
 
-export const adminApi = async (data, apiIndex = 0) => {
+export const adminApi = async (data, apiIndex = 0, requestOwner) => {
   if (TERMINAL_ACTIONS.has(data.action)) {
     try { getTerminalBase(apiIndex) } catch (error) { return { error: error.message, status: 0, code: 0 } }
     return http.postByIndex('/admin/api', data, apiIndex, {
       includeAuth: false, includeTurnstile: false, includeTurnstileVerified: false,
-      autoRedirect: false, responsePolicy: 'terminal', timeoutMs: 15000
+      autoRedirect: false, responsePolicy: 'terminal', timeoutMs: 15000, requestOwner
     })
   }
-  const result = await http.postByIndex('/admin/api', data, apiIndex)
+  const result = await http.postByIndex('/admin/api', data, apiIndex, { requestOwner })
   return result
 }
 
-export const login = async (username, password, turnstileToken = '', apiIndex = 0) => {
+export const login = async (username, password, turnstileToken = '', apiIndex = 0, requestOwner) => {
+  if (requestOwner && !requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
   if (turnstileToken) {
     localStorage.setItem(STORAGE.TURNSTILE_TOKEN, turnstileToken)
   }
-  const result = await http.postByIndex('/admin/api', { action: 'login', username, password }, apiIndex, { autoRedirect: false })
+  const result = await http.postByIndex('/admin/api', { action: 'login', username, password }, apiIndex, { autoRedirect: false, requestOwner })
+  if (requestOwner && !requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
   
   if (!result.error && result.data && result.data.token) {
     localStorage.setItem(STORAGE.JWT_TOKEN, result.data.token)
@@ -460,8 +462,9 @@ export const logout = () => {
   localStorage.removeItem(STORAGE.JWT_TOKEN)
 }
 
-export const fetchConfig = async (apiIndex = 0) => {
-  const result = await http.getByIndex('/api/config', apiIndex, { includeAuth: true, includeTurnstile: false })
+export const fetchConfig = async (apiIndex = 0, requestOwner) => {
+  const result = await http.getByIndex('/api/config', apiIndex, { includeAuth: true, includeTurnstile: false, requestOwner })
+  if (result.stale || (requestOwner && !requestOwner())) return { error: 'stale_request', stale: true, status: 0 }
   if (result.error) return null
   if (result.data && result.data.version) {
     VERSION.value = result.data.version
@@ -471,8 +474,9 @@ export const fetchConfig = async (apiIndex = 0) => {
   return result.data
 }
 
-export const upgradeDatabase = async (apiIndex = 0) => {
-  const result = await http.postByIndex('/updateDatabase', {}, apiIndex, { autoRedirect: false })
+export const upgradeDatabase = async (apiIndex = 0, requestOwner) => {
+  const result = await http.postByIndex('/updateDatabase', {}, apiIndex, { autoRedirect: false, requestOwner })
+  if (result.stale || (requestOwner && !requestOwner())) return { error: 'stale_request', stale: true, status: 0 }
   if (result.error) {
     if (result.status === 401) {
       return { success: false, error: 'Unauthorized' }
@@ -482,8 +486,9 @@ export const upgradeDatabase = async (apiIndex = 0) => {
   return result.data
 }
 
-export const clearHistory = async (apiIndex = 0) => {
-  const result = await http.postByIndex('/clearHistory', {}, apiIndex, { autoRedirect: false })
+export const clearHistory = async (apiIndex = 0, requestOwner) => {
+  const result = await http.postByIndex('/clearHistory', {}, apiIndex, { autoRedirect: false, requestOwner })
+  if (result.stale || (requestOwner && !requestOwner())) return { error: 'stale_request', stale: true, status: 0 }
   if (result.error) {
     if (result.status === 401) {
       return { success: false, error: 'Unauthorized' }

@@ -130,6 +130,7 @@ export async function harness() {
         if (path === '/test/release-audit') {this.pauseAudit = false; this.releaseAudit?.(); return new Response('OK');}
         if (path === '/test/internal') return this.broker.fetch(new Request('https://terminal.internal/' + new URL(request.url).searchParams.get('op'), request));
         if (path === '/test/snapshot') return Response.json({meta:await this.state.storage.get('terminal'), blocked:!!this.broker.blocked, alarm:await this.state.storage.getAlarm(), peers:this.broker.peers.size, attachments:this.state.getWebSockets().map(ws=>ws.deserializeAttachment())});
+        if (path === '/test/legacy-capability') {const meta=await this.state.storage.get('terminal');delete meta.hello;await this.state.storage.put('terminal',meta);this.broker=new TerminalBroker(this.context,this.env);await this.broker.ready;return new Response('OK');}
         if (path === '/test/rebuild') { this.broker = new TerminalBroker(this.context, this.env); await this.broker.ready; return new Response('OK'); }
         if (path === '/test/expire') { await this.broker.ready; await this.broker.mutate((effects,meta) => {for (const s of meta.sessions) s.deadline = Date.now()-1;}); return new Response('OK'); }
         return this.broker.fetch(request);

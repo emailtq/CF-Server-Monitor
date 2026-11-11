@@ -1,5 +1,6 @@
 <template>
-  <div>
+  <div class="admin-ui">
+    <AdminHeader v-if="!isLoggedIn" :site-title="settings.site_title || DEFAULT_SITE_TITLE" :trans="trans" :show-logout="false" />
     <AdminLogin
       v-if="!isLoggedIn"
       :trans="trans"
@@ -19,91 +20,13 @@
       @api-index-change="handleApiIndexChange"
     />
 
-    <div v-else class="container admin-container" id="admin-content">
-      <TerminalHeader :title="trans.adminPanel" />
-      <div v-if="adminSiteLoading" class="admin-loading-overlay">
-        <div class="loading-content">
-          <div class="loading-spinner"></div>
-          <div class="loading-text">$ {{ trans.switchingSite }}</div>
-        </div>
+    <AdminLayout v-else :active-page="activeTab" :site-title="settings.site_title || DEFAULT_SITE_TITLE" :trans="trans" @navigate="activeTab = $event">
+      <template #header>
+        <AdminHeader :site-title="settings.site_title || DEFAULT_SITE_TITLE" :trans="trans" @logout="logout" />
+      </template>
+      <div v-if="adminSiteLoading" class="admin-loading-overlay" role="status" aria-live="polite" :aria-label="trans.switchingSite">
+        <div class="loading-content"><div class="loading-spinner"></div><div class="loading-text">{{ trans.switchingSite }}</div></div>
       </div>
-
-      <div class="main-panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <span class="prompt">$</span> {{ trans.sudoStatus }}
-          </div>
-          <div class="header-actions">
-            <button @click="refreshServers" class="btn" :disabled="adminSiteLoading">↻ {{ trans.refresh }}</button>
-            <select
-              v-if="isMultipleMode"
-              v-model.number="selectedApiIndex"
-              class="form-select admin-site-select"
-              :disabled="adminSiteLoading"
-              @change="handleAdminApiIndexChange"
-            >
-              <option
-                v-for="(base, index) in apiBases"
-                :key="index"
-                :value="index"
-              >
-                [{{ index }}] {{ base }}
-              </option>
-            </select>
-            <HelpTooltip v-if="isMultipleMode" :text="trans.apiEndpoint" />
-            <button @click="logout" class="btn btn-red">🚪 {{ trans.logout }}</button>
-          </div>
-        </div>
-
-        <div class="stats-grid" id="stats-panel">
-          <div class="stat-card">
-            <div class="stat-main-value" id="stat-total">{{ stats.total }}</div>
-            <div class="stat-label">{{ trans.totalServers }}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-main-value" id="stat-online">{{ stats.online }}</div>
-            <div class="stat-label">{{ trans.online }}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-main-value" id="stat-offline">{{ stats.offline }}</div>
-            <div class="stat-label">{{ trans.offline }}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-main-value" id="stat-avg-cpu">{{ stats.avg_cpu }}%</div>
-            <div class="stat-label">{{ trans.avgCpu }}</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="main-panel">
-        <div class="tabs">
-          <button
-            class="tab-btn"
-            :class="{ active: activeTab === 'servers' }"
-            @click="activeTab = 'servers'"
-          >{{ trans.servers }}</button>
-          <button
-            class="tab-btn"
-            :class="{ active: activeTab === 'settings' }"
-            @click="activeTab = 'settings'"
-          >{{ trans.settings }}</button>
-          <button
-            class="tab-btn"
-            :class="{ active: activeTab === 'database' }"
-            @click="activeTab = 'database'"
-          >{{ trans.dbManagement }}</button>
-          <button
-            class="tab-btn"
-            :class="{ active: activeTab === 'themeStore' }"
-            @click="activeTab = 'themeStore'"
-          >{{ trans.themeStore }}</button>
-          <button
-            class="tab-btn"
-            :class="{ active: activeTab === 'donation' }"
-            @click="activeTab = 'donation'"
-          >{{ trans.donation }}</button>
-        </div>
-
         <ServerTable
           v-model:new-server-name="newServerName"
           v-model:new-server-group="newServerGroup"
@@ -118,7 +41,8 @@
           :copied-server-id="copiedServerId"
           :copied-note-server-id="copiedNoteServerId"
           :copied-spec-key="copiedSpecKey"
-          @add-server="addServer"
+          @add-server="showAddModal = true; addError = ''"
+          @groups="showGroupModal = true"
           @auto-discovery-cmd="openAutoDiscoveryModal"
           @batch-edit="openBatchEditModal"
           @batch-delete="batchDelete"
@@ -132,12 +56,21 @@
           @copy-spec="copyServerSpec"
           @copy-cmd="copyCmd"
           @edit="openEditModal"
+          @renew="openRenewModal"
           @delete="openDeleteModal"
           @terminal="openTerminal"
+          :terminal-statuses="terminalStatuses"
+          :terminal-opening="terminalOpening"
           @terminal-access="terminalServer = $event"
         />
 
         <SettingsPanel
+          :api-bases="apiBases"
+          :is-multiple-mode="isMultipleMode"
+          :selected-api-index="selectedApiIndex"
+          :site-loading="adminSiteLoading"
+          @api-index-change="selectedApiIndex = $event; handleAdminApiIndexChange()"
+          :key="siteGeneration"
           ref="settingsPanelRef"
           :trans="trans"
           :settings="settings"
@@ -148,7 +81,6 @@
           :current-origin="currentOrigin"
           :saving="saving"
           :change-admin-password="changeAdminPassword"
-          :test-notification-loading="testNotificationLoading"
           :d1-usage-loading="d1UsageLoading"
           @toggle-password="togglePassword"
           @toggle-admin-password-change="toggleAdminPasswordChange"
@@ -156,12 +88,15 @@
           @upload-bg="uploadBg"
           @upload-bg-mobile="uploadBgMobile"
           @upload-favicon="uploadFavicon"
-          @send-test-notification="sendTestNotification"
           @query-d1-usage="queryD1Usage"
           @alert-message="alertMessage = $event"
         />
 
+        <NotificationWorkspace :key="'notifications-' + siteGeneration" :trans="trans" :active-tab="activeTab" :servers="servers" :selected-api-index="selectedApiIndex" :request-owner="requestOwner" @config="notificationConfig = $event" @navigate="activeTab = $event" />
+
         <DatabasePanel
+          :request-owner="requestOwner"
+          :key="'data-' + siteGeneration"
           :trans="trans"
           :active-tab="activeTab"
           :db-loading="dbLoading"
@@ -170,6 +105,8 @@
         />
 
         <ThemeStorePanel
+          :request-owner="requestOwner"
+          :key="'theme-' + siteGeneration"
           :trans="trans"
           :active-tab="activeTab"
           :selected-api-index="selectedApiIndex"
@@ -184,14 +121,24 @@
           :trans="trans"
           :active-tab="activeTab"
         />
-      </div>
+
+      <UpdatesPanel :trans="trans" :active-tab="activeTab" :latest-agent-version="latestAgentVersion" @donation="activeTab = 'donation'" />
+      <AddServerModal v-model:name="newServerName" v-model:group="newServerGroup" :trans="trans" :show="showAddModal" :saving="adding" :error="addError" :groups="groups" @save="addServer" @close="closeAddModal" />
+      <GroupServersModal :trans="trans" :show="showGroupModal" :busy="batchEditing || cacheRefreshing" :servers="servers" :selected="selectedServers" @close="showGroupModal = false" @toggle="toggleServer" @select-all="toggleSelectAll" @batch-edit="showGroupModal = false; openBatchEditModal()" @batch-delete="showGroupModal = false; batchDelete()" @refresh="refreshServersCache" @save="saveGroup" />
+      <RenewServerModal v-model:form="editForm" :trans="trans" :server-name="currentServerName" :show="showRenewModal" :saving="editSaving" :error="validationError" @close="closeRenewModal" @save="saveEdit" />
+      <p v-if="validationError && validationField" class="danger-box" role="alert">{{ validationError }}</p>
 
       <EditServerModal
         :trans="trans"
         :show="showEditModal"
+        :saving="editSaving"
         v-model:edit-form="editForm"
         :current-server-name="currentServerName"
-        :settings="settings"
+        :settings="nodeSettings"
+        :agent-version="currentServerVersion"
+        :selected-api-index="selectedApiIndex"
+        @terminal-access="terminalServer = servers.find(server => server.id === editForm.id); showEditModal = false"
+        :error="validationError"
         @save="saveEdit"
         @close="closeEditModal"
         @toggle-auto-update="handleAutoUpdateToggle"
@@ -206,37 +153,33 @@
         :settings="settings"
         :is-wss-report-enabled="isWssReportEnabled"
         :saving="batchEditing"
+        :error="validationError"
         @save="saveBatchEdit"
         @close="closeBatchEditModal"
       />
 
-      <div v-if="showAutoUpdateWarning" id="autoUpdateWarningModal" class="modal-overlay auto-update-warning-modal active">
-        <div class="modal-dialog">
-          <div class="modal-header">
-            <div class="modal-title">{{ trans.autoUpdateRiskTitle }}</div>
-            <button class="modal-close" @click="cancelAutoUpdateWarning">✕</button>
-          </div>
-
+      <AdminDialog :open="showAutoUpdateWarning" :title="trans.autoUpdateRiskTitle" @close="cancelAutoUpdateWarning">
+        <template #body>
           <div class="danger-box mb-4">
             <div class="flex-center-gap-sm mb-2">
-              <span class="danger-icon text-xl">⚠️</span>
+
               <span class="danger-label">{{ trans.autoUpdateRiskTitle }}</span>
             </div>
             <p class="text-secondary text-sm line-height-1-6">
               {{ trans.autoUpdateRiskDesc }}
             </p>
           </div>
-
-          <div class="modal-footer flex-justify-between">
-            <button @click="confirmAutoUpdateWarning" class="btn btn-primary">{{ trans.autoUpdateRiskConfirm }}</button>
-            <button @click="cancelAutoUpdateWarning" class="btn">{{ trans.autoUpdateRiskCancel }}</button>
-          </div>
-        </div>
-      </div>
+        </template>
+        <template #footer>
+          <button @click="cancelAutoUpdateWarning" class="btn">{{ trans.autoUpdateRiskCancel }}</button>
+          <button @click="confirmAutoUpdateWarning" class="btn btn-primary">{{ trans.autoUpdateRiskConfirm }}</button>
+        </template>
+      </AdminDialog>
 
       <DeleteServerModal
         :trans="trans"
         :show="showDeleteModal"
+        :busy="deleting"
         :delete-server-id="deleteServerId"
         :current-server-name="currentServerName"
         :delete-target-os="deleteTargetOs"
@@ -258,11 +201,15 @@
         :trans="trans"
         :settings="settings"
         :show="showCopyModal"
+        :server-id="copyServerId"
+        :api-index="selectedApiIndex"
+        :request-owner="requestOwner"
         :current-server-name="currentServerName"
         :target-os="targetOs"
         :install-mode="installMode"
         :install-gh-proxy="installGhProxy"
         :install-version="installVersion"
+        :install-blocked="installCommandBlocked"
         :collect-interval="collectInterval"
         :report-interval="reportInterval"
         :wss-report-interval="wssReportInterval"
@@ -285,6 +232,7 @@
         :copied-cmd="copiedCmd"
         @close="closeCopyModal"
         @copy-cmd="copyCustomCmd"
+        @terminal-options="terminalInstallOptions = $event"
         @update:target-os="targetOs = $event"
         @update:install-mode="installMode = $event"
         @update:install-gh-proxy="installGhProxy = $event"
@@ -313,16 +261,11 @@
         @update:gh-proxy="autoDiscoveryGhProxy = $event"
       />
 
-      <div id="dbModal" class="modal-overlay" :class="{ active: showDbModal }">
-        <div class="modal-dialog">
-          <div class="modal-header">
-            <div class="modal-title">$ {{ dbOperation === 'clearHistory' ? 'CLEAR HISTORY' : 'ALTER DATABASE' }}</div>
-            <button class="modal-close" @click="closeDbModal" :disabled="dbLoading">✕</button>
-          </div>
-
+      <AdminDialog :open="showDbModal" :title="dbOperation === 'clearHistory' ? trans.clearHistory : trans.upgradeDatabase" :busy="dbLoading" @close="closeDbModal">
+        <template #body>
           <div v-if="dbOperation === 'clearHistory'" class="mb-4">
             <div class="flex-center-gap-sm mb-3">
-              <span class="danger-icon text-xl">⚠️</span>
+
               <span class="danger-label">{{ trans.dangerOperation }}</span>
             </div>
             <p class="text-secondary text-sm line-height-1-6">
@@ -332,7 +275,7 @@
 
           <div v-if="dbOperation === 'upgrade'" class="mb-4">
             <div class="flex-center-gap-sm mb-3">
-              <span class="warning-icon text-xl">ℹ️</span>
+
               <span style="color: var(--accent-yellow); font-weight: 600;">{{ trans.upgradeDatabase }}</span>
             </div>
             <p class="text-secondary text-sm line-height-1-6">
@@ -343,16 +286,17 @@
           <div v-if="dbResult" :class="dbResult.success ? 'warning-box' : 'danger-box'" class="mb-4">
             <div class="flex-center-gap-sm">
               <span :style="{ color: dbResult.success ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: '600' }">
-                {{ dbResult.success ? '✅' : '❌' }} {{ getMessage(dbResult.message) || (dbResult.success ? trans.operationSuccess : trans.operationFailed) }}
+                {{ getMessage(dbResult.message) || (dbResult.success ? trans.operationSuccess : trans.operationFailed) }}
               </span>
             </div>
             <div v-if="dbResult.error" class="text-red mt-2">
               {{ getMessage(dbResult.error) }}
             </div>
           </div>
-
-          <div v-if="!(dbResult && dbResult.success)" class="modal-footer flex-justify-between">
-            <button
+        </template>
+        <template #footer v-if="!(dbResult && dbResult.success)">
+          <button @click="closeDbModal" class="btn" :disabled="dbLoading">{{ trans.cancel }}</button>
+          <button
               v-if="!dbResult"
               @click="dbOperation === 'clearHistory' ? handleClearHistory() : handleUpgradeDatabase()"
               class="btn btn-red"
@@ -360,18 +304,11 @@
             >
               {{ dbLoading ? (dbOperation === 'clearHistory' ? trans.clearing : trans.upgrading) : (dbOperation === 'clearHistory' ? trans.confirmClear : trans.upgradeDatabase) }}
             </button>
-            <button @click="closeDbModal" class="btn" :disabled="dbLoading">{{ trans.cancel }}</button>
-          </div>
-        </div>
-      </div>
+        </template>
+      </AdminDialog>
 
-      <div v-if="d1UsageResult" id="d1UsageModal" class="modal-overlay active">
-        <div class="modal-dialog">
-          <div class="modal-header">
-            <div class="modal-title">$ D1, Workers & Durable Objects quota --utc</div>
-            <button class="modal-close" @click="d1UsageResult = null">✕</button>
-          </div>
-
+      <AdminDialog :open="!!d1UsageResult" :title="trans.queryD1Quota" size="edit" @close="d1UsageResult = null">
+        <template #body>
           <div v-if="d1UsageResult.success" class="mb-4">
             <div class="warning-box mb-4">
               {{ getMessage(d1UsageResult.message) || trans.d1UsageQueried }}
@@ -516,92 +453,76 @@
           <div v-else class="danger-box mb-4">
             {{ getMessage(d1UsageResult.error) }}
           </div>
+        </template>
+        <template #footer>
+          <button @click="d1UsageResult = null" class="btn">{{ trans.close }}</button>
+          <div></div>
+        </template>
+      </AdminDialog>
 
-          <div class="modal-footer flex-justify-between">
-            <div></div>
-            <button @click="d1UsageResult = null" class="btn">{{ trans.close }}</button>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="validationError" id="validationErrorModal" class="modal-overlay active">
-        <div class="modal-dialog">
-          <div class="modal-header">
-            <div class="modal-title">$ {{ trans.validationError }}</div>
-            <button class="modal-close" @click="validationError = null">✕</button>
-          </div>
-
+      <AdminDialog :open="!!validationError && !validationField && !showEditModal && !showRenewModal && !showBatchEditModal" :title="trans.validationError" @close="validationError = null">
+        <template #body>
           <div class="danger-box mb-4">
             <div class="flex-center-gap-sm">
-              <span class="danger-icon text-xl">⚠️</span>
+
               <span class="danger-label">{{ validationError }}</span>
             </div>
           </div>
+        </template>
+        <template #footer>
+          <button @click="validationError = null" class="btn">{{ trans.close }}</button>
+          <div></div>
+        </template>
+      </AdminDialog>
 
-          <div class="modal-footer flex-justify-between">
-            <div></div>
-            <button @click="validationError = null" class="btn">{{ trans.close }}</button>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="saveResult" class="modal-overlay active">
-        <div class="modal-dialog">
-          <div class="modal-header">
-            <div class="modal-title">$ save --result</div>
-            <button class="modal-close" @click="saveResult = null">✕</button>
-          </div>
-
+      <AdminDialog :open="!!saveResult" :title="trans.save" @close="saveResult = null">
+        <template #body>
           <div v-if="saveResult.success" class="success-box mb-4">
             <div class="flex-center-gap-sm">
               <span style="color: var(--accent-green); font-weight: 600;">
-                ✅ {{ saveResult.message || trans.saveSuccess }}
+                 {{ saveResult.message || trans.saveSuccess }}
               </span>
             </div>
           </div>
 
           <div v-else class="danger-box mb-4">
             <div class="flex-center-gap-sm">
-              <span class="danger-label">❌ {{ saveResult.error }}</span>
+              <span class="danger-label"> {{ saveResult.error }}</span>
             </div>
           </div>
+        </template>
+        <template #footer>
+          <button @click="saveResult = null" class="btn">{{ trans.close }}</button>
+          <div></div>
+        </template>
+      </AdminDialog>
 
-          <div class="modal-footer flex-justify-between">
-            <div></div>
-            <button @click="saveResult = null" class="btn">{{ trans.close }}</button>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="alertMessage" class="modal-overlay active">
-        <div class="modal-dialog">
-          <div class="modal-header">
-            <div class="modal-title">$ alert</div>
-            <button class="modal-close" @click="alertMessage = null">✕</button>
-          </div>
-
+      <AdminDialog :open="!!alertMessage" :title="trans.adminPanel" @close="alertMessage = null">
+        <template #body>
           <div class="mb-4">
             <p class="text-secondary text-sm">{{ alertMessage }}</p>
           </div>
-
-          <div class="modal-footer flex-justify-between">
-            <div></div>
-            <button @click="alertMessage = null" class="btn">{{ trans.close }}</button>
-          </div>
-        </div>
-      </div>
+        </template>
+        <template #footer>
+          <button @click="alertMessage = null" class="btn">{{ trans.close }}</button>
+          <div></div>
+        </template>
+      </AdminDialog>
 
       <TerminalAccessModal v-if="terminalServer" :server="terminalServer" :api-index="selectedApiIndex" :trans="trans" @close="terminalServer = null" />
-      <Footer />
-    </div>
+
+    </AdminLayout>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick, inject, defineAsyncComponent } from 'vue'
+import AdminDialog from './components/AdminDialog.vue'
+import NotificationWorkspace from './components/NotificationWorkspace.vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, inject, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import TerminalHeader from '../../components/TerminalHeader.vue'
-import Footer from '../../components/Footer.vue'
+import AdminHeader from './components/AdminHeader.vue'
+import AdminLayout from './components/AdminLayout.vue'
+
 import HelpTooltip from '../../components/HelpTooltip.vue'
 import AdminLogin from './components/AdminLogin.vue'
 import ServerTable from './components/ServerTable.vue'
@@ -609,6 +530,10 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import DatabasePanel from './components/DatabasePanel.vue'
 import ThemeStorePanel from './components/ThemeStorePanel.vue'
 import DonationPanel from './components/DonationPanel.vue'
+import AddServerModal from './components/AddServerModal.vue'
+import UpdatesPanel from './components/UpdatesPanel.vue'
+import GroupServersModal from './components/GroupServersModal.vue'
+import RenewServerModal from './components/RenewServerModal.vue'
 import EditServerModal from './components/EditServerModal.vue'
 import BatchEditServersModal from './components/BatchEditServersModal.vue'
 import DeleteServerModal from './components/DeleteServerModal.vue'
@@ -617,24 +542,47 @@ import AutoDiscoveryCommandModal from './components/AutoDiscoveryCommandModal.vu
 import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, fetchConfig, getTerminalBase, closeTerminalSessions } from '../../utils/api'
 import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
-import { normalizeLanguagePreference, normalizeNotificationLanguagePreference, t, useTranslation } from '../../utils/i18n'
+import { normalizeLanguagePreference, t, useTranslation } from '../../utils/i18n'
 import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
 import { applyMikusThemeOptions } from '../../utils/themeOptions.js'
-import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY, STORAGE } from '../../utils/constants.js'
+import { DEFAULT_SITE_TITLE, FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY, STORAGE } from '../../utils/constants.js'
 import { usePasswordVisibility } from '../../composables/usePasswordVisibility'
 import { useTurnstile } from './composables/useTurnstile'
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../../utils/server.js'
 
-const trans = useTranslation()
+const translation = useTranslation()
+const trans = computed(() => {
+  const labels = { ...translation.value }
+  for (const key of ['price', 'traffic', 'status', 'actions', 'upload', 'autoAdd', 'batchDelete', 'toggleAll', 'refreshCache', 'agentVersion', 'region', 'use', 'update', 'expired', 'saveConfig', 'cancel', 'save']) {
+    const value = labels[key]
+    if (typeof value === 'string' && /^[A-Z][A-Z /_-]+$/.test(value)) labels[key] = value[0] + value.slice(1).toLowerCase()
+  }
+  return labels
+})
 const TerminalAccessModal = defineAsyncComponent(() => import('./components/TerminalAccessModal.vue'))
 const terminalServer = ref(null)
-const openTerminal = server => {
+const terminalStatuses = ref({})
+const terminalOpening = ref('')
+const terminalInstallOptions = ref({selected:false, enabled:false, tokenFile:''})
+const openTerminal = async server => {
+  if (terminalOpening.value) return
+  const owner = requestOwner.value, apiIndex = selectedApiIndex.value
+  terminalOpening.value = server.id
   try {
-    const base = getTerminalBase(selectedApiIndex.value)
+    const base = getTerminalBase(apiIndex)
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(server.id)) throw new Error('terminal_invalid_node')
-    window.open(`${base}/admin#/admin/terminal/${server.id}?apiIndex=${selectedApiIndex.value}`, '_blank', 'noopener,noreferrer')
-  } catch (error) { alertMessage.value = trans.value[error.message] || trans.value.terminalRequestFailed }
+    const result = await adminApi({action:'terminal_status',serverId:server.id}, apiIndex, owner)
+    if (!owner()) return
+    if (result.error) {
+      terminalStatuses.value = {...terminalStatuses.value, [server.id]:{state:result.error}}
+      throw new Error(result.error)
+    }
+    terminalStatuses.value = {...terminalStatuses.value, [server.id]:result.data}
+    if (result.data?.state !== 'ready' || !result.data.enabled || !result.data.connected || !result.data.supported) throw new Error('terminal_' + (result.data?.state || 'query_failed'))
+    window.open(`${base}/admin#/admin/terminal/${server.id}?apiIndex=${apiIndex}`, '_blank', 'noopener,noreferrer')
+  } catch (error) { if (owner()) alertMessage.value = trans.value[error.message] || trans.value.terminalRequestFailed }
+  finally { if (owner()) terminalOpening.value = '' }
 }
 const route = useRoute()
 const router = useRouter()
@@ -686,58 +634,6 @@ const getMessage = (msg) => {
   return ''
 }
 
-const normalizeTgNotifySetting = (value) => {
-  if (value === true || value === 'true') return '5'
-  if (value === false || value === 'false' || value === undefined || value === null || value === '') return '0'
-
-  const minutes = Number(value)
-  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 30) return '0'
-  if (minutes === 0) return '0'
-  // 最小 5 分钟：低于 5 的历史值（如 2、3、4）统一提升到 5
-  return String(Math.max(minutes, 5))
-}
-
-const isTgNotifyEnabled = (value) => normalizeTgNotifySetting(value) !== '0'
-
-const EXPIRE_REMINDER_DAYS_MAX = 365
-const normalizeExpireReminderSetting = (value) => {
-  if (value === true || value === 'true') return '7'
-  if (value === false || value === 'false' || value === undefined || value === null || value === '') return '0'
-
-  const days = Number(value)
-  if (Number.isInteger(days) && days >= 0 && days <= EXPIRE_REMINDER_DAYS_MAX) {
-    return String(days)
-  }
-
-  return '0'
-}
-
-const isExpireReminderEnabled = (value) => normalizeExpireReminderSetting(value) !== '0'
-
-const isValidNotificationTimezone = (value) => {
-  const timezone = String(value || '').trim()
-  if (!timezone || timezone.length > 64) return false
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0))
-    return true
-  } catch (_) {
-    return false
-  }
-}
-
-const normalizeNotificationTimezoneSetting = (value) => {
-  const timezone = String(value || '').trim()
-  return isValidNotificationTimezone(timezone) ? timezone : 'UTC'
-}
-
-const normalizeExpireNotificationTimeSetting = (value) => {
-  const raw = String(value ?? '').trim()
-  if (!raw) return '12'
-  const legacyTimeMatch = raw.match(/^([01]?\d|2[0-3]):[0-5]\d$/)
-  const hour = Number(legacyTimeMatch ? legacyTimeMatch[1] : raw)
-  return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? String(hour) : '12'
-}
-
 const normalizeLongHistoryPointsSetting = (value) => {
   const points = Number(value)
   return String(
@@ -779,74 +675,6 @@ const normalizeWssReportHoursSetting = (value) => {
     .sort((a, b) => a - b)
 }
 
-const normalizeResourceAlertModeSetting = (value) => {
-  const mode = String(value || '').trim().toLowerCase()
-  return mode === 'continuous' ? 'continuous' : 'average'
-}
-
-const normalizeResourceAlertIntervalSetting = (value) => {
-  const minutes = Number(value)
-  if (Number.isInteger(minutes) && minutes >= 5 && minutes <= 10) {
-    return String(minutes)
-  }
-  return '5'
-}
-
-const normalizeResourceAlertMetricSetting = (value) => {
-  const metric = String(value || '').trim()
-  return ['cpu', 'ram', 'disk', 'netIn', 'netOut'].includes(metric) ? metric : 'cpu'
-}
-
-const defaultResourceAlertThreshold = (metric) => (
-  metric === 'netIn' || metric === 'netOut' ? '100' : '80'
-)
-
-const normalizeResourceAlertThresholdSetting = (value, metric) => {
-  if (value === undefined || value === null || value === '') return defaultResourceAlertThreshold(metric)
-  const number = Number(value)
-  const max = metric === 'netIn' || metric === 'netOut' ? 100000 : 100
-  if (!Number.isFinite(number) || number <= 0 || number > max) return defaultResourceAlertThreshold(metric)
-  return String(Math.round(number * 100) / 100)
-}
-
-const normalizeResourceAlertServersSetting = (value) => {
-  if (!Array.isArray(value)) return []
-  const seen = new Set()
-  return value.map(item => String(item || '').trim()).filter(id => {
-    if (!id || id.length > 64 || !/^[A-Za-z0-9._:-]+$/.test(id) || seen.has(id)) return false
-    seen.add(id)
-    return true
-  })
-}
-
-const normalizeResourceAlertRulesSetting = (value) => {
-  let rules = Array.isArray(value) ? value : []
-  if (typeof value === 'string' && value.trim()) {
-    try {
-      const parsed = JSON.parse(value)
-      rules = Array.isArray(parsed) ? parsed : []
-    } catch (_) {
-      rules = []
-    }
-  }
-  return rules.map((rule, index) => {
-    const metric = normalizeResourceAlertMetricSetting(rule?.metric)
-    return {
-      id: String(rule?.id || `rule_${index + 1}`).replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 64) || `rule_${index + 1}`,
-      name: String(rule?.name || '').trim().slice(0, 80) || `Resource Alert ${index + 1}`,
-      metric,
-      threshold: normalizeResourceAlertThresholdSetting(rule?.threshold, metric),
-      servers: normalizeResourceAlertServersSetting(rule?.servers || rule?.serverIds),
-      intervalMinutes: normalizeResourceAlertIntervalSetting(rule?.intervalMinutes || rule?.windowMinutes),
-      mode: normalizeResourceAlertModeSetting(rule?.mode)
-    }
-  }).slice(0, 20)
-}
-
-const isResourceAlertEnabled = (rules) => normalizeResourceAlertRulesSetting(rules).length > 0
-
-const isNotificationWebhookEnabled = () => settings.value.notification_webhook_enabled === true
-
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
 const normalizePreferredThemeSetting = (value) => {
@@ -855,8 +683,6 @@ const normalizePreferredThemeSetting = (value) => {
 }
 
 const normalizeDefaultLanguageSetting = (value) => normalizeLanguagePreference(value)
-
-const normalizeNotificationLanguageSetting = (value) => normalizeNotificationLanguagePreference(value)
 
 const formatThemeOptions = (value) => {
   const normalized = value === undefined || value === null ? {} : value
@@ -937,7 +763,27 @@ const syncApiIndexQuery = () => {
   })
 }
 
-const adminApiForSite = (data) => adminApi(data, selectedApiIndex.value)
+const notificationConfig = ref(null)
+const nodeSettings = computed(() => {
+  const available = notificationConfig.value?.rules.some(rule => rule.type === 'offline' && rule.enabled && (rule.scope.mode === 'all' || rule.scope.serverIds.includes(editForm.value.id)) && rule.targetIds.some(id => notificationConfig.value.channels.some(channel => channel.id === id && channel.enabled)))
+  // Compatibility presentation flags only; no credential or legacy notification payload.
+  return { ...settings.value, tg_notify: available ? '5' : '0', tg_bot_token: !!available }
+})
+
+const siteGeneration = ref(0)
+let adminActive = true
+const requestOwner = computed(() => {
+  const generation = siteGeneration.value
+  return () => adminActive && generation === siteGeneration.value
+})
+const adminApiForSite = (data) => adminApi(data, selectedApiIndex.value, requestOwner.value)
+
+const refreshTerminalStatuses = async () => {
+  const owner = requestOwner.value
+  const result = await adminApiForSite({action:'terminal_status',serverIds:servers.value.map(server=>server.id)})
+  if (!owner()) return
+  terminalStatuses.value = result.error ? Object.fromEntries(servers.value.map(server=>[server.id,{state:result.error}])) : result.data?.nodes || {}
+}
 
 const isLoggedIn = ref(false)
 const loginForm = ref({ username: '', password: '' })
@@ -945,6 +791,7 @@ const loginError = ref('')
 const loginLoading = ref(false)
 const adminSiteLoading = ref(false)
 const activeTab = ref('servers')
+watch(activeTab, () => { showCopyModal.value = false; terminalInstallOptions.value = {selected:false, enabled:false, tokenFile:''} })
 const servers = ref([])
 const selectedServers = ref([])
 const stats = ref({ total: '-', online: 0, offline: 0, avg_cpu: 0 })
@@ -952,6 +799,13 @@ const groups = ref(['Default'])
 const latestAgentVersion = ref('')
 const newServerName = ref('')
 const newServerGroup = ref('')
+const showAddModal = ref(false)
+const showGroupModal = ref(false)
+const showRenewModal = ref(false)
+const currentServerVersion = ref('')
+const adding = ref(false)
+const addError = ref('')
+const closeAddModal = () => { if (adding.value) return; showAddModal.value = false; newServerName.value = ''; newServerGroup.value = ''; addError.value = '' }
 
 const settings = ref({
   site_title: '',
@@ -974,22 +828,6 @@ const settings = ref({
   wss_report_hours: Array.from({ length: 24 }, (_, hour) => hour),
   frontend_ws_timeout_minutes: 0,
   long_history_points: String(HISTORY.DEFAULT_LONG_RANGE_POINTS),
-  tg_notify: '0',
-  expire_reminder: '0',
-  resource_alert_rules: [],
-  traffic_alert_threshold: 0,
-  tg_bot_token: '',
-  tg_chat_id: '',
-  notification_timezone: 'UTC',
-  notification_language: 'zh',
-  expire_notification_time: '12',
-  notification_webhook_enabled: false,
-  notification_webhook_url: '',
-  notification_webhook_method: 'POST',
-  notification_webhook_format: 'json',
-  notification_webhook_headers: '',
-  notification_webhook_body: '{\n  "title": "{{emoji}} {{event}}",\n  "content": "{{notification}}"\n}',
-  notification_template: '{{emoji}}【CF Server Monitor】{{event}}\n\n{{message}}\n\n{{time}}',
   turnstile_enabled: false,
   turnstile_login_enabled: false,
   turnstile_site_key: '',
@@ -1014,6 +852,7 @@ const settings = ref({
   csp_api: '',
   ua: 'cfsm'
 })
+const defaultSettings = JSON.parse(JSON.stringify(settings.value))
 const apiSecret = ref('')
 const cacheRefreshing = ref(false)
 const savedAutoDiscovery = ref(false)
@@ -1045,9 +884,11 @@ const {
   turnstileEnabled, turnstileLoginEnabled, turnstileSiteKey,
   turnstileToken, turnstileVerified,
   hasSharedTurnstileVerified, loadTurnstileConfig: loadTurnstileConfigBase,
-  renderTurnstile, resetTurnstile, clearTurnstile
+  renderTurnstile, removeTurnstile, resetTurnstile, clearTurnstile
 } = useTurnstile()
 
+const editSaving = ref(false)
+const deleting = ref(false)
 const showEditModal = ref(false)
 const showBatchEditModal = ref(false)
 const batchEditing = ref(false)
@@ -1140,11 +981,17 @@ const dbResult = ref(null)
 const d1UsageLoading = ref(false)
 const d1UsageResult = ref(null)
 const validationError = ref(null)
+const validationField = ref('')
+const invalidSettingsField = (message, page, field) => {
+  validationError.value = message
+  validationField.value = field
+  activeTab.value = page
+  nextTick(() => document.querySelector(`[data-setting-field="${field}"]`)?.focus())
+}
 const alertMessage = ref(null)
 const showAutoUpdateWarning = ref(false)
 const autoUpdatePendingEnable = ref(false)
 
-const testNotificationLoading = ref(false)
 
 const saveResult = ref(null)
 
@@ -1157,6 +1004,11 @@ const targetOs = ref('linux')
 const installMode = ref('current-user')
 const installGhProxy = ref('')
 const installVersion = ref('')
+const installCommandBlocked = computed(() => {
+  const version = installVersion.value.trim()
+  // Server status cannot prove that a previous host configuration is locally off.
+  return !!version && version !== 'latest' && !['windows', 'mac'].includes(targetOs.value)
+})
 const collectInterval = ref(0)
 const reportInterval = ref(60)
 const wssReportInterval = ref(2)
@@ -1266,6 +1118,7 @@ const copyServerSpec = async ({ key, text } = {}) => {
 }
 
 const handleLogin = async () => {
+  const generation = siteGeneration.value
   loginError.value = ''
   loginLoading.value = true
 
@@ -1281,7 +1134,8 @@ const handleLogin = async () => {
     return
   }
 
-  const result = await login(loginForm.value.username, loginForm.value.password, turnstileToken.value, selectedApiIndex.value)
+  const result = await login(loginForm.value.username, loginForm.value.password, turnstileToken.value, selectedApiIndex.value, requestOwner.value)
+    if (generation !== siteGeneration.value) return
   if (!result.error) {
     isLoggedIn.value = true
     syncApiIndexQuery()
@@ -1302,11 +1156,15 @@ const handleLogin = async () => {
 }
 
 const logout = async () => {
+  siteGeneration.value++
+  const generation = siteGeneration.value
   terminalServer.value = null
   closeTerminalSessions()
   try {
     await adminApiForSite({ action: 'logout' })
+    if (generation !== siteGeneration.value) return
   } catch (_) {
+    if (generation !== siteGeneration.value) return
   }
   apiLogout()
   isLoggedIn.value = false
@@ -1341,14 +1199,19 @@ const initAdmin = async () => {
 }
 
 const loadTurnstileConfig = async () => {
-  await loadTurnstileConfigBase(selectedApiIndex.value, isMultipleMode.value, loginError)
+  const owner = requestOwner.value
+  await loadTurnstileConfigBase(selectedApiIndex.value, isMultipleMode.value, loginError, owner)
+  if (!owner()) return
   if (turnstileSiteKey.value && (turnstileLoginEnabled.value || (turnstileEnabled.value && !turnstileVerified.value))) {
     await nextTick()
-    renderTurnstile('#admin-turnstile-container', turnstileSiteKey.value)
+    if (!owner()) return
+    renderTurnstile('#admin-turnstile-container', turnstileSiteKey.value, { requestOwner: owner })
   }
 }
 
 const handleApiIndexChange = async (newIndex) => {
+  siteGeneration.value++
+  loginLoading.value = false
   selectedApiIndex.value = newIndex
   syncApiIndexQuery()
   await nextTick()
@@ -1356,16 +1219,65 @@ const handleApiIndexChange = async (newIndex) => {
 }
 
 const resetAdminContext = () => {
+  notificationConfig.value = null
   terminalServer.value = null
+  terminalStatuses.value = {}
+  terminalOpening.value = ''
+  terminalInstallOptions.value = {selected:false, enabled:false, tokenFile:''}
   selectedServers.value = []
   showEditModal.value = false
   showDeleteModal.value = false
   showCopyModal.value = false
   showDbModal.value = false
   validationError.value = null
+  validationField.value = ''
+  settings.value = structuredClone(defaultSettings)
+  servers.value = []
+  stats.value = { total: '-', online: 0, offline: 0, avg_cpu: 0 }
+  groups.value = []
+  latestAgentVersion.value = ''
+  apiSecret.value = ''
+  changeAdminPassword.value = false
+  newServerName.value = ''
+  newServerGroup.value = ''
+  showAddModal.value = false
+  showGroupModal.value = showRenewModal.value = false
+  showBatchEditModal.value = false
+  showAutoDiscoveryModal.value = false
+  showAutoUpdateWarning.value = false
+  autoUpdatePendingEnable.value = false
+  editForm.value = {}
+  batchEditForm.value = createBatchEditDefaults()
+  batchEditEnabled.value = Object.fromEntries(Object.keys(createBatchEditDefaults()).map(field => [field, false]))
+  saveResult.value = null
+  alertMessage.value = null
+  d1UsageResult.value = null
+  dbResult.value = null
+  saving.value = adding.value = editSaving.value = deleting.value = batchEditing.value = cacheRefreshing.value = dbLoading.value = d1UsageLoading.value = false
+  savedAutoDiscovery.value = false
+  loginForm.value = { username: '', password: '' }
+  copiedServerId.value = copiedNoteServerId.value = copiedSpecKey.value = null
+  copyServerId.value = currentServerName.value = deleteServerId.value = ''
+  targetOs.value = deleteTargetOs.value = autoDiscoveryTargetOs.value = 'linux'
+  installMode.value = deleteInstallMode.value = autoDiscoveryInstallMode.value = 'current-user'
+  installGhProxy.value = deleteGhProxy.value = autoDiscoveryGhProxy.value = ''
+  installVersion.value = autoDiscoveryVersion.value = autoDiscoveryName.value = ''
+  customCt.value = customCu.value = customCm.value = customBd.value = ''
+  node1.value = node2.value = node3.value = node4.value = ''
+  networkInterface.value = rxCorrection.value = txCorrection.value = ''
+  explicitEmptyNodes.value = {}
+  collectInterval.value = 0
+  reportInterval.value = 60
+  wssReportInterval.value = 2
+  resetDay.value = 1
+  connectionMode.value = 'auto'
+  pingMode.value = 'tcp'
+  autoUpdate.value = autoDiscoveryAutoUpdate.value = copiedCmd.value = autoDiscoveryCopied.value = uninstallCopied.value = false
+  draggedRow = null
 }
 
 const switchAdminSite = async () => {
+  const generation = ++siteGeneration.value
   resetAdminContext()
   adminSiteLoading.value = true
   try {
@@ -1375,7 +1287,7 @@ const switchAdminSite = async () => {
       loadLatestAgentVersion()
     ])
   } finally {
-    adminSiteLoading.value = false
+    if (generation === siteGeneration.value) adminSiteLoading.value = false
   }
 }
 
@@ -1393,20 +1305,27 @@ const getStartupConfigForCurrentSite = () => {
 }
 
 const loadLatestAgentVersion = async () => {
+  const generation = siteGeneration.value
   try {
     const startupConfig = getStartupConfigForCurrentSite()
-    const config = startupConfig || await fetchConfig(selectedApiIndex.value)
+    const owner = requestOwner.value
+    const config = startupConfig || await fetchConfig(selectedApiIndex.value, owner)
+    if (!owner()) return
     const configVersion = normalizeVersion(config?.last_agent_version)
-    latestAgentVersion.value = configVersion || await fetchLatestAgentReleaseVersion()
+    const version = configVersion || await fetchLatestAgentReleaseVersion()
+    if (generation === siteGeneration.value) latestAgentVersion.value = version
   } catch (e) {
     console.error('[ERROR] Load latest agent version failed:', e)
-    latestAgentVersion.value = await fetchLatestAgentReleaseVersion()
+    const version = await fetchLatestAgentReleaseVersion()
+    if (generation === siteGeneration.value) latestAgentVersion.value = version
   }
 }
 
 const loadSettings = async () => {
+  const generation = siteGeneration.value
   try {
     const result = await adminApiForSite({ action: 'get_settings' })
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       const data = result.data
       const settingsData = data.settings || {}
@@ -1431,22 +1350,6 @@ const loadSettings = async () => {
         wss_report_hours: normalizeWssReportHoursSetting(settingsData.wss_report_hours),
         frontend_ws_timeout_minutes: normalizeFrontendWsTimeoutMinutesSetting(settingsData.frontend_ws_timeout_minutes),
         long_history_points: normalizeLongHistoryPointsSetting(settingsData.long_history_points),
-        tg_notify: normalizeTgNotifySetting(settingsData.tg_notify),
-        expire_reminder: normalizeExpireReminderSetting(settingsData.expire_reminder),
-        resource_alert_rules: normalizeResourceAlertRulesSetting(settingsData.resource_alert_rules),
-        traffic_alert_threshold: Number(settingsData.traffic_alert_threshold) || 0,
-        tg_bot_token: settingsData.tg_bot_token || '',
-        tg_chat_id: settingsData.tg_chat_id || '',
-        notification_timezone: normalizeNotificationTimezoneSetting(settingsData.notification_timezone),
-        notification_language: normalizeNotificationLanguageSetting(settingsData.notification_language),
-        expire_notification_time: normalizeExpireNotificationTimeSetting(settingsData.expire_notification_time),
-        notification_webhook_enabled: settingsData.notification_webhook_enabled === 'true' || settingsData.notification_webhook_enabled === true,
-        notification_webhook_url: settingsData.notification_webhook_url || '',
-        notification_webhook_method: String(settingsData.notification_webhook_method || 'POST').toUpperCase() === 'GET' ? 'GET' : 'POST',
-        notification_webhook_format: ['json', 'form', 'text'].includes(String(settingsData.notification_webhook_format || '').toLowerCase()) ? String(settingsData.notification_webhook_format).toLowerCase() : 'json',
-        notification_webhook_headers: settingsData.notification_webhook_headers || '',
-        notification_webhook_body: settingsData.notification_webhook_body || '{\n  "title": "{{emoji}} {{event}}",\n  "content": "{{notification}}"\n}',
-        notification_template: settingsData.notification_template || '{{emoji}}【CF Server Monitor】{{event}}\n\n{{message}}\n\n{{time}}',
         turnstile_enabled: settingsData.turnstile_enabled === 'true',
         turnstile_login_enabled: settingsData.turnstile_login_enabled === 'true',
         turnstile_site_key: settingsData.turnstile_site_key || '',
@@ -1480,6 +1383,7 @@ const loadSettings = async () => {
       savedAutoDiscovery.value = settings.value.auto_discovery
     }
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     console.error('[ERROR] Load settings failed:', e)
   }
 }
@@ -1499,44 +1403,36 @@ watch(
 )
 
 const saveSettings = async () => {
+  const generation = siteGeneration.value
   if (saving.value) return
 
   validationError.value = null
+  validationField.value = ''
+
+  if (settingsPanelRef.value?.userAgentInvalid) {
+    invalidSettingsField(trans.value.invalidUserAgent, 'security', 'ua')
+    return
+  }
 
   const jwtSecret = settings.value.jwt_secret
   if (jwtSecret && jwtSecret.length > 0 && jwtSecret.length < 32) {
-    validationError.value = trans.value.jwtSecretMinLength
+    invalidSettingsField(trans.value.jwtSecretMinLength, 'security', 'jwt_secret')
     return
   }
 
   if (jwtSecret && /\s/.test(jwtSecret)) {
-    validationError.value = trans.value.jwtSecretNoWhitespace
+    invalidSettingsField(trans.value.jwtSecretNoWhitespace, 'security', 'jwt_secret')
     return
   }
 
   if (!settings.value.username || settings.value.username.trim().length === 0) {
-    validationError.value = trans.value.usernameRequired
+    invalidSettingsField(trans.value.usernameRequired, 'security', 'username')
     return
   }
 
   const frontendWsTimeoutMinutes = Number(settings.value.frontend_ws_timeout_minutes)
   if (!Number.isInteger(frontendWsTimeoutMinutes) || frontendWsTimeoutMinutes < 0 || frontendWsTimeoutMinutes > FRONTEND_WS_TIMEOUT_MINUTES_MAX) {
-    validationError.value = trans.value.invalidFrontendWsTimeoutMinutes
-    return
-  }
-
-  if (!isValidNotificationTimezone(settings.value.notification_timezone)) {
-    validationError.value = trans.value.invalidNotificationTimezone || 'Notification timezone must be a valid IANA timezone, for example Asia/Shanghai'
-    return
-  }
-
-  if (normalizeExpireNotificationTimeSetting(settings.value.expire_notification_time) !== String(settings.value.expire_notification_time)) {
-    validationError.value = trans.value.invalidExpireNotificationTime || 'Expiration notification time must be an integer from 0 to 23'
-    return
-  }
-
-  if (normalizeExpireReminderSetting(settings.value.expire_reminder) !== String(settings.value.expire_reminder)) {
-    validationError.value = trans.value.invalidExpireReminder || `Expiration reminder must be an integer from 0 to ${EXPIRE_REMINDER_DAYS_MAX} days`
+    invalidSettingsField(trans.value.invalidFrontendWsTimeoutMinutes, 'collection', 'frontend_ws_timeout_minutes')
     return
   }
 
@@ -1547,49 +1443,37 @@ const saveSettings = async () => {
 
   if (!settings.value.password_configured && !shouldChangePassword) {
     changeAdminPassword.value = true
-    validationError.value = trans.value.passwordRequired
+    invalidSettingsField(trans.value.passwordRequired, 'security', 'password')
     return
   }
 
   if (shouldChangePassword) {
     if (settings.value.password !== settings.value.confirm_password) {
-      validationError.value = trans.value.passwordMismatch
+      invalidSettingsField(trans.value.passwordMismatch, 'security', 'confirm_password')
       return
     }
   }
 
   if (settings.value.turnstile_enabled || settings.value.turnstile_login_enabled) {
     if (!settings.value.turnstile_site_key || settings.value.turnstile_site_key.trim().length === 0) {
-      validationError.value = trans.value.turnstileSiteKeyRequired
+      invalidSettingsField(trans.value.turnstileSiteKeyRequired, 'security', 'turnstile_site_key')
       return
     }
     if (!settings.value.turnstile_secret_key || settings.value.turnstile_secret_key.trim().length === 0) {
-      validationError.value = trans.value.turnstileSecretKeyRequired
-      return
-    }
-  }
-
-  if (isTgNotifyEnabled(settings.value.tg_notify) || isExpireReminderEnabled(settings.value.expire_reminder) || isResourceAlertEnabled(settings.value.resource_alert_rules)) {
-    if (isNotificationWebhookEnabled()) {
-      if (!settings.value.notification_webhook_url || settings.value.notification_webhook_url.trim().length === 0) {
-        validationError.value = trans.value.notificationWebhookUrlRequired || 'Webhook URL is required'
-        return
-      }
-    } else if (!settings.value.tg_bot_token || settings.value.tg_bot_token.trim().length === 0) {
-      validationError.value = trans.value.tgBotTokenRequired
+      invalidSettingsField(trans.value.turnstileSecretKeyRequired, 'security', 'turnstile_secret_key')
       return
     }
   }
 
   const pingNodeValidation = getPingNodeValidation(settings.value)
   if (!pingNodeValidation.valid) {
-    validationError.value = buildPingNodeError(pingNodeValidation.field)
+    invalidSettingsField(buildPingNodeError(pingNodeValidation.field), 'collection', pingNodeValidation.field)
     return
   }
 
   const themeOptionsResult = parseThemeOptions(settings.value.theme_options)
   if (!themeOptionsResult.valid) {
-    validationError.value = trans.value.invalidThemeOptionsFormat
+    invalidSettingsField(trans.value.invalidThemeOptionsFormat, 'themeStore', 'theme_options')
     return
   }
 
@@ -1597,10 +1481,7 @@ const saveSettings = async () => {
     const cspStaticValid = settingsPanelRef.value.validateCspField('csp_static')
     const cspApiValid = settingsPanelRef.value.validateCspField('csp_api')
     if (!cspStaticValid || !cspApiValid) {
-      return
-    }
-    if (!settingsPanelRef.value.validateSmtpFields()) {
-      validationError.value = trans.value.smtpConfigInvalid || 'SMTP configuration is incomplete, please check the SMTP settings'
+      invalidSettingsField(trans.value.cspInvalidDomain, 'themeStore', !cspStaticValid ? 'csp_static' : 'csp_api')
       return
     }
   }
@@ -1633,22 +1514,6 @@ const saveSettings = async () => {
       wss_report_hours: normalizeWssReportHoursSetting(settings.value.wss_report_hours),
       frontend_ws_timeout_minutes: String(frontendWsTimeoutMinutes),
       long_history_points: normalizeLongHistoryPointsSetting(settings.value.long_history_points),
-      tg_notify: normalizeTgNotifySetting(settings.value.tg_notify),
-      expire_reminder: normalizeExpireReminderSetting(settings.value.expire_reminder),
-      resource_alert_rules: normalizeResourceAlertRulesSetting(settings.value.resource_alert_rules),
-      traffic_alert_threshold: String(Math.max(0, Math.min(100, Number(settings.value.traffic_alert_threshold) || 0))),
-      tg_bot_token: settings.value.tg_bot_token,
-      tg_chat_id: settings.value.tg_chat_id,
-      notification_timezone: normalizeNotificationTimezoneSetting(settings.value.notification_timezone),
-      notification_language: normalizeNotificationLanguageSetting(settings.value.notification_language),
-      expire_notification_time: normalizeExpireNotificationTimeSetting(settings.value.expire_notification_time),
-      notification_webhook_enabled: settings.value.notification_webhook_enabled ? 'true' : 'false',
-      notification_webhook_url: settings.value.notification_webhook_url,
-      notification_webhook_method: settings.value.notification_webhook_method === 'GET' ? 'GET' : 'POST',
-      notification_webhook_format: ['json', 'form', 'text'].includes(settings.value.notification_webhook_format) ? settings.value.notification_webhook_format : 'json',
-      notification_webhook_headers: settings.value.notification_webhook_headers,
-      notification_webhook_body: settings.value.notification_webhook_body,
-      notification_template: settings.value.notification_template,
       turnstile_enabled: settings.value.turnstile_enabled ? 'true' : 'false',
       turnstile_login_enabled: settings.value.turnstile_login_enabled ? 'true' : 'false',
       turnstile_site_key: settings.value.turnstile_site_key,
@@ -1682,6 +1547,7 @@ const saveSettings = async () => {
 
   try {
     const result = await adminApiForSite(data)
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       saveResult.value = { success: true }
       applyMikusThemeOptions(themeOptionsResult.value)
@@ -1693,26 +1559,35 @@ const saveSettings = async () => {
       saveResult.value = { success: false, error: getMessage(result.error) || 'fail' }
     }
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     saveResult.value = { success: false, error: e.message }
   } finally {
+    if (generation === siteGeneration.value) {
     saving.value = false
+      }
   }
 }
 
 
 const loadServers = async (options = {}) => {
+  const generation = siteGeneration.value
   try {
     const result = await adminApiForSite(options.refresh ? { action: 'list', refresh: true } : { action: 'list' })
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       const data = result.data
       servers.value = data.servers || []
+      const currentIds = new Set(servers.value.map(server => server.id))
+      selectedServers.value = selectedServers.value.filter(id => currentIds.has(id))
       stats.value = data.stats || { total: servers.value.length, online: 0, offline: servers.value.length, avg_cpu: 0 }
 
       const serverGroups = [...new Set(servers.value.map(s => s.server_group || trans.value.default))]
       groups.value = serverGroups
+      await refreshTerminalStatuses()
     }
     return result
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     console.error('[ERROR] Load servers failed:', e)
     return { error: e.message }
   }
@@ -1720,17 +1595,21 @@ const loadServers = async (options = {}) => {
 
 // 清除 Workers 端服务器列表缓存并就地重新拉取（list 带 refresh 时服务端先清缓存再读 D1）
 const refreshServersCache = async () => {
+  const generation = siteGeneration.value
   if (cacheRefreshing.value) return
   cacheRefreshing.value = true
   try {
     const result = await loadServers({ refresh: true })
+    if (generation !== siteGeneration.value) return
     if (result?.error) {
       alertMessage.value = getMessage(result.error) || result.error || trans.value.operationFailed
       return
     }
     alertMessage.value = trans.value.cacheCleared
   } finally {
+    if (generation === siteGeneration.value) {
     cacheRefreshing.value = false
+      }
   }
 }
 
@@ -1742,24 +1621,35 @@ const refreshServers = async () => {
 }
 
 const addServer = async () => {
+  const generation = siteGeneration.value
+  if (adding.value) return
+  addError.value = ''
   const name = newServerName.value.trim()
   if (!name) {
-    validationError.value = trans.value.enterServerName
+    addError.value = trans.value.enterServerName
     return
   }
 
   try {
+    adding.value = true
     const result = await adminApiForSite({ action: 'add', name, server_group: newServerGroup.value })
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serverAdded }
+      showAddModal.value = false
       newServerName.value = ''
       newServerGroup.value = ''
       loadServers()
     } else {
-      saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
+      addError.value = getMessage(result.error) || trans.value.operationFailed
     }
   } catch (e) {
-    saveResult.value = { success: false, error: e.message }
+    if (generation !== siteGeneration.value) return
+    addError.value = e.message
+  } finally {
+    if (generation === siteGeneration.value) {
+    adding.value = false
+      }
   }
 }
 
@@ -1922,6 +1812,9 @@ const installUserAgent = () => {
 }
 
 const getCustomInstallCommand = () => {
+  if (installCommandBlocked.value) return ''
+  const terminalOptions = terminalInstallOptions.value
+  if (terminalOptions.selected && !terminalOptions.enabled) return ''
   const HOST = selectedApiBase.value
   const autoUpdateFlag = autoUpdate.value ? 1 : 0
   const proxy = installGhProxy.value.trim()
@@ -1943,6 +1836,7 @@ const getCustomInstallCommand = () => {
       `-url='${HOST}/update'`,
       `-auto_update='${autoUpdateFlag}'`
     )
+    if (!version || version === 'latest') params.push('-terminal=0')
     const ua = installUserAgent()
     if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
     const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
@@ -1952,7 +1846,7 @@ const getCustomInstallCommand = () => {
     const safeTag = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(version) ? version : 'latest'
     const image = `ghcr.io/huilang-me/cfsm-agent:${safeTag}`
     const ua = installUserAgent()
-    const uaEnv = ua ? ` -e UA=${quotePosixShellArg(ua)}` : ''
+    const uaEnv = (ua ? ` -e UA=${quotePosixShellArg(ua)}` : '') + ' -e TERMINAL_ENABLED=0'
     return [
       'docker run -d --name cf-probe --restart=unless-stopped --network=host \\',
       '  -v cf-probe-data:/data \\',
@@ -1969,10 +1863,12 @@ const getCustomInstallCommand = () => {
     `-url=${HOST}/update`,
     `-auto_update=${autoUpdateFlag}`
   )
+  if (!version || version === 'latest') params.push(terminalOptions.enabled ? `-terminal=1 -terminal-token-file=${quotePosixShellArg(terminalOptions.tokenFile)}` : '-terminal=0')
   const ua = installUserAgent()
   if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
   const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
   const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
+  if (targetOs.value === 'mac' && version && version !== 'latest') return `test "$(uname -s)" = Darwin && ${installCommand}`
   if (!isDedicatedUserInstall) return installCommand
 
   return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
@@ -2062,6 +1958,7 @@ const copyAutoDiscoveryCmd = async () => {
 
 const copyCustomCmd = async () => {
   const cmd = getCustomInstallCommand()
+  if (!cmd) return
   const copied = await copyTextToClipboard(cmd)
   if (!copied) {
     alertMessage.value = trans.value.httpsRequired
@@ -2076,6 +1973,8 @@ const copyCustomCmd = async () => {
 
 const closeCopyModal = () => {
   showCopyModal.value = false
+  terminalInstallOptions.value = {selected:false, enabled:false, tokenFile:''}
+  void refreshTerminalStatuses()
 }
 
 const openEditModalFromCopy = () => {
@@ -2143,14 +2042,33 @@ const createEditFormFromServer = (server) => ({
 })
 
 const openEditModal = (server) => {
+  validationError.value = null
+  validationField.value = ''
+  currentServerVersion.value = server.agent_version || ''
   editForm.value = createEditFormFromServer(server)
   currentServerName.value = server.name || ''
   showEditModal.value = true
 }
 
+const openRenewModal = (server) => {
+  validationError.value = null
+  validationField.value = ''
+  currentServerName.value = server.name
+  editForm.value = createEditFormFromServer(server)
+  showRenewModal.value = true
+}
+
 const closeEditModal = () => {
+  validationError.value = null
+  validationField.value = ''
   cancelAutoUpdateWarning()
   showEditModal.value = false
+}
+
+const closeRenewModal = () => {
+  validationError.value = null
+  validationField.value = ''
+  showRenewModal.value = false
 }
 
 const handleAutoUpdateToggle = (nextValue) => {
@@ -2237,7 +2155,10 @@ const buildEditPayloadFromForm = (form) => {
 }
 
 const saveEdit = async () => {
+  const generation = siteGeneration.value
+  if (editSaving.value) return
   validationError.value = null
+  validationField.value = ''
 
   const pingNodeValidation = getPingNodeValidation(editForm.value)
   if (!pingNodeValidation.valid) {
@@ -2295,18 +2216,24 @@ const saveEdit = async () => {
     offline_notify_disabled: editForm.value.offline_notify_disabled ? '1' : '0'
   }
 
+  editSaving.value = true
   try {
     const result = await adminApiForSite(data)
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serverEdited }
       cancelAutoUpdateWarning()
       showEditModal.value = false
+      showRenewModal.value = false
       loadServers()
     } else {
       saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
     }
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     saveResult.value = { success: false, error: e.message }
+  } finally {
+    if (generation === siteGeneration.value) { editSaving.value = false     }
   }
 }
 
@@ -2327,8 +2254,12 @@ const closeDeleteModal = () => {
 }
 
 const confirmDelete = async () => {
+  const generation = siteGeneration.value
+  if (deleting.value) return
+  deleting.value = true
   try {
     const result = await adminApiForSite({ action: 'delete', id: deleteServerId.value })
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serverDeleted }
       showDeleteModal.value = false
@@ -2337,11 +2268,15 @@ const confirmDelete = async () => {
       saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
     }
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     saveResult.value = { success: false, error: e.message }
+  } finally {
+    if (generation === siteGeneration.value) { deleting.value = false     }
   }
 }
 
 const batchDelete = async () => {
+  const generation = siteGeneration.value
   if (selectedServers.value.length === 0) {
     alertMessage.value = trans.value.selectServers
     return
@@ -2350,6 +2285,7 @@ const batchDelete = async () => {
 
   try {
     const result = await adminApiForSite({ action: 'batch_delete', ids: selectedServers.value })
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serversDeleted }
       selectedServers.value = []
@@ -2358,6 +2294,7 @@ const batchDelete = async () => {
       saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
     }
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     saveResult.value = { success: false, error: e.message }
   }
 }
@@ -2374,6 +2311,8 @@ const getCommonBatchValue = (forms, field, fallback) => {
 }
 
 const openBatchEditModal = () => {
+  validationError.value = null
+  validationField.value = ''
   const selected = getSelectedServerRows()
   if (selected.length === 0) {
     alertMessage.value = trans.value.selectServersToEdit || trans.value.selectServers
@@ -2391,10 +2330,14 @@ const openBatchEditModal = () => {
 
 const closeBatchEditModal = () => {
   if (batchEditing.value) return
+  validationError.value = null
+  validationField.value = ''
   showBatchEditModal.value = false
 }
 
 const saveBatchEdit = async () => {
+  validationField.value = ''
+  const generation = siteGeneration.value
   if (batchEditing.value) return
 
   const enabledFields = Object.keys(batchEditEnabled.value).filter(field => batchEditEnabled.value[field])
@@ -2430,6 +2373,7 @@ const saveBatchEdit = async () => {
         return
       }
       const result = await adminApiForSite(built.payload)
+    if (generation !== siteGeneration.value) return
       if (result.error) {
         saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
         return
@@ -2445,15 +2389,27 @@ const saveBatchEdit = async () => {
     showBatchEditModal.value = false
     await loadServers()
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     saveResult.value = { success: false, error: e.message }
   } finally {
+    if (generation === siteGeneration.value) {
     batchEditing.value = false
+      }
   }
 }
 
 const handleSelectAll = (e) => {
   const checked = e.target.checked
   selectedServers.value = checked ? servers.value.map(s => s.id) : []
+}
+
+const saveGroup = async (group) => {
+  batchEditForm.value = createBatchEditDefaults()
+  batchEditForm.value.server_group = group
+  batchEditEnabled.value = Object.fromEntries(Object.keys(createBatchEditDefaults()).map(field => [field, field === 'server_group']))
+  await saveBatchEdit()
+  if (!saveResult.value?.success) return
+  showGroupModal.value = false
 }
 
 const toggleSelectAll = () => {
@@ -2484,6 +2440,7 @@ const handleDragStart = (e, serverId = null) => {
 }
 
 const handleDrop = async (e, targetId) => {
+  const generation = siteGeneration.value
   e?.preventDefault?.()
   targetId = String(targetId || '')
   if (!draggedRow || draggedRow === targetId) {
@@ -2505,10 +2462,12 @@ const handleDrop = async (e, targetId) => {
 
   try {
     const result = await adminApiForSite({ action: 'save_order', orders })
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       loadServers()
     }
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     console.error('[ERROR] Save order failed:', e)
   }
 
@@ -2516,6 +2475,7 @@ const handleDrop = async (e, targetId) => {
 }
 
 const uploadImageSetting = (e, field) => {
+  const generation = siteGeneration.value
   const file = e.target.files[0]
   if (!file) return
   if (file.size > 800 * 1024) {
@@ -2524,6 +2484,7 @@ const uploadImageSetting = (e, field) => {
   }
   const reader = new FileReader()
   reader.onload = function(event) {
+    if (generation !== siteGeneration.value) return
     settings.value[field] = event.target.result
   }
   reader.readAsDataURL(file)
@@ -2536,32 +2497,42 @@ const uploadBgMobile = (e) => uploadImageSetting(e, 'custom_bg_mobile')
 const uploadFavicon = (e) => uploadImageSetting(e, 'favicon')
 
 const handleUpgradeDatabase = async () => {
+  const generation = siteGeneration.value
   dbOperation.value = 'upgrade'
   dbLoading.value = true
   dbResult.value = null
 
   try {
-    const result = await upgradeDatabase(selectedApiIndex.value)
+    const result = await upgradeDatabase(selectedApiIndex.value, requestOwner.value)
+    if (generation !== siteGeneration.value) return
     dbResult.value = result
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     dbResult.value = { success: false, error: e.message }
   } finally {
+    if (generation === siteGeneration.value) {
     dbLoading.value = false
+      }
   }
 }
 
 const handleClearHistory = async () => {
+  const generation = siteGeneration.value
   dbOperation.value = 'clearHistory'
   dbLoading.value = true
   dbResult.value = null
 
   try {
-    const result = await clearHistory(selectedApiIndex.value)
+    const result = await clearHistory(selectedApiIndex.value, requestOwner.value)
+    if (generation !== siteGeneration.value) return
     dbResult.value = result
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     dbResult.value = { success: false, error: e.message }
   } finally {
+    if (generation === siteGeneration.value) {
     dbLoading.value = false
+      }
   }
 }
 
@@ -2578,6 +2549,7 @@ const closeDbModal = () => {
 }
 
 const queryD1Usage = async () => {
+  const generation = siteGeneration.value
   if (d1UsageLoading.value) return
   d1UsageLoading.value = true
   d1UsageResult.value = null
@@ -2589,49 +2561,19 @@ const queryD1Usage = async () => {
       cloudflare_account_id: settings.value.cloudflare_account_id,
       cloudflare_token: settings.value.cloudflare_token
     })
+    if (generation !== siteGeneration.value) return
     if (!result.error) {
       d1UsageResult.value = result.data
     } else {
       alertMessage.value = getMessage(result.error) || result.error || trans.value.operationFailed
     }
   } catch (e) {
+    if (generation !== siteGeneration.value) return
     alertMessage.value = getMessage(e.message) || e.message || trans.value.operationFailed
   } finally {
+    if (generation === siteGeneration.value) {
     d1UsageLoading.value = false
-  }
-}
-
-const sendTestNotification = async () => {
-  if (testNotificationLoading.value) return
-  if (settingsPanelRef.value && !settingsPanelRef.value.validateSmtpFields()) {
-    return
-  }
-  testNotificationLoading.value = true
-  try {
-    const result = await adminApiForSite({
-      action: 'send_test_notification',
-      tg_bot_token: settings.value.tg_bot_token,
-      tg_chat_id: settings.value.tg_chat_id,
-      notification_webhook_enabled: settings.value.notification_webhook_enabled ? 'true' : 'false',
-      notification_webhook_url: settings.value.notification_webhook_url,
-      notification_webhook_method: settings.value.notification_webhook_method,
-      notification_webhook_format: settings.value.notification_webhook_format,
-      notification_webhook_headers: settings.value.notification_webhook_headers,
-      notification_webhook_body: settings.value.notification_webhook_body,
-      notification_template: settings.value.notification_template,
-      notification_timezone: normalizeNotificationTimezoneSetting(settings.value.notification_timezone),
-      notification_language: normalizeNotificationLanguageSetting(settings.value.notification_language),
-      expire_notification_time: normalizeExpireNotificationTimeSetting(settings.value.expire_notification_time)
-    })
-    if (!result.error) {
-      alertMessage.value = getMessage(result.data.message) || trans.value.testNotificationSent
-    } else {
-      alertMessage.value = getMessage(result.error) || trans.value.testNotificationFailed
-    }
-  } catch (e) {
-    alertMessage.value = trans.value.testNotificationFailed + ': ' + e.message
-  } finally {
-    testNotificationLoading.value = false
+      }
   }
 }
 
@@ -2644,11 +2586,15 @@ watch(() => route.query.apiIndex, async (value) => {
   if (isLoggedIn.value) {
     await switchAdminSite()
   } else {
+    siteGeneration.value++
+    loginLoading.value = false
     await loadTurnstileConfig()
   }
 })
 
+onBeforeUnmount(() => { adminActive = false; siteGeneration.value++; removeTurnstile('#admin-turnstile-container'); document.body.classList.remove('admin-ui-surface') })
 onMounted(() => {
+  document.body.classList.add('admin-ui-surface')
   initAdmin()
 })
 </script>

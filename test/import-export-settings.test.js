@@ -12,6 +12,7 @@ import {
   IMPORTABLE_SITE_FIELDS,
   IMPORTABLE_APPEARANCE_FIELDS,
   SETTINGS_EXCLUDED_FIELDS,
+  LEGACY_NOTIFICATION_FIELDS,
   saveAppearanceOptions
 } from '../src/utils/settings.js';
 
@@ -129,6 +130,73 @@ test('环境相关字段不在导入导出白名单内', () => {
   }
   assert.ok(IMPORTABLE_SITE_FIELDS.includes('is_public'));
   assert.ok(IMPORTABLE_APPEARANCE_FIELDS.includes('site_title'));
+});
+
+test('sensitive notification backup survives frontend parsing and actual D1 import remaps channel IDs', async () => {
+  await seedSettings({ jwt_secret: JWT_SECRET, is_public: 'true' }, {});
+  const original = { schema: 1, revision: 7, timezone: 'UTC', language: 'en',
+    channels: [{ id: 'ops', name: 'Ops', type: 'telegram', enabled: true, config: { chatId: '42' }, secrets: { botToken: '123:backup-fixture' }, template: '{{message}}' }],
+    rules: [{ id: 'offline', name: 'Offline', type: 'offline', enabled: true, scope: { mode: 'all', serverIds: [] }, targetIds: ['ops'], options: { minutes: 5 } }] };
+  await db.prepare("INSERT INTO settings VALUES ('notification_config',?)").bind(JSON.stringify(original)).run();
+  const exported = await adminCall({ action: 'export_servers', includeNotificationSecrets: true });
+  assert.deepEqual(exported.data.settings.notification_config, original);
+  const parsed = parseServerBackup(JSON.stringify({ servers: [], settings: exported.data.settings }));
+  assert.equal(parsed.settings.notification_config.channels[0].secrets.botToken, '123:backup-fixture');
+  const imported = await adminCall({ action: 'import_servers', ...parsed });
+  assert.equal(imported.status, 200);
+  const stored = await readSetting('notification_config');
+  assert.equal(stored.channels[0].secrets.botToken, '123:backup-fixture');
+  assert.notEqual(stored.channels[0].id, 'ops');
+  assert.deepEqual(stored.rules[0].targetIds, [stored.channels[0].id]);
+  assert.equal(stored.revision, 8);
+});
+
+test('unknown selected backup IDs remain disabled and cannot be activated through standard save', async () => {
+  await seedSettings({ jwt_secret: JWT_SECRET }, {});
+  const original = { schema: 1, revision: 1, timezone: 'UTC', language: 'en',
+    channels: [{ id: 'ops', name: 'Ops', type: 'telegram', enabled: true, config: { chatId: '42' }, secrets: { botToken: '123:fixture' }, template: '{{message}}' }],
+    rules: [{ id: 'selected', name: 'Selected', type: 'offline', enabled: true, scope: { mode: 'selected', serverIds: ['source-only'] }, targetIds: ['ops'], options: { minutes: 5 } }] };
+  const imported = await adminCall({ action: 'import_servers', settings: { notification_config: original } });
+  assert.equal(imported.status, 200);
+  assert.deepEqual(imported.data.settings.notification.unresolvedRuleIds, ['selected']);
+  const stored = await readSetting('notification_config');
+  assert.equal(stored.rules[0].enabled, false);
+  assert.equal(stored.rules[0].scope.mode, 'selected');
+  assert.match(stored.rules[0].scope.serverIds[0], /^unresolved_/);
+  const dto = (await adminCall({ action: 'get_notification_config' })).data;
+  const activation = await adminCall({ action: 'save_notification_config', expectedRevision: dto.revision, channels: dto.channels, rules: dto.rules.map(r => ({ ...r, enabled: true })) });
+  assert.equal(activation.status, 400);
+});
+
+test('future notification backup rejects before server/settings writes; unrelated imports preserve current config', async () => {
+  await seedSettings({ jwt_secret: JWT_SECRET, is_public: 'true' }, {});
+  const original = { schema: 1, revision: 2, timezone: 'UTC', language: 'en', channels: [], rules: [] };
+  await db.prepare("INSERT INTO settings VALUES ('notification_config',?)").bind(JSON.stringify(original)).run();
+  const rejected = await adminCall({ action: 'import_servers', servers: [{ id: '99999999-9999-4999-8999-999999999999', name: 'Not inserted' }], settings: { site: { is_public: 'false' }, notification_config: { ...original, schema: 2 } } });
+  assert.equal(rejected.status, 400);
+  assert.equal(await db.prepare('SELECT id FROM servers WHERE id=?').bind('99999999-9999-4999-8999-999999999999').first(), null);
+  assert.equal((await readSetting('site_options')).is_public, 'true');
+  await adminCall({ action: 'import_servers', settings: { appearance: { site_title: 'Only title' } } });
+  assert.deepEqual(await readSetting('notification_config'), original);
+});
+
+test('only an actually inserted source server enables a selected imported scope; credentials stay excluded', async () => {
+  await seedSettings({ jwt_secret: JWT_SECRET }, {});
+  const id='88888888-8888-4888-8888-888888888888';
+  await db.prepare('DELETE FROM servers WHERE id=?').bind(id).run();
+  const original={schema:1,revision:0,timezone:'UTC',language:'en',channels:[{id:'c',name:'Ops',type:'telegram',enabled:true,config:{chatId:'42'},secrets:{botToken:'123:fixture'},template:'{{message}}'}],rules:[{id:'r',name:'Selected',type:'offline',enabled:true,scope:{mode:'selected',serverIds:[id]},targetIds:['c'],options:{minutes:5}}]};
+  const result=await adminCall({action:'import_servers',servers:[{id,name:'Mapped',terminal_token:'never-import',credential_version:99}],settings:{notification_config:original,site:{jwt_secret:'never-import',ua:'never-import'}}});
+  assert.equal(result.status,200);assert.equal(result.data.imported,1);
+  const stored=await readSetting('notification_config');assert.equal(stored.rules[0].enabled,true);assert.deepEqual(stored.rules[0].scope.serverIds,[id]);
+  assert.deepEqual(result.data.settings.notification.unresolvedRuleIds,[]);
+  assert.equal((await readSetting('site_options')).jwt_secret,JWT_SECRET);
+  assert.equal(JSON.stringify(await db.prepare('SELECT * FROM servers WHERE id=?').bind(id).first()).includes('never-import'),false);
+  const oldTest=await adminCall({action:'send_test_notification',tg_bot_token:'123:must-not-send',tg_chat_id:'42'});
+  assert.equal(oldTest.status,409);
+  const ordinary=await adminCall({action:'export_servers'});
+  assert.equal('notification_config' in ordinary.data.settings,false,'ordinary server export must not silently add notification credentials');
+  const unauth=await handleAdminAPI(new Request('https://example.com/admin',{method:'POST',body:JSON.stringify({action:'export_servers'})}),{DB:db},SYS);
+  assert.equal(unauth.status,401);assert.equal((await unauth.text()).includes('123:fixture'),false);
 });
 
 test('export_servers 不会带出凭据、Turnstile、UA、告警规则与 CSP', async () => {
@@ -443,7 +511,7 @@ test('导出 → 导入 → 再导出：设置与服务器保持一致', async (
 
   clearSiteSettingsCache();
   clearAppearanceSettingsCache();
-  const exported = await adminCall({ action: 'export_servers' });
+  const exported = await adminCall({ action: 'export_servers', includeNotificationSecrets: true });
   assert.equal(exported.status, 200);
 
   // 走一遍前端实际使用的文件格式与解析
@@ -468,7 +536,7 @@ test('导出 → 导入 → 再导出：设置与服务器保持一致', async (
   const imported = await importedRes.json();
   assert.equal(imported.imported, 2);
   assert.equal(imported.skipped, 0);
-  assert.equal(imported.settings.site, IMPORTABLE_SITE_FIELDS.length);
+  assert.equal(imported.settings.site, IMPORTABLE_SITE_FIELDS.filter(field => !LEGACY_NOTIFICATION_FIELDS.includes(field)).length);
   assert.equal(imported.settings.appearance, IMPORTABLE_APPEARANCE_FIELDS.length);
   // 导出已过滤排除字段，所以导入时没有东西可忽略
   assert.deepEqual(imported.settings.ignoredFields, []);
@@ -476,7 +544,7 @@ test('导出 → 导入 → 再导出：设置与服务器保持一致', async (
   clearSiteSettingsCache();
   clearAppearanceSettingsCache();
   const reExportedRes = await handleAdminAPI(
-    createRequest(token, { action: 'export_servers' }),
+    createRequest(token, { action: 'export_servers', includeNotificationSecrets: true }),
     env,
     SYS,
     null,
@@ -485,7 +553,16 @@ test('导出 → 导入 → 再导出：设置与服务器保持一致', async (
   const reExported = await reExportedRes.json();
 
   // 设置必须逐字段一致（含默认值合并后的结果）
-  assert.deepEqual(reExported.settings, exported.data.settings);
+  assert.deepEqual(reExported.settings.site, exported.data.settings.site);
+  assert.deepEqual(reExported.settings.appearance, exported.data.settings.appearance);
+  const sourceConfig = exported.data.settings.notification_config;
+  const targetConfig = reExported.settings.notification_config;
+  assert.equal(targetConfig.schema, sourceConfig.schema);
+  assert.equal(targetConfig.timezone, sourceConfig.timezone);
+  assert.equal(targetConfig.language, sourceConfig.language);
+  assert.equal(targetConfig.revision, 1);
+  assert.deepEqual(targetConfig.channels.map(({ id, ...c }) => c), sourceConfig.channels.map(({ id, ...c }) => c));
+  assert.deepEqual(targetConfig.rules, sourceConfig.rules.map(r => ({ ...r, targetIds: r.targetIds.map(id => imported.settings.notification.channelIdMap[id]) })));
 
   // 服务器：traffic_alert_state 不参与迁移，其余字段应完全一致
   const stripVolatile = (rows) => rows.map(({ traffic_alert_state, ...rest }) => rest);

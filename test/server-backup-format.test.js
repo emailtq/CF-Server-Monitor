@@ -29,6 +29,13 @@ test('只带设置的备份也能导入', () => {
   assert.deepEqual(result.settings, { site: { is_public: 'false' } });
 });
 
+test('nested notification configuration and server-only backup secrets survive actual frontend parsing', () => {
+  const notification={schema:1,revision:3,channels:[{id:'c',secrets:{url:'https://fixture.test/?token=synthetic'}}],rules:[{targetIds:['c'],scope:{mode:'selected',serverIds:['source']}}]};
+  const parsed=parseServerBackup(JSON.stringify({servers:[{id:'source'}],settings:{notification_config:notification}}));
+  assert.deepEqual(parsed.settings.notification_config,notification);
+  assert.deepEqual(parsed.servers,[{id:'source'}]);
+});
+
 test('非法 settings 与缺失 servers 都退化为空，不抛错', () => {
   for (const raw of ['{}', '{"servers":"x","settings":[]}', '{"servers":null,"settings":"x"}', 'null', '42']) {
     const result = parseServerBackup(raw);

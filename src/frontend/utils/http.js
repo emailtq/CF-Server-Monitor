@@ -65,6 +65,7 @@ const createHeaders = (includeAuth = true, includeTurnstile = true, baseUrl = nu
 
 const handleResponse = async (res, options = {}) => {
   const { autoRedirect = true, baseUrl = null, responsePolicy = 'default' } = options
+  if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
   
   if (res.status === 401 && responsePolicy !== 'terminal') {
     localStorage.removeItem(STORAGE.JWT_TOKEN)
@@ -84,11 +85,15 @@ const handleResponse = async (res, options = {}) => {
   }
   
   if (!res.ok) {
+    let terminalDisableResult = null
     let errorMessage = DEFAULT_ERROR_MESSAGES[res.status] || 'Request failed'
     let errorCode = res.status
     let errorMessageKey = null
     try {
       const data = await res.json()
+      if (responsePolicy === 'terminal' && typeof data.serverRevoked === 'boolean') {
+        terminalDisableResult = {serverRevoked:data.serverRevoked, localConfirmed:data.localConfirmed === true}
+      }
       if (data.message) {
         errorMessageKey = data.message
       }
@@ -104,17 +109,20 @@ const handleResponse = async (res, options = {}) => {
     } catch (e) {
       // ignore
     }
-    return { error: errorMessage, code: errorCode, status: res.status, message: errorMessageKey }
+    if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
+    return { error: errorMessage, code: errorCode, status: res.status, message: errorMessageKey, ...terminalDisableResult }
   }
   
   try {
     const data = await res.json()
+    if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
     if (data && data.turnstile_verified) {
       localStorage.setItem(TURNSTILE_VERIFIED_KEY, data.turnstile_verified)
       localStorage.removeItem(STORAGE.TURNSTILE_TOKEN)
     }
     return { data, status: res.status }
   } catch (e) {
+    if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
     return { data: null, status: res.status }
   }
 }
@@ -133,6 +141,7 @@ const doFetch = async (url, init, timeoutMs = null) => {
 }
 
 const request = async (method, url, body, options = {}) => {
+  if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
   const { includeAuth = true, includeTurnstile = true, autoRedirect = true, baseUrl = null, timeoutMs = null } = options
   const headers = createHeaders(includeAuth, includeTurnstile, baseUrl, options)
   const base = baseUrl || getApiBases()[0]
@@ -144,8 +153,9 @@ const request = async (method, url, body, options = {}) => {
       body: body != null ? JSON.stringify(body) : undefined,
       credentials: 'include'
     }, timeoutMs)
-    return { ...(await handleResponse(res, { autoRedirect, baseUrl: base, responsePolicy: options.responsePolicy })), baseUrl: base }
+    return { ...(await handleResponse(res, { autoRedirect, baseUrl: base, responsePolicy: options.responsePolicy, requestOwner: options.requestOwner })), baseUrl: base }
   } catch (e) {
+    if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
     if (e.name === 'AbortError') {
       return { error: 'timeout', status: 0, baseUrl: base, timeout: true }
     }
@@ -154,6 +164,7 @@ const request = async (method, url, body, options = {}) => {
 }
 
 const fetchWithBase = async (baseUrl, url, options, method = 'GET', body = null) => {
+  if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0, baseUrl }
   const { includeAuth = true, includeTurnstile = true, autoRedirect = true, timeoutMs = null } = options
   const headers = createHeaders(includeAuth, includeTurnstile, baseUrl, options)
 
@@ -164,9 +175,10 @@ const fetchWithBase = async (baseUrl, url, options, method = 'GET', body = null)
       body,
       credentials: 'include'
     }, timeoutMs)
-    const result = await handleResponse(res, { autoRedirect, baseUrl, responsePolicy: options.responsePolicy })
+    const result = await handleResponse(res, { autoRedirect, baseUrl, responsePolicy: options.responsePolicy, requestOwner: options.requestOwner })
     return { ...result, baseUrl }
   } catch (e) {
+    if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0, baseUrl }
     if (e.name === 'AbortError') {
       return { error: 'timeout', status: 0, baseUrl, timeout: true }
     }

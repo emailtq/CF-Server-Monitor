@@ -1,32 +1,35 @@
 <template>
   <div id="tab-database" class="tab-content" :class="{ active: activeTab === 'database' }">
     <div class="settings-section">
-      <div class="section-title"><span>▸</span> {{ trans.dbManagement }}</div>
+      <div class="section-title">{{ trans.dbManagement }}</div>
 
       <div class="settings-grid">
         <div class="form-group">
-          <button @click="$emit('open-db-modal', 'upgrade')" class="btn btn-primary btn-lg" :disabled="dbLoading">⬆️ {{ trans.upgradeDatabase }}</button>
+          <button @click="$emit('open-db-modal', 'upgrade')" class="btn btn-primary btn-lg" :disabled="dbLoading"> {{ trans.upgradeDatabase }}</button>
           <p class="text-muted text-sm mt-2">{{ trans.upgradeDesc }}</p>
         </div>
 
         <div class="form-group">
-          <button @click="$emit('open-db-modal', 'clearHistory')" class="btn btn-red btn-lg" :disabled="dbLoading">🗑️ {{ trans.clearHistory }}</button>
+          <button @click="$emit('open-db-modal', 'clearHistory')" class="btn btn-red btn-lg" :disabled="dbLoading"> {{ trans.clearHistory }}</button>
           <p class="text-muted text-sm mt-2">{{ trans.clearHistoryDesc }}</p>
         </div>
       </div>
     </div>
 
     <div class="settings-section">
-      <div class="section-title"><span>▸</span> {{ trans.exportServers }} / {{ trans.importServers }}</div>
+      <div class="section-title">{{ trans.exportServers }} / {{ trans.importServers }}</div>
 
       <div class="settings-grid">
         <div class="form-group">
-          <button @click="handleExport" class="btn btn-primary btn-lg" :disabled="dbLoading || exporting">
-            {{ exporting ? trans.exporting : '📤 ' + trans.exportServers }}
+          <label class="admin-check-target" for="include-notification-secrets"><input id="include-notification-secrets" v-model="includeNotificationSecrets" type="checkbox" :disabled="exporting || importing"><span>{{ trans.adminIncludeNotificationSecrets }}</span></label>
+          <p class="text-muted text-sm">{{ trans.adminBackupWarning }}</p>
+          <button @click="requestExport" class="btn btn-primary btn-lg" :disabled="dbLoading || exporting || importing">
+            <AdminIcon name="download" />{{ exporting ? trans.exporting : ' ' + trans.exportServers }}
           </button>
           <p v-if="exportNotice" class="text-sm mt-2" :style="{ color: exportNotice.success ? 'var(--accent-green)' : 'var(--accent-red)' }">
-            {{ exportNotice.success ? '✅' : '❌' }} {{ exportNotice.text }}
+            {{ exportNotice.text }}
           </p>
+          <p v-if="exportNotice?.warning" class="warning-box" role="status">{{ trans.adminSensitiveBackupWarning }} ({{ exportNotice.warning }})</p>
         </div>
 
         <div class="form-group">
@@ -37,19 +40,17 @@
             style="display: none"
             @change="handleFileSelect"
           />
-          <button @click="$refs.fileInput.click()" class="btn btn-lg" :disabled="dbLoading || importing">
-            {{ importing ? trans.importing : '📥 ' + trans.importServers }}
+          <button @click="$refs.fileInput.click()" class="btn btn-lg" :disabled="dbLoading || importing || exporting">
+            <AdminIcon name="upload" />{{ importing ? trans.importing : ' ' + trans.importServers }}
           </button>
         </div>
       </div>
-
-      <p class="text-muted text-sm mt-2">{{ trans.importSettingsNote }}</p>
 
       <div v-if="importResult" class="mt-3">
         <div :class="importResult.success ? 'warning-box' : 'danger-box'" class="mb-2">
           <div class="flex-center-gap-sm">
             <span :style="{ color: importResult.success ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: '600' }">
-              {{ importResult.success ? '✅' : '❌' }} {{ trans.importResult }}
+              {{ trans.importResult }}
             </span>
           </div>
           <div class="mt-2 text-sm">
@@ -59,14 +60,28 @@
           <div v-if="importResult.skippedIds && importResult.skippedIds.length > 0" class="mt-2 text-sm text-muted">
             {{ trans.skippedIds }}: {{ importResult.skippedIds.join(', ') }}
           </div>
+          <p v-if="importResult.error" class="text-red" role="alert">{{ importResult.error }}</p>
+          <div v-if="importResult.notification?.unresolvedRuleIds?.length" class="warning-box" role="alert">
+            <p>{{ trans.adminUnresolvedRules }}: {{ importResult.notification.unresolvedRuleIds.join(', ') }}</p>
+            <p v-for="reference in importResult.notification.unresolvedReferences || []" :key="reference.ruleId">{{ reference.ruleId }}: {{ reference.serverIds.join(', ') }}</p>
+            <p>{{ trans.adminRepairReferences }}</p>
+          </div>
+          <p v-if="importResult.ignoredFields?.length" class="text-muted">{{ trans.adminIgnoredFields }}: {{ importResult.ignoredFields.join(', ') }}</p>
+          <button v-if="importResult.reloadNeeded" class="btn btn-primary" @click="acknowledgeReload">{{ trans.adminAcknowledgeReload }}</button>
         </div>
       </div>
     </div>
+    <AdminDialog :open="showSensitiveConfirm" :title="trans.adminSensitiveBackupTitle" :busy="exporting" @close="showSensitiveConfirm = false">
+      <template #body><p class="danger-box">{{ trans.adminSensitiveBackupWarning }}</p><p>{{ trans.adminBackupWarning }}</p><p v-if="exportNotice && !exportNotice.success" class="text-red" role="alert">{{ exportNotice.text }}</p></template>
+      <template #footer><button class="btn" :disabled="exporting" @click="showSensitiveConfirm = false">{{ trans.cancel }}</button><button class="btn btn-primary" :disabled="exporting" @click="handleExport(true)">{{ trans.adminConfirmSensitiveExport }}</button></template>
+    </AdminDialog>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
+import AdminDialog from './AdminDialog.vue'
+import AdminIcon from './AdminIcon.vue'
 import { adminApi } from '../../../utils/api'
 import { parseServerBackup } from '../../../utils/backup'
 
@@ -74,7 +89,8 @@ const props = defineProps({
   trans: { type: Object, required: true },
   activeTab: { type: String, default: 'database' },
   dbLoading: { type: Boolean, default: false },
-  selectedApiIndex: { type: Number, default: 0 }
+  selectedApiIndex: { type: Number, default: 0 },
+  requestOwner: Function
 })
 
 defineEmits(['open-db-modal'])
@@ -84,15 +100,26 @@ const exporting = ref(false)
 const importing = ref(false)
 const importResult = ref(null)
 const exportNotice = ref(null)
+const includeNotificationSecrets = ref(false)
+const showSensitiveConfirm = ref(false)
+let generation = 0
+const reset = () => { generation++; exporting.value = importing.value = includeNotificationSecrets.value = showSensitiveConfirm.value = false; importResult.value = exportNotice.value = null }
+watch(() => props.selectedApiIndex, reset)
+onBeforeUnmount(reset)
+const requestExport = () => { if (includeNotificationSecrets.value) showSensitiveConfirm.value = true; else handleExport(false) }
+const acknowledgeReload = () => { if (importResult.value?.reloadNeeded) window.location.reload() }
 
 const emptyResult = () => ({ success: false, imported: 0, skipped: 0, skippedIds: [] })
 
-const handleExport = async () => {
+const handleExport = async (sensitive = false) => {
+  if (exporting.value || importing.value) return
+  const requestGeneration = generation
   exporting.value = true
   importResult.value = null
   exportNotice.value = null
   try {
-    const result = await adminApi({ action: 'export_servers' }, props.selectedApiIndex)
+    const result = await adminApi({ action: 'export_servers', ...(sensitive ? { includeNotificationSecrets: true } : {}) }, props.selectedApiIndex, props.requestOwner)
+    if (requestGeneration !== generation) return
     if (result.error || !result.data || !Array.isArray(result.data.servers)) {
       // 后端返回的是错误码，能翻译就翻译，不能就用通用失败文案
       exportNotice.value = {
@@ -102,8 +129,8 @@ const handleExport = async () => {
       return
     }
 
-    // 服务器 + 站点/外观设置打成一个文件；环境相关字段由后端过滤，不会写进备份。
     const payload = {
+      ...result.data,
       format: 'cfsm-backup',
       version: 1,
       exported_at: new Date().toISOString(),
@@ -119,24 +146,28 @@ const handleExport = async () => {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-    exportNotice.value = { success: true, text: props.trans.serversExported }
+    exportNotice.value = { success: true, text: props.trans.serversExported, warning: result.data.notificationBackup?.warning }
+    showSensitiveConfirm.value = false
   } catch (e) {
-    console.error('Export failed:', e)
+    if (requestGeneration !== generation) return
     exportNotice.value = { success: false, text: props.trans.serversExportFailed }
   } finally {
-    exporting.value = false
+    if (requestGeneration === generation) exporting.value = false
   }
 }
 
 const handleFileSelect = async (event) => {
   const file = event.target.files[0]
   if (!file) return
+  if (importing.value || exporting.value) return
+  const requestGeneration = generation
 
   importing.value = true
   importResult.value = null
 
   try {
     const text = await file.text()
+    if (requestGeneration !== generation) return
     // 旧版纯服务器数组与新备份 { servers, settings } 都支持
     const { servers, settings } = parseServerBackup(text)
 
@@ -145,26 +176,27 @@ const handleFileSelect = async (event) => {
       return
     }
 
-    const result = await adminApi({ action: 'import_servers', servers, settings }, props.selectedApiIndex)
+    const result = await adminApi({ action: 'import_servers', servers, settings }, props.selectedApiIndex, props.requestOwner)
+    if (requestGeneration !== generation) return
     if (!result.error && result.data) {
       importResult.value = {
         success: result.data.success,
         imported: result.data.imported || 0,
         skipped: result.data.skipped || 0,
-        skippedIds: result.data.skippedIds || []
-      }
-      if (result.data.imported > 0 || result.data.settings?.imported) {
-        window.location.reload()
+        skippedIds: result.data.skippedIds || [],
+        notification: result.data.settings?.notification,
+        ignoredFields: result.data.settings?.ignoredFields || [],
+        reloadNeeded: result.data.imported > 0 || result.data.settings?.imported
       }
     } else {
-      importResult.value = emptyResult()
+      importResult.value = { ...emptyResult(), error: props.trans[result.error] || props.trans.adminImportFailed }
     }
   } catch (e) {
-    console.error('Import failed:', e)
-    importResult.value = emptyResult()
+    if (requestGeneration !== generation) return
+    importResult.value = { ...emptyResult(), error: props.trans.adminImportFailed }
   } finally {
-    importing.value = false
-    if (fileInput.value) {
+    if (requestGeneration === generation) importing.value = false
+    if (requestGeneration === generation && fileInput.value) {
       fileInput.value.value = ''
     }
   }

@@ -16,7 +16,7 @@ function makeSettings(overrides = {}) {
     ...Object.fromEntries(SITE_FIELDS.map(field => [field, ''])),
     jwt_secret: 'x'.repeat(32),
     tg_notify: '2',
-    tg_bot_token: 'test-token',
+    tg_bot_token: '123:test-token',
     tg_chat_id: 'test-chat',
     notification_timezone: 'UTC',
     notification_template: DEFAULT_NOTIFICATION_TEMPLATE,
@@ -30,7 +30,7 @@ function makeServer(index, overrides = {}) {
 }
 
 function makeDb(settings, servers = [makeServer(1)]) {
-  const stats = { settings: 0, legacy: 0, servers: 0, history: 0, batches: 0, offline: 0, resource: 0, writes: 0 };
+  const stats = { settings: 0, legacy: 0, servers: 0, history: 0, batches: 0, offline: 0, resource: 0, writes: 0, config: 0 };
   const db = {
     stats, settings, servers,
     timestamps: new Map(servers.map(server => [server.id, NOW])),
@@ -40,6 +40,7 @@ function makeDb(settings, servers = [makeServer(1)]) {
         args: [],
         bind(...args) { this.args = args; return this; },
         async first() {
+          if (this.args[0] === 'notification_config') { stats.config++; return null; }
           if (sql.includes("key = 'site_options'")) {
             stats.settings++;
             if (db.failSettings) throw new Error('simulated settings read failure');
@@ -152,7 +153,7 @@ test('minute cron shares one settings read, preserves refresh cadence and adds n
   const db = makeDb(makeSettings(), [makeServer(1), makeServer(2, { offline_notify_disabled: '1' })]);
   const { env, calls, storage } = makeEnv(db);
   await worker.scheduled({ cron: '*/1 * * * *' }, env, {});
-  assert.deepEqual(db.stats, { settings: 1, legacy: 0, servers: 1, history: 1, batches: 1, offline: 1, resource: 1, writes: 0 });
+  assert.deepEqual(db.stats, { settings: 1, legacy: 0, servers: 1, history: 1, batches: 1, offline: 1, resource: 1, writes: 0, config: 1 });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].resultFormat, RESOURCE_ALERT_COMPACT_RESULT_FORMAT);
   assert.deepEqual(storage, { reads: 1, writes: 0 });
@@ -181,7 +182,7 @@ test('cold odd/even cron only loads disabled settings once, including legacy fal
       const db = makeDb(settings);
       const { env, calls } = makeEnv(db);
       await worker.scheduled({ cron: '*/1 * * * *' }, env, {});
-      assert.deepEqual(db.stats, { settings: 1, legacy: Number(missingField), servers: 0, history: 0, batches: 0, offline: 0, resource: 0, writes: 0 });
+      assert.deepEqual(db.stats, { settings: 1, legacy: Number(missingField), servers: 0, history: 0, batches: 0, offline: 0, resource: 0, writes: 0, config: 1 });
       assert.equal(calls.length, 0);
     }
   }
@@ -199,7 +200,7 @@ test('minute cron keeps offline and resource alerts working when settings refres
 
   await worker.scheduled({ cron: '*/1 * * * *' }, env, {});
   assert.equal(messages.length, 2, 'both alerts must use the last successful settings');
-  assert.deepEqual(db.offlineState, { 'server-1': true });
+  assert.deepEqual(db.offlineState.rules.offline_default.servers, { 'server-1': true });
   assert.equal(db.resourceState.servers['cpu:server-1'].status, 'active');
   assert.equal(db.stats.settings, 2, 'one initial load plus one failed refresh, with no retry');
   assert.equal(db.stats.writes, 2);
@@ -219,7 +220,8 @@ test('minute cron keeps offline and resource alerts working when settings refres
   assert.equal(db.stats.settings, 3, 'next even minute reads the recovered database once');
   assert.equal(db.stats.history, 2, 'newly disabled offline alerts stop querying history');
   assert.equal(calls.length, 2, 'newly disabled resource alerts stop querying the DO');
-  assert.equal(db.resourceState, null);
+  assert.equal(db.resourceState.servers['cpu:server-1'].status, 'active');
+  assert.equal(db.stats.writes, 2);
   assert.equal(messages.length, 2);
 });
 
@@ -277,7 +279,7 @@ test('cold settings failures still use defaults without repeated reads and recov
   db.failSettings = false;
   const refreshed = await loadSiteSettings(db, { forceRefresh: true });
   assert.equal(refreshed.tg_notify, '2');
-  assert.equal(refreshed.tg_bot_token, 'test-token');
+  assert.equal(refreshed.tg_bot_token, '123:test-token');
   assert.equal(db.stats.settings, 2);
   assert.equal(db.stats.writes, 0);
 });
@@ -304,7 +306,8 @@ test('offline queries exclude disabled nodes and preserve trigger/recovery dedup
   assert.equal(db.stats.settings, 0);
   assert.equal(db.stats.history, 2);
   assert.equal(db.stats.writes, 1);
-  assert.deepEqual(db.offlineState, { 'server-1': true, 'server-3': true });
+  assert.deepEqual(db.offlineState.rules.offline_default.servers, { 'server-1': true, 'server-3': true });
+  assert.deepEqual(db.offlineState.legacy, { 'server-2': true, 'server-3': true });
   assert.equal(messages.length, 2);
   assert.ok(messages.every(message => !message.text.includes('Server 3')));
   await checkOfflineNodes(db, { siteSettings: settings });

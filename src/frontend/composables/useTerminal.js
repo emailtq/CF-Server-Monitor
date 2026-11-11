@@ -207,6 +207,12 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     if (screen.cols === cols && screen.rows === rows) return
     screen.resize(cols, rows)
   }
+  const refreshTheme = () => {
+    if (!screen || !host || disposed) return false
+    const style = getComputedStyle(host)
+    screen.options.theme = { background: style.backgroundColor, foreground: style.color, cursor: style.color }
+    return true
+  }
   const paste = text => {
     if (status.value !== 'running') return false
     // Reserve the possible bracketed-paste delimiters before xterm transforms the text.
@@ -261,6 +267,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       fit = new FitAddon()
       screen.loadAddon(fit)
       screen.open(container)
+      refreshTheme()
       const rendering = renderEpoch
       fitScreen()
       input = new Uint8Array(TERMINAL_LIMITS.dataFrameBytes)
@@ -378,7 +385,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     channel.onmessage = event => { if (event.data?.type === 'logout') logoutEvent() }
   }
   return {
-    status, errorCode, sessionId, finalOutput, open, resize, close, dispose, sendInput, paste,
+    status, errorCode, sessionId, finalOutput, open, resize, close, dispose, sendInput, paste, refreshTheme,
     focus: () => screen?.focus(),
     copySelection: () => screen?.hasSelection()
       ? copyTextToClipboard(screen.getSelection())

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
 import vm from 'node:vm'
 import { parse as parseJS } from '@babel/parser'
@@ -29,12 +30,13 @@ test('terminal route and server-table actions are wired without eager xterm in t
 })
 
 test('terminal setup never persists tokens or inserts them in installation commands', async () => {
-  const modal = await source('src/frontend/views/admin/components/TerminalAccessModal.vue')
+  const modal = await source('src/frontend/views/admin/components/CopyCommandModal.vue')
   const composable = await source('src/frontend/composables/useTerminal.js')
   assert.doesNotMatch(modal + composable, /localStorage|sessionStorage|createLiveSocket|searchParams\.set/)
   assert.match(modal, /usePasswordVisibility/)
   assert.match(modal, /copyTextToClipboard/)
-  assert.match(modal, /-terminal=1 -terminal-token-file=/)
+  const admin = await source('src/frontend/views/admin/index.vue')
+  assert.match(admin, /-terminal=1 -terminal-token-file=/)
 })
 
 test('terminal HTTP errors preserve canonical reason without changing ordinary 401/403 policy', async () => {
@@ -63,6 +65,11 @@ test('terminal HTTP errors preserve canonical reason without changing ordinary 4
     assert.deepEqual(removed, [])
     assert.deepEqual(redirected, [])
     assert.ok(requests.every(request => !request.headers.Authorization && !request.headers['X-Turnstile-Token'] && !request.headers['X-Turnstile-Verified']))
+    globalThis.fetch = async () => Response.json({error:'terminal_authority_or_broker_unavailable',serverRevoked:true,localConfirmed:false,localReason:'broker_unavailable'}, {status:503})
+    const revoked = await http.postByIndex('/admin/api', {}, 0, options)
+    assert.equal(revoked.serverRevoked, true, 'terminal failure must retain authoritative revoke without claiming local shutdown')
+    assert.equal(revoked.localConfirmed, false)
+    globalThis.fetch = async () => Response.json({error:status === 401 ? 'terminal_step_up_required' : 'terminal_disabled',code:status}, {status})
     status = 401; await http.post('/admin/api', {})
     assert.deepEqual(removed, ['jwt_token'])
     assert.deepEqual(redirected, ['reload'])
@@ -571,3 +578,32 @@ test('repeated close cannot extend the monotonic renderer deadline or its 16KiB 
     else delete performance.now
   }
 }))
+
+test('renderer theme refresh uses effective CSS colors without reserving, reconnecting or clearing final output', () => fixture(async ({ create, open, calls, timers }) => {
+  const t = create(); const ws = await open(t); const screen = Screen.instances.at(-1)
+  const id = t.sessionId.value, timerCount = timers.size, callCount = calls.length
+  globalThis.getComputedStyle = () => ({ backgroundColor: 'rgb(255, 255, 255)', color: 'rgb(23, 32, 48)' })
+  assert.equal(t.refreshTheme(), true)
+  assert.deepEqual(screen.options.theme, { background: 'rgb(255, 255, 255)', foreground: 'rgb(23, 32, 48)', cursor: 'rgb(23, 32, 48)' })
+  assert.equal(t.sessionId.value, id)
+  assert.equal(t.status.value, 'running')
+  assert.equal(calls.length, callCount)
+  assert.equal(timers.size, timerCount)
+  assert.equal(Socket.instances.length, 1)
+  ws.message(new TextEncoder().encode('FINAL').buffer); screen.callbacks[0].cb()
+  t.close()
+  globalThis.getComputedStyle = () => ({ backgroundColor: 'rgb(16, 20, 28)', color: 'rgb(248, 250, 252)' })
+  assert.equal(t.refreshTheme(), true)
+  assert.equal(screen.options.theme.background, 'rgb(16, 20, 28)')
+  assert.equal(screen.visible, 'FINAL')
+  t.dispose()
+  assert.equal(t.refreshTheme(), false)
+}))
+
+test('compiled standalone terminal preserves actual theme, input ownership and bounded workspace', { timeout: 120000 }, () => {
+  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/terminal-page.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 120000, env: process.env })
+  process.stdout.write(result.stdout || '')
+  process.stderr.write(result.stderr || '')
+  assert.equal(result.error, undefined)
+  assert.equal(result.status, 0)
+})

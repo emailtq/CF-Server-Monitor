@@ -2,7 +2,7 @@
   <div id="login-overlay" class="login-overlay">
     <div class="login-container">
       <div class="login-header">
-        <div class="login-icon">🔐</div>
+
         <h2 class="login-title">{{ trans.adminLogin }}</h2>
         <p class="login-subtitle">{{ trans.enterCredentials }}</p>
       </div>
@@ -27,16 +27,14 @@
           <label class="login-label">{{ trans.password }}</label>
           <div class="password-input-wrapper">
             <input :type="passwordVisible.login ? 'text' : 'password'" name="password" autocomplete="current-password" v-model="loginForm.password" required class="login-input">
-            <button type="button" class="password-toggle" @click="$emit('toggle-password', 'login')">
-              {{ passwordVisible.login ? '🙈' : '👁️' }}
-            </button>
+            <button type="button" class="password-toggle btn admin-quiet" :aria-pressed="!!passwordVisible.login" :aria-label="(passwordVisible.login ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.password" @click="$emit('toggle-password', 'login')">{{ passwordVisible.login ? trans.adminHideSecret : trans.adminShowSecret }}</button>
           </div>
         </div>
         <div v-if="turnstileSiteKey && (turnstileLoginEnabled || (turnstileEnabled && !turnstileVerified))" class="login-form-group">
           <div id="admin-turnstile-container"></div>
         </div>
         <div v-if="loginError" id="login-error" class="login-error">{{ loginError }}</div>
-        <button type="submit" class="login-btn">{{ loginLoading ? '⏳' : trans.login }}</button>
+        <button type="submit" class="login-btn" :disabled="loginLoading">{{ loginLoading ? trans.loading : trans.login }}</button>
       </form>
     </div>
     <Footer />

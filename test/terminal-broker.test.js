@@ -198,7 +198,7 @@ test('rotation invalidation is a monotonic credential barrier even for already-v
   const h = await harness();
   try {
     await h.control();
-    assert.equal((await h.action('terminal_authorize_node', {serverId:'node-a', password:'test-report-secret'})).status, 200);
+    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 200);
     const response = await h.fetch('/test/internal?op=control', {headers:{Upgrade:'websocket', 'X-CFSM-Terminal-Context':JSON.stringify({serverId:'node-a', role:'agent', credentialVersion:1})}});
     assert.equal(response.status, 403);
   } finally { await h.dispose(); }

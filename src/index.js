@@ -1,5 +1,6 @@
 import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './database/schema.js';
 import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './services/notification.js';
+import { loadNotificationConfig } from './database/notifications.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
 import { handleTerminalUpgrade } from './handlers/terminal.js';
@@ -488,11 +489,14 @@ export default {
         const siteSettings = await loadSiteSettings(env.DB, {
           forceRefresh: !!env.METRICS_BROADCASTER && minute % 2 === 0
         });
+        let notificationConfig;
+        try { notificationConfig = await loadNotificationConfig(env.DB, siteSettings); }
+        catch (_) { console.error('[Notification] configuration unavailable'); return; }
         debug('[Cron] 开始执行离线节点检测');
-        await checkOfflineNodes(env.DB, { siteSettings });
+        await checkOfflineNodes(env.DB, { siteSettings, notificationConfig });
         debug('[Cron] 离线节点检测完成');
         debug('[Cron] 开始执行资源负载告警检测');
-        await checkResourceAlerts(env, { siteSettings });
+        await checkResourceAlerts(env, { siteSettings, notificationConfig });
         debug('[Cron] 资源负载告警检测完成');
       }
     } else if (cron === '0 * * * *') {

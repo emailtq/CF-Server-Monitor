@@ -1,9 +1,9 @@
-import { getTerminalAdminPrincipal, validateCredentials } from '../middleware/auth.js';
+import { getTerminalAdminPrincipal } from '../middleware/auth.js';
 import { issueTerminalNodeToken, verifyTerminalNodeToken, revokeTerminalNode, terminalAuthorizationKey } from '../database/terminal.js';
 import { saveSiteOptions } from '../utils/settings.js';
 import { validateTerminalSize, TERMINAL_LIMITS } from '../shared/terminalProtocol.js';
 
-const ACTIONS = new Set(['terminal_enable_site', 'terminal_authorize_node', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close']);
+const ACTIONS = new Set(['terminal_prepare_install', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close']);
 const isId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const response = (code, status) => Response.json({error:code, code:status}, {status});
 const sameOrigin = request => new URL(request.url).protocol === 'https:' && request.headers.get('Origin') === new URL(request.url).origin;
@@ -52,6 +52,21 @@ function brokerRequest(env, operation, context, data = null) {
   }));
 }
 
+async function nodeStatus(env, settings, serverId, node) {
+  const empty = {enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0};
+  if (settings.theme_url) return {...empty, state:'terminal_custom_frontend'};
+  if (!settings.terminal_enabled) return {...empty, state:'terminal_disabled'};
+  if (node.credential_version == null) return {...empty, state:'pending'};
+  if (node.enabled !== 1) return {...empty, state:'revoked'};
+  if (!env.TERMINAL_BROKER) return {...empty, state:'query_failed', error:'terminal_query_failed'};
+  try {
+    const result = await brokerRequest(env, 'status', {serverId, credentialVersion:node.credential_version});
+    if (!result.ok) return {...empty, state:'query_failed', error:'terminal_query_failed'};
+    const status = await result.json();
+    return {...status, enabled:true, state:status.connected && status.supported ? 'ready' : status.observed === 'unsupported' ? 'unsupported' : status.observed === 'supported' ? 'offline' : 'pending'};
+  } catch (_) { return {...empty, state:'query_failed', error:'terminal_query_failed'}; }
+}
+
 export async function handleTerminalAdminAction({request, env, sys, data}) {
   if (!ACTIONS.has(data.action)) return null;
   if (!sameOrigin(request)) return response('terminal_origin_denied', 403);
@@ -61,40 +76,53 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
     const settings = await authority(env, sys);
     const owner = await getTerminalAdminPrincipal(request, env, settings);
     if (!owner) return response('terminal_login_required', 401);
-    if (data.action === 'terminal_enable_site' || data.action === 'terminal_authorize_node') {
-      const credentials = await validateCredentials(data.username || settings.username || env.API_USER_NAME || 'admin', data.password, env, settings);
-      if (!credentials.valid) return response('terminal_step_up_required', 401);
-    }
-    if (data.action === 'terminal_enable_site') {
-      if (settings.theme_url) return response('terminal_custom_frontend', 409);
-      await saveSiteOptions(env.DB, {terminal_enabled:'true'});
-      if (sys) sys.terminal_enabled = 'true';
-      return Response.json({enabled:true});
+    if (data.action === 'terminal_status' && data.serverIds !== undefined) {
+      if (!Array.isArray(data.serverIds) || data.serverIds.length > 1000 || !data.serverIds.every(isId) || new Set(data.serverIds).size !== data.serverIds.length) return response('terminal_invalid_node', 400);
+      const rows = await env.DB.prepare(`SELECT s.id, n.enabled, n.credential_version FROM servers s LEFT JOIN terminal_nodes n ON n.server_id = s.id WHERE s.id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(data.serverIds)).all();
+      const nodes = Object.create(null);
+      const queue = rows.results;
+      // Bounded metadata reads only: never create Agent/browser channels from the list.
+      await Promise.all(Array.from({length:Math.min(3, queue.length)}, async () => {
+        while (queue.length) { const row = queue.shift(); nodes[row.id] = await nodeStatus(env, settings, row.id, row); }
+      }));
+      return Response.json({nodes});
     }
     if (!isId(data.serverId)) return response('terminal_invalid_node', 400);
     const node = await nodeAuthority(env, data.serverId);
     if (!node) return response('terminal_node_missing', 404);
-    if (data.action === 'terminal_status' && node.credential_version == null) {
-      return Response.json({enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0});
-    }
     if (data.action === 'terminal_revoke_node') {
-      await revokeTerminalNode(env.DB, data.serverId);
-      await notifyTerminalNodeRevoked(env, data.serverId);
-      return Response.json({enabled:false, brokerClosed:true});
+      if (node.credential_version == null) return Response.json({enabled:false, serverRevoked:true, localConfirmed:false, localReason:'offline'});
+      const context = {serverId:data.serverId, owner:owner.jti, ownerExpiry:owner.exp,
+        authorizationKey:await terminalAuthorizationKey(settings), credentialVersion:node.credential_version};
+      try {
+        if (!env.TERMINAL_BROKER) throw new Error('terminal_broker_unavailable');
+        const result = await brokerRequest(env, 'disable', context);
+        if (result.status >= 500) throw new Error('terminal_broker_unavailable');
+        return result;
+      } catch (_) {
+        const revoked = await revokeTerminalNode(env.DB, data.serverId, Date.now(), context);
+        return Response.json({error:'terminal_authority_or_broker_unavailable', code:503,
+          serverRevoked:!!revoked, localConfirmed:false, localReason:'broker_unavailable'}, {status:503});
+      }
     }
-    if (data.action === 'terminal_authorize_node') {
-      if (!settings.terminal_enabled || settings.theme_url) return response('terminal_disabled', 403);
+    if (data.action === 'terminal_prepare_install') {
+      if (data.terminal !== true || data.acceptRisk !== true) return response('terminal_install_consent_required', 400);
+      if (settings.theme_url) return response('terminal_custom_frontend', 409);
+      if (!env.TERMINAL_BROKER) return response('terminal_broker_unavailable', 503);
+      if (!settings.terminal_enabled) {
+        await saveSiteOptions(env.DB, {terminal_enabled:'true'});
+        if (sys) sys.terminal_enabled = 'true';
+      }
       const issued = await issueTerminalNodeToken(env.DB, data.serverId);
       await notifyTerminalNodeRevoked(env, data.serverId);
-      return Response.json(issued);
+      return Response.json(issued, {headers:{'Cache-Control':'no-store'}});
+    }
+    if (data.action === 'terminal_status') {
+      const status = await nodeStatus(env, settings, data.serverId, node);
+      return Response.json(status, {status:status.error ? 503 : 200});
     }
     if (!env.TERMINAL_BROKER) return response('terminal_broker_unavailable', 503);
     const enabled = settings.terminal_enabled && !settings.theme_url && node.enabled === 1;
-    if (data.action === 'terminal_status') {
-      const result = await brokerRequest(env, 'status', {serverId:data.serverId});
-      if (!result.ok) return result;
-      return Response.json({...(await result.json()), enabled});
-    }
     if (!enabled) return response('terminal_disabled', 403);
     const context = {serverId:data.serverId, owner:owner.jti, ownerExpiry:owner.exp,
       authorizationKey:await terminalAuthorizationKey(settings), credentialVersion:node.credential_version,

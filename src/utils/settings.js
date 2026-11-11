@@ -4,6 +4,7 @@ import {
   SITE_SETTINGS_CACHE_TTL_MS
 } from './config.js';
 import { normalizePct } from './traffic.js';
+import { AppError } from './errors.js';
 import {
   AUTO_LANGUAGE,
   DEFAULT_NOTIFICATION_LANGUAGE,
@@ -12,6 +13,8 @@ import {
 } from '../shared/languages.js';
 
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
+
+export const LEGACY_NOTIFICATION_FIELDS = ['tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold'];
 
 export const SITE_FIELDS = ['terminal_enabled', 'auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized', 'ua'];
 
@@ -25,6 +28,7 @@ export const SITE_FIELDS = ['terminal_enabled', 'auto_discovery', 'is_public', '
 // - servers_optimized：历史分区迁移完成标记，跨库覆盖会让目标库重排 history_partition_id
 // Cloudflare 账号/令牌按需求保留在导入导出内（同账号迁移时需要一起带走）。
 export const SETTINGS_EXCLUDED_FIELDS = [
+  'notification_config',
   'terminal_enabled',
   'username',
   'password',
@@ -879,6 +883,10 @@ export async function loadSettings(db) {
 }
 
 export async function saveSiteOptions(db, updates) {
+  const notificationUpdates = Object.keys(updates).some(field => LEGACY_NOTIFICATION_FIELDS.includes(field));
+  if (notificationUpdates && await db.prepare("SELECT 1 AS present FROM settings WHERE key = 'notification_config'").first()) {
+    throw new AppError('notification_config_authoritative', 409);
+  }
   const siteRow = await db.prepare(
     "SELECT value FROM settings WHERE key = 'site_options'"
   ).first();
@@ -917,9 +925,12 @@ export async function saveSiteOptions(db, updates) {
   siteOptions.traffic_alert_threshold = normalizeTrafficAlertThreshold(siteOptions.traffic_alert_threshold);
   siteOptions.ua = sanitizeUserAgent(siteOptions.ua);
   
-  await db.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+  const saved = await db.prepare(notificationUpdates
+    ? `INSERT INTO settings (key, value) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'notification_config')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'notification_config')`
+    : 'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
   ).bind('site_options', JSON.stringify(siteOptions)).run();
+  if (notificationUpdates && Number(saved.meta?.changes ?? 0) === 0) throw new AppError('notification_config_authoritative', 409);
   
   clearSiteSettingsCache();
   return siteOptions;

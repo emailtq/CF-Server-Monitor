@@ -33,21 +33,25 @@ export function useTurnstile() {
   }
 
   const renderTurnstile = (containerSelector, siteKey, callbacks = {}) => {
+    if (callbacks.requestOwner && !callbacks.requestOwner()) return
     if (typeof window !== 'undefined' && window.turnstile) {
       removeTurnstile(containerSelector)
       widgetId = window.turnstile.render(containerSelector, {
         sitekey: siteKey,
         callback: (token) => {
+          if (callbacks.requestOwner && !callbacks.requestOwner()) return
           turnstileToken.value = token
           setTurnstileToken(token)
           callbacks.onSuccess?.(token)
         },
         errorCallback: () => {
+          if (callbacks.requestOwner && !callbacks.requestOwner()) return
           turnstileToken.value = ''
           clearTurnstileToken()
           callbacks.onError?.()
         },
         expiredCallback: () => {
+          if (callbacks.requestOwner && !callbacks.requestOwner()) return
           turnstileToken.value = ''
           clearTurnstileToken()
           callbacks.onExpired?.()
@@ -62,7 +66,8 @@ export function useTurnstile() {
     }
   }
 
-  const applyTurnstileConfig = async (config) => {
+  const applyTurnstileConfig = async (config, requestOwner) => {
+    if (requestOwner && !requestOwner()) return false
     if (!config) return false
 
     turnstileEnabled.value = isTurnstileValueEnabled(config.turnstile_enabled)
@@ -74,12 +79,12 @@ export function useTurnstile() {
 
     if (turnstileSiteKey.value && (turnstileLoginEnabled.value || (turnstileEnabled.value && !turnstileVerified.value))) {
       await loadTurnstileScript()
-      return true
+      return !requestOwner || requestOwner()
     }
     return false
   }
 
-  const loadTurnstileConfig = async (selectedApiIndex, _isMultipleMode, loginError) => {
+  const loadTurnstileConfig = async (selectedApiIndex, _isMultipleMode, loginError, requestOwner) => {
     try {
       turnstileEnabled.value = false
       turnstileLoginEnabled.value = false
@@ -89,12 +94,15 @@ export function useTurnstile() {
       if (loginError) loginError.value = ''
       removeTurnstile('#admin-turnstile-container')
 
-      const result = await fetchTurnstileConfigByIndex(selectedApiIndex)
+      const result = await fetchTurnstileConfigByIndex(selectedApiIndex, requestOwner)
+      if (requestOwner && !requestOwner()) return
       if (!result.error) {
-        await applyTurnstileConfig(result.data)
+        await applyTurnstileConfig(result.data, requestOwner)
       }
+      if (requestOwner && !requestOwner()) return
       turnstileToken.value = getTurnstileToken()
     } catch (e) {
+      if (requestOwner && !requestOwner()) return
       turnstileToken.value = getTurnstileToken()
       console.error('Failed to load Turnstile config:', e)
     }
@@ -114,6 +122,7 @@ export function useTurnstile() {
     hasSharedTurnstileVerified,
     loadTurnstileConfig,
     renderTurnstile,
+    removeTurnstile,
     resetTurnstile,
     clearTurnstile
   }

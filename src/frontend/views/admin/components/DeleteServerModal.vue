@@ -1,15 +1,11 @@
 <template>
-  <div id="deleteModal" class="modal-overlay" :class="{ active: show }">
-    <div class="modal-dialog">
-      <div class="modal-header">
-        <div class="modal-title">{{ currentServerName }}</div>
-        <button class="modal-close" @click="$emit('close')">✕</button>
-      </div>
+  <AdminDialog :open="show" :title="currentServerName" :busy="busy" @close="$emit('close')">
+    <template #body>
       <input type="hidden" :value="deleteServerId">
 
       <div class="mb-4">
         <div class="flex-center-gap-sm mb-3">
-          <span class="danger-icon text-xl">⚠️</span>
+
           <span class="danger-label">{{ trans.dangerWarning }}</span>
         </div>
         <p class="text-secondary text-sm line-height-1-6">
@@ -18,7 +14,7 @@
           <strong class="text-primary">{{ trans.recommendUninstall }}：</strong>
         </p>
       </div>
-  
+
       <div class="form-row">
         <div class="form-group flex-1 mb-3">
           <label class="form-label">{{ trans.targetOs }}</label>
@@ -80,24 +76,25 @@
           rows="8"
         />
         <input v-else type="text" readonly :value="uninstallCommand" class="cmd-input flex-1">
-        <button @click="$emit('copy-uninstall')" class="btn btn-icon btn-green ml-2" :aria-label="trans.copy">{{ uninstallCopied ? '✅' : '📋' }}</button>
+        <button @click="$emit('copy-uninstall')" class="btn btn-icon btn-green ml-2" :aria-label="trans.copy"></button>
       </div>
-
-      <div class="modal-footer flex-justify-between">
-        <button @click="$emit('confirm-delete')" class="btn btn-red">{{ trans.confirmDelete }}</button>
-        <button @click="$emit('close')" class="btn">{{ trans.cancelAction }}</button>
-      </div>
-    </div>
-  </div>
+    </template>
+    <template #footer>
+      <button @click="$emit('close')" class="btn" :disabled="busy">{{ trans.cancelAction }}</button>
+      <button @click="$emit('confirm-delete')" class="btn btn-red" :disabled="busy">{{ trans.confirmDelete }}</button>
+    </template>
+  </AdminDialog>
 </template>
 
 <script setup>
+import AdminDialog from './AdminDialog.vue'
 import { computed, ref, watch } from 'vue'
-import HelpTooltip from '../../../components/HelpTooltip.vue'
+import HelpTooltip from './AdminHelp.vue'
 
 const props = defineProps({
   trans: { type: Object, required: true },
   show: { type: Boolean, default: false },
+  busy: { type: Boolean, default: false },
   deleteServerId: { type: [String, Number], default: '' },
   currentServerName: { type: String, default: '' },
   deleteTargetOs: { type: String, default: 'linux' },

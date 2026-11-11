@@ -75,6 +75,7 @@ test('monthly traffic alert sends a Spanish Telegram message', async () => {
       return {
         bind() { return this; },
         async first() {
+          if (sql.startsWith('SELECT traffic_alert_state')) return { traffic_alert_state: null };
           return sql.includes("key = 'site_options'") ? { value: JSON.stringify(siteSettings) } : null;
         },
         async all() { return { results: [] }; },

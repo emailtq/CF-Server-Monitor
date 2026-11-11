@@ -58,12 +58,13 @@ export const fetchAllTurnstileConfigs = async () => {
   return results
 }
 
-export const fetchTurnstileConfigByIndex = async (apiIndex = 0) => {
+export const fetchTurnstileConfigByIndex = async (apiIndex = 0, requestOwner) => {
   return http.getByIndex('/api/config', apiIndex, {
     includeAuth: true,
     includeTurnstile: false,
     includeTurnstileVerified: false,
-    autoRedirect: false
+    autoRedirect: false,
+    requestOwner
   })
 }
 

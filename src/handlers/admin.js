@@ -18,6 +18,9 @@ import { getTerminalJwtPrincipal } from '../middleware/auth.js';
 import { revokeTerminalAdmin } from '../database/terminal.js';
 import { handleTerminalAdminAction, disableTerminalAccess, notifyTerminalNodeRevoked, terminalPreviewGuard } from './terminal.js';
 import { revokeTerminalNode } from '../database/terminal.js';
+import { loadNotificationConfig, saveNotificationConfig, prepareNotificationChannel, notificationChannelSettings, validateNotificationBackup, importNotificationConfig } from '../database/notifications.js';
+import { assertNotificationObject, maskNotificationConfig, NOTIFICATION_CONFIG_MAX_BYTES, notificationConfigError, migrateLegacyNotifications } from '../shared/notificationConfig.js';
+import { LEGACY_NOTIFICATION_FIELDS } from '../utils/settings.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -583,8 +586,11 @@ const PUBLIC_ADMIN_ACTION_HANDLERS = {
   clear_theme_preview_auth: handleClearThemePreviewAuthAction
 };
 
-export function sanitizeAdminSettings(fullSettings = {}) {
-  const { jwt_secret, password, ...safeSettings } = fullSettings || {};
+export function sanitizeAdminSettings(fullSettings = {}, notificationConfigAuthoritative = false) {
+  const { jwt_secret, password, notification_config, ...safeSettings } = fullSettings || {};
+  if (notificationConfigAuthoritative) {
+    for (const field of ['tg_bot_token', 'notification_webhook_url', 'notification_webhook_headers']) delete safeSettings[field];
+  }
   return {
     ...safeSettings,
     password_configured: Boolean(String(password || '').trim())
@@ -593,9 +599,10 @@ export function sanitizeAdminSettings(fullSettings = {}) {
 
 async function handleGetSettingsAction({ env, sys, loadFullSettings }) {
   const fullSettings = loadFullSettings ? await loadFullSettings() : sys;
+  const notificationConfigAuthoritative = Boolean(await env.DB.prepare("SELECT 1 AS present FROM settings WHERE key = 'notification_config'").first());
   return createSuccessResponse({
     success: true,
-    settings: sanitizeAdminSettings(fullSettings),
+    settings: sanitizeAdminSettings(fullSettings, notificationConfigAuthoritative),
     api_secret: env.API_SECRET
   });
 }
@@ -729,7 +736,9 @@ async function handleD1UsageAction({ data, sys }) {
   }
 }
 
-async function handleSendTestNotificationAction({ data }) {
+async function handleSendTestNotificationAction({ env, data }) {
+  const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('notification_config').first();
+  if (row) return new Response(JSON.stringify({ error: 'notification_config_authoritative', code: 409 }), { status: 409, headers: { 'Content-Type': 'application/json' } });
   const {
     tg_bot_token,
     tg_chat_id,
@@ -778,17 +787,18 @@ async function handleSendTestNotificationAction({ data }) {
       message: messages.testMessage
     });
     if(result) {
-      console.warn('Test notification failed:', result);
-      // 附带具体失败原因，前端 i18n 未命中时会原样展示（不含密码等敏感信息）
-      return createBadRequestResponse(`testNotificationFailed: ${result}`);
+      return createBadRequestResponse('testNotificationFailed');
     }
     return createSuccessResponse({ success: true, message: 'testNotificationSent' });
-  } catch (e) {
-    return createBadRequestResponse(`testNotificationFailed: ${e?.message || e}`);
+  } catch (_) {
+    return createBadRequestResponse('testNotificationFailed');
   }
 }
 
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
+  get_notification_config: handleNotificationConfigAction,
+  save_notification_config: handleNotificationConfigAction,
+  test_notification_channel: handleNotificationConfigAction,
   get_settings: handleGetSettingsAction,
   start_theme_preview: handleStartThemePreviewAction,
   save_theme_options: handleSaveThemeOptionsAction,
@@ -797,11 +807,38 @@ const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   send_test_notification: handleSendTestNotificationAction
 };
 
+async function handleNotificationConfigAction({ env, data }) {
+  try {
+    if (new TextEncoder().encode(JSON.stringify(data)).length > NOTIFICATION_CONFIG_MAX_BYTES) throw notificationConfigError();
+    if (data.action === 'get_notification_config') {
+      assertNotificationObject(data, ['action']);
+      return createSuccessResponse(maskNotificationConfig(await loadNotificationConfig(env.DB)));
+    }
+    if (data.action === 'save_notification_config') {
+      const { action, ...input } = data;
+      return createSuccessResponse(await saveNotificationConfig(env.DB, input));
+    }
+    assertNotificationObject(data, ['action', 'channel']);
+    const { channel, config } = await prepareNotificationChannel(env.DB, data.channel);
+    const settings = notificationChannelSettings(channel, config);
+    const messages = getNotificationMessages(settings);
+    const result = await sendNotification(settings, messages.testMessage, { event: messages.events.test, message: messages.testMessage, client: 'CF Server Monitor' });
+    if (result) throw notificationConfigError('notification_test_failed', 502);
+    return createSuccessResponse({ success: true });
+  } catch (error) {
+    // Never return/log transport, URL, parser or D1 exception text from the secret-bearing path.
+    const statuses = { notification_config_invalid: 400, notification_revision_conflict: 409, notification_channel_referenced: 409, notification_test_failed: 502 };
+    const code = Object.hasOwn(statuses, error?.code) ? error.code : 'notification_config_unavailable';
+    const status = statuses[code] || 500;
+    return new Response(JSON.stringify({ error: code, code: status }), { status, headers: { 'Content-Type': 'application/json' } });
+  }
+}
+
 // 导出时只取与部署无关的站点/外观字段，避免把凭据和环境绑定配置写进备份文件。
 function pickExportableSettings(siteSettings = {}, appearanceSettings = {}) {
   const site = {};
   for (const field of IMPORTABLE_SITE_FIELDS) {
-    if (siteSettings[field] !== undefined) site[field] = siteSettings[field];
+    if (!LEGACY_NOTIFICATION_FIELDS.includes(field) && siteSettings[field] !== undefined) site[field] = siteSettings[field];
   }
   const appearance = {};
   for (const field of IMPORTABLE_APPEARANCE_FIELDS) {
@@ -825,10 +862,11 @@ function pickImportableFields(source, allowedFields) {
 
 // 导入设置时只写白名单字段，并按现有保存流程做归一化，避免旧备份把新站点的凭据、
 // Turnstile、UA、告警规则等环境相关配置一起覆盖掉。
-async function applyImportedSettings({ env, sys, settings }) {
+async function applyImportedSettings({ env, sys, settings, notificationConfig, serverIdMap }) {
   const siteSource = settings && typeof settings === 'object' ? settings.site : null;
   const appearanceSource = settings && typeof settings === 'object' ? settings.appearance : null;
   const site = pickImportableFields(siteSource, IMPORTABLE_SITE_FIELDS);
+  if (notificationConfig) for (const field of LEGACY_NOTIFICATION_FIELDS) delete site.picked[field];
   const appearance = pickImportableFields(appearanceSource, IMPORTABLE_APPEARANCE_FIELDS);
 
   // 主题配置必须是对象，否则整份外观设置会写坏，直接丢弃该字段。
@@ -852,7 +890,8 @@ async function applyImportedSettings({ env, sys, settings }) {
   const appearanceFields = Object.keys(appearance.picked);
   const ignoredFields = [...new Set([...site.ignoredFields, ...appearance.ignoredFields])];
 
-  if (siteFields.length === 0 && appearanceFields.length === 0) {
+  const notification = notificationConfig ? await importNotificationConfig(env.DB, notificationConfig, serverIdMap) : null;
+  if (siteFields.length === 0 && appearanceFields.length === 0 && !notification) {
     return { imported: false, site: 0, appearance: 0, ignoredFields };
   }
 
@@ -871,7 +910,8 @@ async function applyImportedSettings({ env, sys, settings }) {
     imported: true,
     site: siteFields.length,
     appearance: appearanceFields.length,
-    ignoredFields
+    ignoredFields,
+    ...(notification ? { notification } : {})
   };
 }
 
@@ -898,6 +938,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
 
     if (data.action === 'save_settings') {
       const settings = data.settings || {};
+      if (Object.keys(settings).some(field => LEGACY_NOTIFICATION_FIELDS.includes(field)) && await env.DB.prepare("SELECT 1 AS present FROM settings WHERE key = 'notification_config'").first()) {
+        return new Response(JSON.stringify({ error: 'notification_config_authoritative', code: 409 }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+      }
       if (!String(sys?.password || '').trim() && !String(settings.password || '')) {
         return createBadRequestResponse('passwordRequired');
       }
@@ -1297,14 +1340,17 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     
     else if (data.action === 'export_servers') {
       try {
+        if (data.includeNotificationSecrets !== undefined && typeof data.includeNotificationSecrets !== 'boolean') return createBadRequestResponse('notification_config_invalid');
         // 顺序读取：settings 走缓存，真正的 D1 查询只有一次，没必要并发打同一连接。
         const servers = await env.DB.prepare('SELECT * FROM servers ORDER BY sort_order ASC').all();
         const siteSettings = await loadSiteSettings(env.DB);
         const appearanceSettings = await loadAppearanceOptions(env.DB);
+        const notificationConfig = data.includeNotificationSecrets ? await loadNotificationConfig(env.DB, siteSettings) : null;
         return createSuccessResponse({
           success: true,
           servers: servers.results || [],
-          settings: pickExportableSettings(siteSettings, appearanceSettings),
+          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
+          ...(notificationConfig ? { notificationBackup: { sensitive: true, warning: 'notification_backup_contains_credentials' } } : {}),
           message: 'serversExported'
         });
       } catch (e) {
@@ -1314,6 +1360,14 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     }
     else if (data.action === 'import_servers') {
       const { servers: importData, settings: importSettings } = data;
+      let notificationConfig;
+      try {
+        if (importSettings && Object.hasOwn(importSettings, 'notification_config')) notificationConfig = validateNotificationBackup(importSettings.notification_config);
+        else if (importSettings?.site && LEGACY_NOTIFICATION_FIELDS.some(field => Object.hasOwn(importSettings.site, field))) {
+          const legacy = await loadSiteSettings(env.DB);
+          notificationConfig = validateNotificationBackup(migrateLegacyNotifications({ ...legacy, ...Object.fromEntries(LEGACY_NOTIFICATION_FIELDS.filter(field => Object.hasOwn(importSettings.site, field)).map(field => [field, importSettings.site[field]])) }));
+        }
+      } catch (_) { return createBadRequestResponse('notification_config_invalid'); }
       const hasServers = Array.isArray(importData) && importData.length > 0;
       const hasSettings = Boolean(importSettings) && typeof importSettings === 'object' && !Array.isArray(importSettings);
       // 允许只导入设置（服务器全部重复时也仍然写入设置）
@@ -1340,6 +1394,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       let imported = 0;
       let skipped = 0;
       const skippedIds = [];
+      const serverIdMap = new Map();
 
       for (const server of hasServers ? importData : []) {
         // 手改过的备份里可能出现 null / 字符串，先挡掉，避免 server.id 直接抛到外层变成 500
@@ -1417,6 +1472,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             continue;
           }
           imported++;
+          serverIdMap.set(server.id, server.id);
         } catch (e) {
           console.error('[import_servers] 导入失败:', server.id, e);
           skipped++;
@@ -1428,7 +1484,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         clearServersListCache();
       }
 
-      const settingsResult = await applyImportedSettings({ env, sys, settings: importSettings });
+      let settingsResult;
+      try { settingsResult = await applyImportedSettings({ env, sys, settings: importSettings, notificationConfig, serverIdMap }); }
+      catch (_) { return createBadRequestResponse('notification_import_failed'); }
       // 上报开关/时段被覆盖后通知探针切换模式，与保存设置的行为保持一致。
       // 这里用原始输入判断，必须先确认 site 是对象：字符串用 in 会直接抛 TypeError。
       const importedSite = importSettings?.site;
@@ -1459,6 +1517,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     return createBadRequestResponse('unknownAction');
     
   } catch (e) {
+    if (e instanceof SyntaxError) return createBadRequestResponse('invalidRequest');
     console.error('Admin API 错误:', e);
     return createErrorResponse(e);
   }
