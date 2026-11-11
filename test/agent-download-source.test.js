@@ -95,6 +95,16 @@ test('legacy Python uninstall stays on the selected Worker, without Go credentia
   assert.equal(c.uninstall(), "curl -fsSL 'https://monitor.invalid/uninstall.sh' | sh -s");
 });
 
+test('pinned native monitoring uses explicit off and terminal credentials are passed to the installer, not a manual path', () => {
+  for (const os of ['linux','unix','mac','windows']) {
+    assert.ok(commands({targetOs:{value:os},installVersion:{value:'v9.0'}}).install().includes('-terminal=0'));
+  }
+  const token='a'.repeat(64);
+  const command=commands({installVersion:{value:'v9.0'},terminalInstallOptions:{value:{selected:true,enabled:true,token}}}).install();
+  assert.ok(command.includes("-terminal=1 --install-terminal-token='"+token+"'"));
+  assert.ok(!command.includes('-terminal-token-file'));
+});
+
 test('frontend latest-version lookup calls the confirmed release API', async () => {
   const requests = [];
   const literal = admin.match(/const AGENT_RELEASE_URL = '([^']+)'/)?.[1];

@@ -749,4 +749,17 @@ export default {
   terminal_query_failed: "No se puede confirmar el estado del terminal. No se permite la conexión.",
   terminal_install_consent_required: "Seleccione el terminal y confirme expresamente los riesgos de instalación.",
   terminalInstallOffUnverified: "Esta instalación de versión fija está bloqueada: omitir una opción de terminal no verificada puede conservar la activación local anterior. Use primero el instalador actual con el terminal sin seleccionar (-terminal=0) y compruebe localmente que está desactivado antes de instalar otra versión. El estado del servidor no prueba la desactivación local; este panel no ofrece comandos ejecutables ni copia para esta combinación.",
+  downloadInstallOptions: "Opciones de instalación",
+  downloadInstallCommand: "Comando de instalación",
+  downloadCopyCommand: "Copiar comando de descarga",
+  downloadTerminalHint: "Activa la terminal solo en este equipo. El instalador guarda automáticamente el Token permanente.",
+  downloadReissueTitle: "Renovar Token de terminal",
+  downloadReissue: "Renovar",
+  downloadReissueHint: "El Token anterior queda invalidado. Reinstala el Agent con el nuevo comando.",
+  downloadReissueConfirm: "¿Renovar el Token de este nodo? Las terminales abiertas se cerrarán. Reinstala con el nuevo comando. Úsalo solo si el Token pudo filtrarse.",
+  downloadCheckingRelease: "Verificando la descarga publicada…",
+  downloadReleaseUnavailable: "No hay descarga verificada para esta plataforma o versión. Publica el binario o la imagen correspondiente y vuelve a abrir el diálogo.",
+  downloadTerminalUnavailable: "Esta versión no tiene soporte de terminal verificado. La instalación de monitoreo sigue disponible.",
+  downloadReadingToken: "Leyendo Token…",
+  terminal_install_reissue_required: "No se puede leer la credencial o fue revocada. Renuévala explícitamente antes de instalar la terminal."
 }

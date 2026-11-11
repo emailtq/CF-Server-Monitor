@@ -749,4 +749,17 @@ export default {
   terminal_query_failed: "Cannot confirm terminal status. No connection is permitted.",
   terminal_install_consent_required: "Select terminal and explicitly confirm its installation risks.",
   terminalInstallOffUnverified: "This fixed-version installation is blocked: omitting an unverified terminal option can preserve an old local enabled setting. First use the current installer with terminal unchecked (-terminal=0), then verify locally that it is off before installing another version. Server status cannot prove local off, so this panel provides no executable command or copy for this combination.",
+  downloadInstallOptions: "Install options",
+  downloadInstallCommand: "Install command",
+  downloadCopyCommand: "Copy download command",
+  downloadTerminalHint: "Enable terminal only on this host. The installer saves its long-lived Token automatically.",
+  downloadReissueTitle: "Reissue terminal Token",
+  downloadReissue: "Reissue",
+  downloadReissueHint: "The old Token is invalidated immediately; reinstall the Agent with the new command.",
+  downloadReissueConfirm: "Reissue this node's terminal Token? Existing shells close immediately. Reinstall with the new command. Use only if the Token may have leaked.",
+  downloadCheckingRelease: "Checking published download…",
+  downloadReleaseUnavailable: "No verified download exists for this platform/version. Publish the matching Agent binary or image, then reopen this dialog.",
+  downloadTerminalUnavailable: "This release has no verified terminal support. Monitoring installation remains available.",
+  downloadReadingToken: "Reading Token…",
+  terminal_install_reissue_required: "This credential cannot be read or was revoked. Use Reissue explicitly before terminal installation."
 }

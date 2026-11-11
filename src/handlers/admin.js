@@ -21,6 +21,7 @@ import { revokeTerminalNode } from '../database/terminal.js';
 import { loadNotificationConfig, saveNotificationConfig, prepareNotificationChannel, notificationChannelSettings, validateNotificationBackup, importNotificationConfig } from '../database/notifications.js';
 import { assertNotificationObject, maskNotificationConfig, NOTIFICATION_CONFIG_MAX_BYTES, notificationConfigError, migrateLegacyNotifications } from '../shared/notificationConfig.js';
 import { LEGACY_NOTIFICATION_FIELDS } from '../utils/settings.js';
+import { checkAgentImage } from '../utils/agentImage.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -796,6 +797,7 @@ async function handleSendTestNotificationAction({ env, data }) {
 }
 
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
+  agent_install_image: async ({data}) => createSuccessResponse(await checkAgentImage(data.tag)),
   get_notification_config: handleNotificationConfigAction,
   save_notification_config: handleNotificationConfigAction,
   test_notification_channel: handleNotificationConfigAction,

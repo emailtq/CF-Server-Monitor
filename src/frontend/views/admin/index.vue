@@ -209,30 +209,14 @@
         :install-mode="installMode"
         :install-gh-proxy="installGhProxy"
         :install-version="installVersion"
-        :install-blocked="installCommandBlocked"
-        :collect-interval="collectInterval"
-        :report-interval="reportInterval"
-        :wss-report-interval="wssReportInterval"
-        :connection-mode="connectionMode"
-        :ping-mode="pingMode"
-        :custom-ct="customCt"
-        :custom-cu="customCu"
-        :custom-cm="customCm"
-        :custom-bd="customBd"
-        :node-1="node1"
-        :node-2="node2"
-        :node-3="node3"
-        :node-4="node4"
-        :network-interface="networkInterface"
-        :reset-day="resetDay"
-        :rx-correction="rxCorrection"
-        :tx-correction="txCorrection"
         :auto-update="autoUpdate"
         :install-command="getCustomInstallCommand()"
         :copied-cmd="copiedCmd"
         @close="closeCopyModal"
         @copy-cmd="copyCustomCmd"
         @terminal-options="terminalInstallOptions = $event"
+        @install-available="installCommandBlocked = !$event"
+        @update:auto-update="autoUpdate = $event"
         @update:target-os="targetOs = $event"
         @update:install-mode="installMode = $event"
         @update:install-gh-proxy="installGhProxy = $event"
@@ -565,7 +549,7 @@ const TerminalAccessModal = defineAsyncComponent(() => import('./components/Term
 const terminalServer = ref(null)
 const terminalStatuses = ref({})
 const terminalOpening = ref('')
-const terminalInstallOptions = ref({selected:false, enabled:false, tokenFile:''})
+const terminalInstallOptions = ref({selected:false, enabled:false, token:''})
 const openTerminal = async server => {
   if (terminalOpening.value) return
   const owner = requestOwner.value, apiIndex = selectedApiIndex.value
@@ -791,7 +775,7 @@ const loginError = ref('')
 const loginLoading = ref(false)
 const adminSiteLoading = ref(false)
 const activeTab = ref('servers')
-watch(activeTab, () => { showCopyModal.value = false; terminalInstallOptions.value = {selected:false, enabled:false, tokenFile:''} })
+watch(activeTab, () => { showCopyModal.value = false; terminalInstallOptions.value = {selected:false, enabled:false, token:''} })
 const servers = ref([])
 const selectedServers = ref([])
 const stats = ref({ total: '-', online: 0, offline: 0, avg_cpu: 0 })
@@ -1004,11 +988,7 @@ const targetOs = ref('linux')
 const installMode = ref('current-user')
 const installGhProxy = ref('')
 const installVersion = ref('')
-const installCommandBlocked = computed(() => {
-  const version = installVersion.value.trim()
-  // Server status cannot prove that a previous host configuration is locally off.
-  return !!version && version !== 'latest' && !['windows', 'mac'].includes(targetOs.value)
-})
+const installCommandBlocked = ref(true)
 const collectInterval = ref(0)
 const reportInterval = ref(60)
 const wssReportInterval = ref(2)
@@ -1223,7 +1203,7 @@ const resetAdminContext = () => {
   terminalServer.value = null
   terminalStatuses.value = {}
   terminalOpening.value = ''
-  terminalInstallOptions.value = {selected:false, enabled:false, tokenFile:''}
+  terminalInstallOptions.value = {selected:false, enabled:false, token:''}
   selectedServers.value = []
   showEditModal.value = false
   showDeleteModal.value = false
@@ -1372,6 +1352,7 @@ const loadSettings = async () => {
         custom_bd_name: settingsData.custom_bd_name || 'BGP',
         node_1_name: settingsData.node_1_name || 'Node 1', node_2_name: settingsData.node_2_name || 'Node 2', node_3_name: settingsData.node_3_name || 'Node 3', node_4_name: settingsData.node_4_name || 'Node 4',
         theme_url: settingsData.theme_url || '',
+        terminal_enabled: settingsData.terminal_enabled === true || settingsData.terminal_enabled === 'true',
         csp_static: settingsData.csp_static || '',
         csp_api: settingsData.csp_api || '',
         ua: settingsData.ua || 'cfsm'
@@ -1733,6 +1714,7 @@ const copyCmd = (serverId) => {
   txCorrection.value = server?.tx_correction ?? ''
   autoUpdate.value = server?.auto_update === '1' || server?.auto_update === 1 || server?.auto_update === true
   copiedCmd.value = false
+  installCommandBlocked.value = true
   showCopyModal.value = true
 }
 
@@ -1836,7 +1818,7 @@ const getCustomInstallCommand = () => {
       `-url='${HOST}/update'`,
       `-auto_update='${autoUpdateFlag}'`
     )
-    if (!version || version === 'latest') params.push('-terminal=0')
+    params.push('-terminal=0')
     const ua = installUserAgent()
     if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
     const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.ps1`)
@@ -1863,7 +1845,7 @@ const getCustomInstallCommand = () => {
     `-url=${HOST}/update`,
     `-auto_update=${autoUpdateFlag}`
   )
-  if (!version || version === 'latest') params.push(terminalOptions.enabled ? `-terminal=1 -terminal-token-file=${quotePosixShellArg(terminalOptions.tokenFile)}` : '-terminal=0')
+  params.push(terminalOptions.enabled ? `-terminal=1 --install-terminal-token=${quotePosixShellArg(terminalOptions.token)}` : '-terminal=0')
   const ua = installUserAgent()
   if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
   const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.sh`)
@@ -1973,7 +1955,7 @@ const copyCustomCmd = async () => {
 
 const closeCopyModal = () => {
   showCopyModal.value = false
-  terminalInstallOptions.value = {selected:false, enabled:false, tokenFile:''}
+  terminalInstallOptions.value = {selected:false, enabled:false, token:''}
   void refreshTerminalStatuses()
 }
 

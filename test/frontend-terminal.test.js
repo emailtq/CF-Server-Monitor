@@ -29,14 +29,14 @@ test('terminal route and server-table actions are wired without eager xterm in t
   assert.doesNotMatch(admin + table, /@xterm/)
 })
 
-test('terminal setup never persists tokens or inserts them in installation commands', async () => {
+test('terminal setup keeps tokens out of browser storage and supplies the installer without manual file paths', async () => {
   const modal = await source('src/frontend/views/admin/components/CopyCommandModal.vue')
   const composable = await source('src/frontend/composables/useTerminal.js')
   assert.doesNotMatch(modal + composable, /localStorage|sessionStorage|createLiveSocket|searchParams\.set/)
-  assert.match(modal, /usePasswordVisibility/)
-  assert.match(modal, /copyTextToClipboard/)
+  assert.doesNotMatch(modal, /terminalPath|terminalRisk|usePasswordVisibility/)
+  assert.match(modal, /terminal_read_install/)
   const admin = await source('src/frontend/views/admin/index.vue')
-  assert.match(admin, /-terminal=1 -terminal-token-file=/)
+  assert.match(admin, /-terminal=1 --install-terminal-token=/)
 })
 
 test('terminal HTTP errors preserve canonical reason without changing ordinary 401/403 policy', async () => {

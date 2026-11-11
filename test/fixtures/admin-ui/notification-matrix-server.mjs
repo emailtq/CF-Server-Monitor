@@ -9,8 +9,11 @@ export async function createServer(options) {
   const root = fs.realpathSync(process.cwd()), out = path.dirname(options.cacheDir);
   const realOut = fs.realpathSync(out), evidence = path.join(root, 'docs/superpowers/admin-ui-refactor/evidence');
   assert.equal(path.resolve(out).toLowerCase(), realOut.toLowerCase(), 'fixture output must not traverse links');
-  const relative = path.relative(evidence, realOut);
-  assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'fixture output must stay in task evidence');
+  const evidenceRoots = [evidence, path.join(root, 'docs/superpowers/admin-download-repair-2026-11-11')];
+  assert.ok(evidenceRoots.some(base => {
+    const relative = path.relative(base, realOut);
+    return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+  }), 'fixture output must stay in task evidence');
   const bundle = fs.mkdtempSync(path.join(realOut, 'compiled-fixture-'));
   assert.equal(path.dirname(fs.realpathSync(bundle)), realOut);
   const entry = path.join(root, 'test/fixtures/admin-ui/index.html');

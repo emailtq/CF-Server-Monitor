@@ -749,4 +749,17 @@ export default {
   terminal_query_failed: "Status terminal tidak dapat dipastikan. Koneksi tidak diizinkan.",
   terminal_install_consent_required: "Pilih terminal dan konfirmasikan risiko instalasi secara eksplisit.",
   terminalInstallOffUnverified: "Instalasi versi tetap ini diblokir: menghilangkan opsi terminal yang belum diverifikasi dapat mempertahankan pengaktifan lokal sebelumnya. Gunakan penginstal saat ini dengan terminal tidak dicentang (-terminal=0), lalu pastikan secara lokal bahwa terminal nonaktif sebelum menginstal versi lain. Status server tidak membuktikan penonaktifan lokal; panel ini tidak menyediakan perintah yang dapat dijalankan atau salinan untuk kombinasi ini.",
+  downloadInstallOptions: "Opsi instalasi",
+  downloadInstallCommand: "Perintah instalasi",
+  downloadCopyCommand: "Salin perintah unduhan",
+  downloadTerminalHint: "Aktifkan terminal hanya di host ini. Penginstal menyimpan Token permanen secara otomatis.",
+  downloadReissueTitle: "Terbitkan ulang Token terminal",
+  downloadReissue: "Terbitkan ulang",
+  downloadReissueHint: "Token lama langsung dibatalkan. Instal ulang Agent dengan perintah baru.",
+  downloadReissueConfirm: "Terbitkan ulang Token node ini? Terminal aktif akan ditutup. Instal ulang dengan perintah baru. Gunakan hanya jika Token mungkin bocor.",
+  downloadCheckingRelease: "Memeriksa unduhan yang diterbitkan…",
+  downloadReleaseUnavailable: "Belum ada unduhan terverifikasi untuk platform atau versi ini. Terbitkan biner atau image Agent yang sesuai, lalu buka kembali dialog.",
+  downloadTerminalUnavailable: "Dukungan terminal belum terverifikasi pada versi ini. Instalasi pemantauan tetap tersedia.",
+  downloadReadingToken: "Membaca Token…",
+  terminal_install_reissue_required: "Kredensial tidak dapat dibaca atau sudah dicabut. Terbitkan ulang secara eksplisit sebelum instalasi terminal."
 }

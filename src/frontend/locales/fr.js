@@ -749,4 +749,17 @@ export default {
   terminal_query_failed: "Impossible de confirmer l’état du terminal. Connexion interdite.",
   terminal_install_consent_required: "Sélectionnez le terminal et confirmez explicitement les risques d’installation.",
   terminalInstallOffUnverified: "Cette installation de version fixe est bloquée : omettre une option terminal non vérifiée peut conserver une ancienne activation locale. Utilisez d’abord l’installateur actuel avec le terminal décoché (-terminal=0), puis vérifiez localement son arrêt avant d’installer une autre version. L’état du serveur ne prouve pas l’arrêt local ; ce panneau ne fournit ni commande exécutable ni copie pour cette combinaison.",
+  downloadInstallOptions: "Options d’installation",
+  downloadInstallCommand: "Commande d’installation",
+  downloadCopyCommand: "Copier la commande",
+  downloadTerminalHint: "Active le terminal uniquement sur cet hôte. Le programme d’installation conserve automatiquement le Token permanent.",
+  downloadReissueTitle: "Renouveler le Token du terminal",
+  downloadReissue: "Renouveler",
+  downloadReissueHint: "L’ancien Token est immédiatement invalidé. Réinstallez l’Agent avec la nouvelle commande.",
+  downloadReissueConfirm: "Renouveler le Token de ce nœud ? Les terminaux ouverts seront fermés. Réinstallez avec la nouvelle commande. À utiliser seulement en cas de fuite possible du Token.",
+  downloadCheckingRelease: "Vérification du téléchargement publié…",
+  downloadReleaseUnavailable: "Aucun téléchargement vérifié pour cette plateforme ou version. Publiez le binaire ou l’image correspondant, puis rouvrez cette fenêtre.",
+  downloadTerminalUnavailable: "Le terminal n’est pas vérifié pour cette version. L’installation de surveillance reste disponible.",
+  downloadReadingToken: "Lecture du Token…",
+  terminal_install_reissue_required: "Identifiant illisible ou révoqué. Renouvelez-le explicitement avant d’installer le terminal."
 }

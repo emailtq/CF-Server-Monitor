@@ -749,4 +749,17 @@ export default {
   terminal_query_failed: "端末状態を確認できません。接続は許可されません。",
   terminal_install_consent_required: "端末を選択しインストールのリスクを明示的に確認してください。",
   terminalInstallOffUnverified: "この固定バージョンのインストールはブロックされます。未確認の端末引数を省略すると、以前のローカル有効設定が残る可能性があります。まず現在のインストーラーで端末のチェックを外し（-terminal=0）、ローカルで停止を確認してから別のバージョンをインストールしてください。サーバー状態はローカル停止を証明しないため、この組み合わせには実行可能なコマンドやコピーを提供しません。",
+  downloadInstallOptions: "インストール設定",
+  downloadInstallCommand: "インストールコマンド",
+  downloadCopyCommand: "ダウンロードコマンドをコピー",
+  downloadTerminalHint: "このホストでのみターミナルを有効化します。インストーラーが長期 Token を自動保存します。",
+  downloadReissueTitle: "ターミナル Token を再発行",
+  downloadReissue: "再発行",
+  downloadReissueHint: "旧 Token は即座に無効になります。新しいコマンドで Agent を再インストールしてください。",
+  downloadReissueConfirm: "このノードの Token を再発行しますか？既存のターミナルは切断されます。新しいコマンドで再インストールしてください。Token 漏洩の疑いがある場合のみ使用してください。",
+  downloadCheckingRelease: "公開済みダウンロードを確認中…",
+  downloadReleaseUnavailable: "この環境・バージョンの確認済みダウンロードがありません。対応する Agent バイナリまたはイメージを公開し、ダイアログを開き直してください。",
+  downloadTerminalUnavailable: "このバージョンのターミナル対応は未確認です。監視機能はインストールできます。",
+  downloadReadingToken: "Token を読み込み中…",
+  terminal_install_reissue_required: "認証情報を読み取れないか、失効しています。ターミナルのインストール前に明示的に再発行してください。"
 }

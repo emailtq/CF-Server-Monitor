@@ -749,4 +749,17 @@ export default {
   terminal_query_failed: "暫時無法確認終端狀態，不允許連線。",
   terminal_install_consent_required: "請勾選終端並明確確認本次安裝風險。",
   terminalInstallOffUnverified: "此固定版本安裝已阻止：省略未驗證的終端參數可能保留舊本機啟用狀態。請先使用目前安裝器並取消勾選終端（-terminal=0），在本機確認已關閉後再安裝其他版本。伺服器狀態無法證明本機已關閉，因此本面板不會為此組合提供可執行命令或複製。",
+  downloadInstallOptions: "安裝選項",
+  downloadInstallCommand: "安裝命令",
+  downloadCopyCommand: "複製下載命令",
+  downloadTerminalHint: "僅在此主機啟用終端，安裝腳本會自動儲存長期 Token。",
+  downloadReissueTitle: "換發終端 Token",
+  downloadReissue: "換發",
+  downloadReissueHint: "舊 Token 立即作廢，需用新命令重裝 Agent。",
+  downloadReissueConfirm: "確定換發此節點的終端 Token？既有終端會立即中斷，需用新命令重裝。僅在 Token 可能洩漏時使用。",
+  downloadCheckingRelease: "正在檢查已發布的下載…",
+  downloadReleaseUnavailable: "此平台或版本尚無可驗證的下載，請先發布對應 Agent 二進位或映像，再重新開啟視窗。",
+  downloadTerminalUnavailable: "此版本尚未驗證支援終端，仍可安裝監控。",
+  downloadReadingToken: "正在讀取 Token…",
+  terminal_install_reissue_required: "目前憑證無法讀取或已撤銷，請明確換發後再安裝終端。"
 }

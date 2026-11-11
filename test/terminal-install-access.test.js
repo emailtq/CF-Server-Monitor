@@ -99,7 +99,7 @@ test('bulk metadata distinguishes pending, ready, offline, unsupported and revok
   } finally { await h.dispose(); }
 });
 
-test('compiled real admin installation and terminal UI preserve consent, token ownership and seven locale layouts', {timeout:120000}, () => {
+test('compiled real download dialog preserves stable tokens, explicit reissue and seven locale layouts', {timeout:120000}, () => {
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/terminal-install-access.mjs'], {encoding:'utf8',windowsHide:true,timeout:120000,env:process.env});
   process.stdout.write(result.stdout || '');
   process.stderr.write(result.stderr || '');

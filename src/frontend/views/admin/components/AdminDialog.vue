@@ -22,7 +22,7 @@ import AdminIcon from './AdminIcon.vue'
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { t } from '../../../utils/i18n.js'
 import '../../../styles/admin.css'
-const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'edit'].includes(value) }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
+const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'edit', 'download', 'download-confirm'].includes(value) }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
 const emit = defineEmits(['close'])
 const dialog = ref(null)
 const titleId = `admin-dialog-${++nextId}`

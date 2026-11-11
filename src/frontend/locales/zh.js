@@ -749,4 +749,17 @@ export default {
   terminal_query_failed: "暂时无法确认终端状态，不允许连接。",
   terminal_install_consent_required: "请勾选终端并明确确认本次安装风险。",
   terminalInstallOffUnverified: "此固定版本安装已阻止：省略未验证的终端参数可能保留旧本地启用状态。请先使用当前安装器并取消勾选终端（-terminal=0），在本机确认已关闭后再安装其他版本。服务器状态无法证明本地已关闭，因此本面板不会为此组合提供可执行命令或复制。",
+  downloadInstallOptions: "安装选项",
+  downloadInstallCommand: "安装命令",
+  downloadCopyCommand: "复制下载命令",
+  downloadTerminalHint: "仅在此主机启用终端，安装脚本会自动保存长期 Token。",
+  downloadReissueTitle: "换发终端 Token",
+  downloadReissue: "换发",
+  downloadReissueHint: "旧 Token 立即作废，需用新命令重装 Agent。",
+  downloadReissueConfirm: "确定换发此节点的终端 Token？已有终端会立即断开，需用新命令重装。仅在 Token 可能泄露时使用。",
+  downloadCheckingRelease: "正在检查已发布的下载…",
+  downloadReleaseUnavailable: "此平台或版本尚无可验证的下载，请先发布对应 Agent 二进制或镜像，再重新打开弹窗。",
+  downloadTerminalUnavailable: "此版本尚未验证支持终端，仍可安装监控。",
+  downloadReadingToken: "正在读取 Token…",
+  terminal_install_reissue_required: "当前凭据无法读取或已撤销，请明确换发后再安装终端。"
 }
