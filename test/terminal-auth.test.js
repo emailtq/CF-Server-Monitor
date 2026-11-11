@@ -70,7 +70,7 @@ test('terminal tables are additive in initialization and repeatable database upg
   assert.ok(await db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'terminal_audit_created_at'").first());
 });
 
-test('node credentials persist only a SHA-256 hash and cannot authorize another node', async () => {
+test('node credentials never persist plaintext and cannot authorize another node', async () => {
   const issued = await issueTerminalNodeToken(db, 'node-a', 2000);
   const secondNode = await issueTerminalNodeToken(db, 'node-b', 2000);
   assert.match(issued.token, /^[a-f0-9]{64}$/);
@@ -80,6 +80,7 @@ test('node credentials persist only a SHA-256 hash and cannot authorize another 
   assert.deepEqual(row, {
     server_id: 'node-a',
     token_hash: createHash('sha256').update(issued.token).digest('hex'),
+    token_ciphertext: null,
     credential_version: 1,
     enabled: 1,
     updated_at: 2000

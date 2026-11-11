@@ -1,9 +1,9 @@
 import { getTerminalAdminPrincipal } from '../middleware/auth.js';
-import { issueTerminalNodeToken, verifyTerminalNodeToken, revokeTerminalNode, terminalAuthorizationKey } from '../database/terminal.js';
+import { issueTerminalNodeToken, readTerminalNodeToken, ensureTerminalNodeToken, verifyTerminalNodeToken, revokeTerminalNode, terminalAuthorizationKey } from '../database/terminal.js';
 import { saveSiteOptions } from '../utils/settings.js';
 import { validateTerminalSize, TERMINAL_LIMITS } from '../shared/terminalProtocol.js';
 
-const ACTIONS = new Set(['terminal_prepare_install', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close']);
+const ACTIONS = new Set(['terminal_read_install', 'terminal_enable_install', 'terminal_prepare_install', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close']);
 const isId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const response = (code, status) => Response.json({error:code, code:status}, {status});
 const sameOrigin = request => new URL(request.url).protocol === 'https:' && request.headers.get('Origin') === new URL(request.url).origin;
@@ -90,6 +90,10 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
     if (!isId(data.serverId)) return response('terminal_invalid_node', 400);
     const node = await nodeAuthority(env, data.serverId);
     if (!node) return response('terminal_node_missing', 404);
+    if (data.action === 'terminal_read_install') {
+      if (settings.theme_url) return response('terminal_custom_frontend', 409);
+      return Response.json(await readTerminalNodeToken(env.DB, data.serverId, settings.jwt_secret), {headers:{'Cache-Control':'no-store'}});
+    }
     if (data.action === 'terminal_revoke_node') {
       if (node.credential_version == null) return Response.json({enabled:false, serverRevoked:true, localConfirmed:false, localReason:'offline'});
       const context = {serverId:data.serverId, owner:owner.jti, ownerExpiry:owner.exp,
@@ -105,16 +109,23 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
           serverRevoked:!!revoked, localConfirmed:false, localReason:'broker_unavailable'}, {status:503});
       }
     }
-    if (data.action === 'terminal_prepare_install') {
+    if (data.action === 'terminal_prepare_install' || data.action === 'terminal_enable_install') {
       if (data.terminal !== true || data.acceptRisk !== true) return response('terminal_install_consent_required', 400);
       if (settings.theme_url) return response('terminal_custom_frontend', 409);
       if (!env.TERMINAL_BROKER) return response('terminal_broker_unavailable', 503);
+      if (data.action === 'terminal_enable_install') {
+        const current = await readTerminalNodeToken(env.DB, data.serverId, settings.jwt_secret);
+        if (current.needsRotation) return response('terminal_install_reissue_required', 409);
+      }
       if (!settings.terminal_enabled) {
         await saveSiteOptions(env.DB, {terminal_enabled:'true'});
         if (sys) sys.terminal_enabled = 'true';
       }
-      const issued = await issueTerminalNodeToken(env.DB, data.serverId);
-      await notifyTerminalNodeRevoked(env, data.serverId);
+      const issued = data.action === 'terminal_prepare_install'
+        ? await issueTerminalNodeToken(env.DB, data.serverId, Date.now(), settings.jwt_secret)
+        : await ensureTerminalNodeToken(env.DB, data.serverId, settings.jwt_secret);
+      if (issued.needsRotation) return response('terminal_install_reissue_required', 409);
+      if (data.action === 'terminal_prepare_install') await notifyTerminalNodeRevoked(env, data.serverId);
       return Response.json(issued, {headers:{'Cache-Control':'no-store'}});
     }
     if (data.action === 'terminal_status') {
