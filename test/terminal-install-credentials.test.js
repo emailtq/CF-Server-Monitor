@@ -39,6 +39,7 @@ test('opening a missing or hash-only installation does not create or replace cre
 test('first opt-in creates a stable credential once, repeat opt-in does not rotate', async () => {
   const h = await harness();
   try {
+    await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main'});
     await h.db.prepare("INSERT INTO servers (id,name) VALUES ('new-node','new')").run();
     const payload = {serverId:'new-node', terminal:true, acceptRisk:true};
     const responses = await Promise.all([h.action('terminal_enable_install', payload), h.action('terminal_enable_install', payload)]);
@@ -69,18 +70,18 @@ test('hash-only and revoked credentials require deliberate reissue, not silent r
   } finally { await h.dispose(); }
 });
 
-test('credential reads and opt-in preserve administrator, Origin, theme and consent boundaries', async () => {
+test('credential reads and opt-in preserve administrator, Origin and consent boundaries with a trusted theme', async () => {
   const h = await harness();
   try {
+    await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main'});
     for (const action of ['terminal_read_install','terminal_enable_install']) {
       const payload = {serverId:'node-a', terminal:true, acceptRisk:true};
       assert.equal((await h.action(action, payload, {headers:{Cookie:''}})).status, 401);
       assert.equal((await h.action(action, payload, {headers:{Origin:'https://other.invalid'}})).status, 403);
     }
     assert.equal((await h.action('terminal_enable_install', {serverId:'node-a',terminal:false,acceptRisk:true})).status, 400);
-    await saveSiteOptions(h.db, {theme_url:'https://theme.invalid'});
-    assert.equal((await h.action('terminal_read_install', {serverId:'node-a'})).status, 409);
-    assert.equal((await h.action('terminal_enable_install', {serverId:'node-a',terminal:true,acceptRisk:true})).status, 409);
+    assert.equal((await h.action('terminal_read_install', {serverId:'node-a'})).status, 200);
+    assert.equal((await h.action('terminal_enable_install', {serverId:'node-a',terminal:true,acceptRisk:true})).status, 409, 'hash-only credentials still require deliberate reissue');
   } finally { await h.dispose(); }
 });
 

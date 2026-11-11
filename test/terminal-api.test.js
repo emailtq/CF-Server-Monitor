@@ -80,41 +80,50 @@ test('an invalid bearer header cannot shadow the valid logout Cookie and two val
   } finally {await h.dispose();}
 });
 
-test('confirmed installation enables the site without step-up while custom previews stay blocked', async () => {
+test('confirmed installation enables the site without step-up even with a trusted installed theme', async () => {
   const h = await harness();
   try {
     assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 200);
     await saveSiteOptions(h.db, {terminal_enabled:'false'});
     assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 200);
-    const sys = await loadSiteSettings(h.db, true);
-    const preview = new Request('https://example.com/?theme_url=https://github.com/test/theme/tree/main', {headers:{Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`}});
-    assert.equal((await serveFrontend(preview, {DB:h.db}, sys)).status, 409);
-    assert.equal((await h.action('start_theme_preview', {theme_url:'https://github.com/test/theme/tree/main'})).status, 409);
     await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main', terminal_enabled:'false'});
-    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 409);
+    assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', terminal:true,acceptRisk:true})).status, 200);
   } finally { await h.dispose(); }
 });
 
-test('custom theme import disables terminal and tombstones all existing administrator authorizations', async () => {
+test('trusted theme import preserves both authenticated owners and live terminal peers', async () => {
   const h = await harness();
   try {
     assert.equal((await h.action('terminal_status', {serverId:'node-a'})).status, 200);
     assert.equal((await h.action('terminal_status', {serverId:'node-a'}, {headers:{Cookie:`cfsm_auth=${encodeURIComponent(h.otherToken)}`}})).status, 200);
+    const control = await h.control();
+    const pair = await openPair(h, control);
+    await until(() => controls(pair.agent).some(frame => frame.type === 'start'));
+    pair.agent.ws.send('{"type":"ready"}');
+    await until(() => controls(pair.browser).some(frame => frame.type === 'ready'));
     const response = await h.action('import_servers', {settings:{site:{theme_url:'https://github.com/test/theme/tree/main'}}});
     assert.equal(response.status, 200);
     const row = await h.db.prepare("SELECT value FROM settings WHERE key = 'site_options'").first();
-    assert.equal(JSON.parse(row.value).terminal_enabled, 'false');
-    assert.ok((await h.db.prepare('SELECT revoked_at FROM terminal_auth_sessions').first()).revoked_at);
-    await saveSiteOptions(h.db, {theme_url:'', terminal_enabled:'true'});
-    assert.equal((await h.action('terminal_status', {serverId:'node-a'})).status, 401);
-    assert.equal((await h.action('terminal_status', {serverId:'node-a'}, {headers:{Cookie:`cfsm_auth=${encodeURIComponent(h.otherToken)}`}})).status, 401);
+    assert.equal(JSON.parse(row.value).terminal_enabled, 'true');
+    assert.ok((await h.db.prepare('SELECT revoked_at FROM terminal_auth_sessions').all()).results.every(auth => auth.revoked_at === null));
+    assert.equal((await h.action('terminal_status', {serverId:'node-a'})).status, 200);
+    assert.equal((await h.action('terminal_status', {serverId:'node-a'}, {headers:{Cookie:`cfsm_auth=${encodeURIComponent(h.otherToken)}`}})).status, 200);
+    assert.equal((await h.action('terminal_renew', {serverId:'node-a',sessionId:pair.session.sessionId})).status, 200);
+    await h.fetch('/test/alarm');
+    pair.browser.ws.send(new Uint8Array([42]));
+    await until(() => pair.agent.messages.some(frame => typeof frame !== 'string'));
+    assert.deepEqual([...new Uint8Array(pair.agent.messages.find(frame => typeof frame !== 'string'))], [42]);
+    assert.equal(control.ws.readyState, 1);
+    assert.equal(pair.browser.ws.readyState, 1);
+    assert.equal((await h.action('terminal_close', {serverId:'node-a',sessionId:pair.session.sessionId})).status, 200);
   } finally { await h.dispose(); }
 });
 
-test('saving a custom theme revokes terminal authority, while plain CSS keeps it enabled', async () => {
+test('saving a trusted theme preserves terminal authority and current administrator authorization', async () => {
   const h = await harness();
   const originalFetch = globalThis.fetch;
   try {
+    assert.equal((await h.action('terminal_status', {serverId:'node-a'})).status, 200);
     const sys = await loadSiteSettings(h.db, true);
     const env = {DB:h.db, API_SECRET:'test-report-secret'};
     const req = settings => new Request('https://example.com/admin/api', {method:'POST', headers:{Cookie:`cfsm_auth=${encodeURIComponent(h.token)}`}, body:JSON.stringify({action:'save_settings', settings})});
@@ -122,7 +131,9 @@ test('saving a custom theme revokes terminal authority, while plain CSS keeps it
     assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'true');
     globalThis.fetch = async () => new Response('<html>custom theme</html>');
     assert.equal((await handleAdminAPI(req({theme_url:'https://github.com/test/theme/tree/main'}), env, sys)).status, 200);
-    assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'false');
+    assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'true');
+    assert.equal((await h.db.prepare('SELECT revoked_at FROM terminal_auth_sessions').first()).revoked_at, null);
+    assert.equal((await h.action('terminal_status', {serverId:'node-a'})).status, 200);
   } finally { globalThis.fetch = originalFetch; await h.dispose(); }
 });
 
@@ -168,24 +179,26 @@ test('single and batch server deletion revoke node credentials and close the nod
 test('ordinary settings can disable but never enable terminal admission and disabling revokes authorizations', async () => {
   const h = await harness();
   try {
+    await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main'});
     assert.equal((await h.action('terminal_status', {serverId:'node-a'})).status, 200);
     assert.equal((await h.action('save_settings', {settings:{password:'test-admin-password', terminal_enabled:'false'}})).status, 200);
     assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'false');
     assert.ok((await h.db.prepare('SELECT revoked_at FROM terminal_auth_sessions').first()).revoked_at);
+    assert.equal((await h.action('terminal_open', {serverId:'node-a',clientRequestId:'disabled',cols:80,rows:24})).status, 401);
+    assert.equal((await h.socket('/api/agent/terminal/control', h.agentHeaders())).response.status, 403);
     assert.equal((await h.action('save_settings', {settings:{terminal_enabled:'true'}})).status, 200);
     assert.equal((await loadSiteSettings(h.db, true)).terminal_enabled, 'false');
   } finally { await h.dispose(); }
 });
 
-test('preview reads fresh terminal authority even with stale settings and fails closed on D1 errors', async () => {
+test('public preview still requires its authenticated preview cookie independently of terminal authority', async () => {
   const h = await harness();
   try {
     const stale = {...await loadSiteSettings(h.db, true), terminal_enabled:'false'};
     const request = new Request('https://example.com/?theme_url=https://github.com/test/theme/tree/main');
-    assert.equal((await serveFrontend(request, {DB:h.db}, stale)).status, 409);
-    assert.equal((await serveFrontend(request, {DB:{prepare(){throw new Error('test unavailable');}}}, stale)).status, 503);
+    assert.equal((await serveFrontend(request, {DB:h.db}, stale)).status, 401);
     const asset = new Request('https://example.com/assets/theme.js?theme_url=https://github.com/test/theme/tree/main');
-    assert.equal((await serveFrontend(asset, {DB:h.db}, stale)).status, 409);
+    assert.equal((await serveFrontend(asset, {DB:h.db}, stale)).status, 401);
   } finally { await h.dispose(); }
 });
 

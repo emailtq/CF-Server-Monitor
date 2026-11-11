@@ -16,7 +16,7 @@ import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normal
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 import { getTerminalJwtPrincipal } from '../middleware/auth.js';
 import { revokeTerminalAdmin } from '../database/terminal.js';
-import { handleTerminalAdminAction, disableTerminalAccess, notifyTerminalNodeRevoked, terminalPreviewGuard } from './terminal.js';
+import { handleTerminalAdminAction, disableTerminalAccess, notifyTerminalNodeRevoked } from './terminal.js';
 import { revokeTerminalNode } from '../database/terminal.js';
 import { loadNotificationConfig, saveNotificationConfig, prepareNotificationChannel, notificationChannelSettings, validateNotificationBackup, importNotificationConfig } from '../database/notifications.js';
 import { assertNotificationObject, maskNotificationConfig, NOTIFICATION_CONFIG_MAX_BYTES, notificationConfigError, migrateLegacyNotifications } from '../shared/notificationConfig.js';
@@ -609,8 +609,6 @@ async function handleGetSettingsAction({ env, sys, loadFullSettings }) {
 }
 
 async function handleStartThemePreviewAction({ request, data, env, sys }) {
-  const terminalGuard = await terminalPreviewGuard(env);
-  if (terminalGuard) return terminalGuard;
   const normalizedThemeUrl = normalizeThemeUrl(data.theme_url);
   if (!normalizedThemeUrl) {
     return createBadRequestResponse('invalidThemeUrl');
@@ -898,7 +896,6 @@ async function applyImportedSettings({ env, sys, settings, notificationConfig, s
   }
 
   if (siteFields.length > 0) {
-    if (site.picked.theme_url) await disableTerminalAccess(env, sys);
     await saveSiteOptions(env.DB, site.picked);
   }
   if (appearanceFields.length > 0) {
@@ -1110,7 +1107,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           }
         }
       }
-      if (normalizedThemeUrl || settings.terminal_enabled === false || settings.terminal_enabled === 'false') await disableTerminalAccess(env, sys);
+      if (settings.terminal_enabled === false || settings.terminal_enabled === 'false') await disableTerminalAccess(env, sys);
       await saveSiteOptions(env.DB, siteOptions);
       // 保存设置后非致命补列：确保 servers 表的告警相关列存在，避免启用月流量阈值后
       // 告警状态因缺列无法持久化而重复发送通知。设置已保存成功，补列失败不回滚、不报错。

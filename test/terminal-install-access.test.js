@@ -11,7 +11,7 @@ const open = h => h.action('terminal_open', {serverId:'node-a', clientRequestId:
 test('confirmed install enables the site once but cannot open until the current-token capable Agent connects', async () => {
   const h = await harness();
   try {
-    await saveSiteOptions(h.db, {terminal_enabled:'false'});
+    await saveSiteOptions(h.db, {terminal_enabled:'false', theme_url:'https://github.com/test/theme/tree/main'});
     const response = await prepare(h);
     assert.equal(response.status, 200);
     const issued = await response.json();
@@ -32,18 +32,17 @@ test('confirmed install enables the site once but cannot open until the current-
   } finally { await h.dispose(); }
 });
 
-test('prepare requires explicit consent, fresh Cookie, same origin and built-in frontend; rejected calls never rotate', async () => {
+test('prepare requires explicit consent, fresh Cookie and same origin even with a trusted installed theme; rejected calls never rotate', async () => {
   const h = await harness();
   try {
     const before = await h.db.prepare("SELECT * FROM terminal_nodes WHERE server_id='node-a'").first();
+    await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main'});
     for (const data of [{}, {terminal:false, acceptRisk:true}, {terminal:true}, {terminal:true, acceptRisk:'true'}]) {
       assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a', ...data})).status, 400);
     }
     for (const [headers, status] of [[{Cookie:''},401], [{Authorization:`Bearer ${h.token}`},401], [{Origin:'https://evil.invalid'},403]]) {
       assert.equal((await h.action('terminal_prepare_install', {serverId:'node-a',terminal:true,acceptRisk:true}, {headers})).status, status);
     }
-    await saveSiteOptions(h.db, {theme_url:'https://example.invalid/theme'});
-    assert.equal((await prepare(h)).status, 409);
     assert.deepEqual(await h.db.prepare("SELECT * FROM terminal_nodes WHERE server_id='node-a'").first(), before);
   } finally { await h.dispose(); }
 });
@@ -51,6 +50,7 @@ test('prepare requires explicit consent, fresh Cookie, same origin and built-in 
 test('old standalone authorization actions cannot revive an installation and rotation closes old real peers', async () => {
   const h = await harness();
   try {
+    await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main'});
     const control = await h.control();
     const pair = await openPair(h, control);
     for (const action of ['terminal_authorize_node','terminal_enable_site']) assert.equal((await h.action(action, {serverId:'node-a',password:'test-report-secret'})).status, 400);

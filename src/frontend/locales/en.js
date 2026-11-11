@@ -161,7 +161,7 @@ export default {
   terminal_unsupported: "This agent does not advertise Linux PTY support. Monitoring is unaffected.",
   terminal_agent_offline: "The terminal control connection is offline. Check local opt-in and HTTPS settings.",
   terminal_origin_denied: "Terminal requires the built-in HTTPS admin frontend and a valid same-origin API index.",
-  terminal_custom_frontend: "Custom/preview frontends cannot use terminals. Switch to the built-in frontend first.",
+  terminal_custom_frontend: "Open terminals from the built-in admin page.",
   terminal_login_required: "Sign in again with the administrator login secret; a monitor-only session cannot open a terminal.",
   terminal_input_overflow: "Input was not sent: paste/queued input exceeds the bounded 16 KiB UTF-8 buffer. Wait for credit, or paste a smaller block.",
   terminal_disconnected: "Connection lost; this shell is closed. Reopen explicitly to create a new shell.",

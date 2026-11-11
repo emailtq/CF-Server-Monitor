@@ -161,7 +161,7 @@ export default {
   terminal_unsupported: "Cet agent ne déclare pas de PTY Linux. La supervision continue.",
   terminal_agent_offline: "Contrôle hors ligne. Vérifiez l’activation locale et HTTPS.",
   terminal_origin_denied: "Interface admin HTTPS intégrée et index API de même origine requis.",
-  terminal_custom_frontend: "Frontends personnalisés/aperçus interdits. Revenez au frontend intégré.",
+  terminal_custom_frontend: "Ouvrez les terminaux depuis la page d’administration intégrée.",
   terminal_login_required: "Reconnectez-vous avec le secret admin ; une session de supervision seule ne suffit pas.",
   terminal_input_overflow: "Entrée non envoyée : tampon UTF-8 de 16 KiB dépassé. Attendez du crédit ou collez moins.",
   terminal_disconnected: "Connexion perdue ; shell fermé. Rouvrez explicitement un nouveau shell.",

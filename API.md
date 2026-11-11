@@ -1782,7 +1782,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `terminal_renew` | `serverId,sessionId` | 只允许原 owner 续租，重新读取当前 D1 权限，失败 fail-closed |
 | `terminal_close` | `serverId,sessionId` | owner 关闭，幂等；不影响其他会话 |
 
-站点关闭走既有 `save_settings` 的 `terminal_enabled:false`；普通设置或 import 不能启用，必须显式 step-up。`logout` 撤销有效 Cookie/JWT 的 `jti`；旧 JWT 缺少 `jti` 必须重新登录。节点旋转、撤销、删除、站点关闭和自定义主题激活/导入都会撤销相关终端权限。租约 60 秒，UI 每 45 秒续约；alarm 调度可能延后物理关闭，不承诺严格第 60 秒断开。
+站点关闭走既有 `save_settings` 的 `terminal_enabled:false`；普通设置或 import 不能启用，必须通过安装接口显式同意终端风险。`logout` 撤销有效 Cookie/JWT 的 `jti`；旧 JWT 缺少 `jti` 必须重新登录。节点旋转、撤销、删除和站点关闭都会撤销相关终端权限；管理员信任的同源主题激活/导入不撤销终端权限，主题预览仍需登录。`/admin` 使用内置页面，不注入公开 `custom_head` / `custom_script`，但不提供恶意同源主题的沙箱隔离。租约 60 秒，UI 每 45 秒续约；alarm 调度可能延后物理关闭，不承诺严格第 60 秒断开。
 
 **WebSocket endpoints（GET + Upgrade）**
 

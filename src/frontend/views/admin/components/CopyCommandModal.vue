@@ -107,7 +107,6 @@ const release = ref({available:false, terminal:false})
 let epoch = 0, credentialSequence = 0
 const terminalReason = computed(() => {
   try { getTerminalBase(props.apiIndex) } catch (error) { return props.trans[error.message] || props.trans.terminal_request_failed }
-  if (props.settings.theme_url) return props.trans.terminal_custom_frontend
   if (props.targetOs !== 'linux') return props.trans.terminalInstallPlatformUnsupported
   if (releaseLoading.value) return props.trans.downloadCheckingRelease
   if (!release.value.terminal) return props.trans.downloadTerminalUnavailable
@@ -166,7 +165,7 @@ const clearTerminal = () => {
   terminalToken.value = terminalError.value = ''
   siteEnabled.value = [true,1,'1','true'].includes(props.settings.terminal_enabled)
 }
-watch([() => props.show, () => props.serverId, () => props.apiIndex, () => props.trans, () => props.settings.theme_url, () => props.requestOwner], () => {
+watch([() => props.show, () => props.serverId, () => props.apiIndex, () => props.trans, () => props.requestOwner], () => {
   clearTerminal()
   if (props.show && props.serverId) void readCredential()
 }, {flush:'sync', immediate:true})
@@ -178,7 +177,7 @@ watch(terminalSelected, selected => {
   if (!terminalToken.value || !siteEnabled.value) void changeCredential(false)
 }, {flush:'sync'})
 watch([terminalSelected, terminalToken, terminalBusy, credentialLoading, needsRotation], () => emit('terminal-options', {selected:terminalSelected.value,enabled:terminalSelected.value && !!terminalToken.value && !terminalBusy.value && !credentialLoading.value && !needsRotation.value,token:terminalToken.value}), {flush:'sync', immediate:true})
-watch([() => props.show, () => props.targetOs, () => props.installVersion, () => props.serverId, () => props.apiIndex, () => props.trans, () => props.settings.theme_url, () => props.requestOwner], async (_, __, onCleanup) => {
+watch([() => props.show, () => props.targetOs, () => props.installVersion, () => props.serverId, () => props.apiIndex, () => props.trans, () => props.requestOwner], async (_, __, onCleanup) => {
   const controller = new AbortController(), current = currentRequest()
   onCleanup(() => controller.abort())
   release.value = {available:false,terminal:false}

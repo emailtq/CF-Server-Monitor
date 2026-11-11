@@ -58,7 +58,7 @@ export async function verifyTerminalAuthority(db, context, now = Date.now()) {
     .bind(context.serverId, context.owner || '').first();
   if (!row || row.enabled !== 1 || row.credential_version !== context.credentialVersion) return false;
   const settings = JSON.parse(row.value);
-  if (!settings || ![true, 'true'].includes(settings.terminal_enabled) || settings.theme_url) return false;
+  if (!settings || ![true, 'true'].includes(settings.terminal_enabled)) return false;
   if (context.owner && (row.revoked_at !== null || row.expires_at !== context.ownerExpiry ||
       row.expires_at * 1000 <= now || context.authorizationKey !== await terminalAuthorizationKey(settings))) return false;
   return true;

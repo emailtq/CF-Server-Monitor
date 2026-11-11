@@ -14,7 +14,7 @@ async function authority(env, sys) {
   if (!row) throw new Error('terminal_authority_unavailable');
   const settings = JSON.parse(row.value);
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('terminal_authority_unavailable');
-  return {...sys, ...settings, jwt_secret:settings.jwt_secret || '', terminal_enabled: settings.terminal_enabled === 'true' || settings.terminal_enabled === true, theme_url: settings.theme_url || ''};
+  return {...sys, ...settings, jwt_secret:settings.jwt_secret || '', terminal_enabled: settings.terminal_enabled === 'true' || settings.terminal_enabled === true};
 }
 
 async function nodeAuthority(env, serverId) {
@@ -27,13 +27,6 @@ export async function notifyTerminalNodeRevoked(env, serverId) {
   const node = await env.DB.prepare('SELECT credential_version FROM terminal_nodes WHERE server_id = ?').bind(serverId).first();
   const result = await brokerRequest(env, 'invalidate', {serverId, credentialVersion:node?.credential_version || 0});
   if (!result.ok) throw new Error('terminal_broker_notification_failed');
-}
-
-export async function terminalPreviewGuard(env) {
-  try {
-    const settings = await authority(env, null);
-    return settings.terminal_enabled ? response('terminal_custom_frontend', 409) : null;
-  } catch (_) { return response('terminal_authority_unavailable', 503); }
 }
 
 export async function disableTerminalAccess(env, sys) {
@@ -54,7 +47,6 @@ function brokerRequest(env, operation, context, data = null) {
 
 async function nodeStatus(env, settings, serverId, node) {
   const empty = {enabled:false,connected:false,supported:false,protocol:null,platform:null,activeCount:0};
-  if (settings.theme_url) return {...empty, state:'terminal_custom_frontend'};
   if (!settings.terminal_enabled) return {...empty, state:'terminal_disabled'};
   if (node.credential_version == null) return {...empty, state:'pending'};
   if (node.enabled !== 1) return {...empty, state:'revoked'};
@@ -91,7 +83,6 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
     const node = await nodeAuthority(env, data.serverId);
     if (!node) return response('terminal_node_missing', 404);
     if (data.action === 'terminal_read_install') {
-      if (settings.theme_url) return response('terminal_custom_frontend', 409);
       return Response.json(await readTerminalNodeToken(env.DB, data.serverId, settings.jwt_secret), {headers:{'Cache-Control':'no-store'}});
     }
     if (data.action === 'terminal_revoke_node') {
@@ -111,7 +102,6 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
     }
     if (data.action === 'terminal_prepare_install' || data.action === 'terminal_enable_install') {
       if (data.terminal !== true || data.acceptRisk !== true) return response('terminal_install_consent_required', 400);
-      if (settings.theme_url) return response('terminal_custom_frontend', 409);
       if (!env.TERMINAL_BROKER) return response('terminal_broker_unavailable', 503);
       if (data.action === 'terminal_enable_install') {
         const current = await readTerminalNodeToken(env.DB, data.serverId, settings.jwt_secret);
@@ -133,7 +123,7 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
       return Response.json(status, {status:status.error ? 503 : 200});
     }
     if (!env.TERMINAL_BROKER) return response('terminal_broker_unavailable', 503);
-    const enabled = settings.terminal_enabled && !settings.theme_url && node.enabled === 1;
+    const enabled = settings.terminal_enabled && node.enabled === 1;
     if (!enabled) return response('terminal_disabled', 403);
     const context = {serverId:data.serverId, owner:owner.jti, ownerExpiry:owner.exp,
       authorizationKey:await terminalAuthorizationKey(settings), credentialVersion:node.credential_version,
@@ -164,7 +154,7 @@ export async function handleTerminalUpgrade(request, env, sys) {
   if (!env.TERMINAL_BROKER) return response('terminal_broker_unavailable', 503);
   try {
     const settings = await authority(env, sys);
-    if (!settings.terminal_enabled || settings.theme_url) return response('terminal_disabled', 403);
+    if (!settings.terminal_enabled) return response('terminal_disabled', 403);
     if (browser) {
       if (!sameOrigin(request) || !request.headers.get('Cookie') || request.headers.has('Authorization')) return response('terminal_browser_cookie_required', 403);
       const owner = await getTerminalAdminPrincipal(request, env, settings);

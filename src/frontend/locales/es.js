@@ -161,7 +161,7 @@ export default {
   terminal_unsupported: "Este agente no anuncia PTY Linux. La supervisión no se afecta.",
   terminal_agent_offline: "Control sin conexión. Revise la activación local y HTTPS.",
   terminal_origin_denied: "Requiere interfaz admin HTTPS integrada e índice API válido del mismo origen.",
-  terminal_custom_frontend: "No disponible en interfaces personalizadas o previas. Vuelva a la integrada.",
+  terminal_custom_frontend: "Abra los terminales desde la página de administración integrada.",
   terminal_login_required: "Inicie sesión de nuevo con el secreto admin; una sesión solo de monitor no basta.",
   terminal_input_overflow: "Entrada no enviada: excede búfer de 16 KiB UTF-8. Espere crédito o pegue un bloque menor.",
   terminal_disconnected: "Conexión perdida; shell cerrado. Reabra explícitamente uno nuevo.",

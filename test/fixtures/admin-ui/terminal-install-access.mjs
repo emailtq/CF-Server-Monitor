@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import { harness, controls, until } from '../../terminal-harness.js';
+import { saveSiteOptions } from '../../../src/utils/settings.js';
 import en from '../../../src/frontend/locales/en.js';
 import { spawnSync } from 'node:child_process';
 
@@ -20,6 +21,7 @@ const check = async (name, fn) => { await fn(); report.checks.push({name,pass:tr
 try {
   h = await harness();
   h.nodes['node-a'] = await (await h.action('terminal_prepare_install',{serverId:'node-a',terminal:true,acceptRisk:true})).json();
+  await saveSiteOptions(h.db, {theme_url:'https://github.com/test/theme/tree/main'});
   await h.control();
   server = await createServer({frontendExports:true, fixtureEntries:[path.resolve('test/fixtures/admin-ui/terminal-install-access.html')], cacheDir:path.join(out,'.cache'), plugins:[vue()], publicDir:path.resolve('public')});
   const httpOrigin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -58,7 +60,7 @@ try {
         if (lostRotation && data.action === 'terminal_prepare_install') { lostRotation=false; return route.abort(); }
         return route.fulfill({status:response.status,headers:{'content-type':'application/json'},body});
       }
-      return route.fulfill({json:{settings:{site_title:'CF Monitor',username:'fixture',password_configured:true,terminal_enabled:true},servers:[{id:'node-a',name:'Node A',os:'Linux',is_online:true},{id:'node-b',name:'Node B',os:'Windows',is_online:false}],stats:{total:2},api_secret:'synthetic-report-only'}});
+      return route.fulfill({json:{settings:{site_title:'CF Monitor',username:'fixture',password_configured:true,terminal_enabled:true,theme_url:'https://github.com/test/theme/tree/main'},servers:[{id:'node-a',name:'Node A',os:'Linux',is_online:true},{id:'node-b',name:'Node B',os:'Windows',is_online:false}],stats:{total:2},api_secret:'synthetic-report-only'}});
     }
     if (url.pathname === '/api/config' || url.pathname === '/theme') return route.fulfill({json:{}});
     const target = url.pathname === '/admin' ? '/test/fixtures/admin-ui/terminal-install-access.html' : url.pathname;
@@ -80,7 +82,7 @@ try {
   const toggle = () => dialog.locator('[data-terminal-install]');
   const rotate = () => dialog.locator('[data-terminal-reissue]');
   const currentCredential = async () => (await (await h.action('terminal_read_install',{serverId:'node-a'})).json()).token;
-  await check('original option rows replace config summary and default-off open only reads existing credential', async () => {
+  await check('trusted theme keeps original download options and default-off open only reads existing credential', async () => {
     const before = mutations(), token = await currentCredential();
     await install(); await ready();
     assert.equal(await dialog.locator('.download-options').count(),1);
@@ -94,6 +96,18 @@ try {
     await install(); await ready();
     assert.equal(await currentCredential(),token);
     assert.equal(mutations(),before);
+  });
+  await check('protected admin preview query allows the real download dialog without changing the credential', async () => {
+    await page.keyboard.press('Escape');
+    await page.goto(`${origin}/admin?locale=en&theme_url=https%3A%2F%2Fgithub.com%2Ftest%2Ftheme%2Ftree%2Fmain#/admin`);
+    await page.locator('.server-row').first().waitFor();
+    const before = mutations(), token = await currentCredential();
+    await install(); await ready();
+    assert.equal(await toggle().isDisabled(), false);
+    await toggle().check(); await ready();
+    assert.ok((await command()).includes(token));
+    assert.equal(mutations(), before);
+    await toggle().uncheck(); await ready();
   });
   await check('selecting terminal reuses long-lived Token and copies the single complete install command', async () => {
     const token=await currentCredential(), before=mutations();

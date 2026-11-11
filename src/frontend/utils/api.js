@@ -409,7 +409,7 @@ export const getTerminalBase = (apiIndex = 0) => {
   try { base = new URL(bases[apiIndex]) } catch (_) { throw new Error('terminal_origin_denied') }
   if (base.protocol !== 'https:' || base.origin !== window.location.origin || base.username || base.password ||
       base.pathname !== '/' || base.search || base.hash) throw new Error('terminal_origin_denied')
-  if (!/^\/admin\/?$/.test(window.location.pathname) || new URLSearchParams(window.location.search).has('theme_url')) {
+  if (!/^\/admin\/?$/.test(window.location.pathname)) {
     throw new Error('terminal_custom_frontend')
   }
   return base.origin

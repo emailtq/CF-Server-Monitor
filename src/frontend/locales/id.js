@@ -161,7 +161,7 @@ export default {
   terminal_unsupported: "Agen tidak mengumumkan dukungan Linux PTY. Pemantauan tidak terpengaruh.",
   terminal_agent_offline: "Kontrol offline. Periksa aktivasi lokal dan HTTPS.",
   terminal_origin_denied: "Perlu antarmuka admin HTTPS bawaan dan indeks API valid satu origin.",
-  terminal_custom_frontend: "Tidak tersedia di frontend kustom/pratinjau. Gunakan frontend bawaan.",
+  terminal_custom_frontend: "Buka terminal dari halaman admin bawaan.",
   terminal_login_required: "Masuk ulang dengan rahasia admin; sesi pemantauan saja tidak cukup.",
   terminal_input_overflow: "Input tidak dikirim: melebihi buffer UTF-8 16 KiB. Tunggu kredit atau tempel blok lebih kecil.",
   terminal_disconnected: "Koneksi terputus; shell ditutup. Buka ulang secara eksplisit untuk shell baru.",

@@ -161,7 +161,7 @@ export default {
   terminal_unsupported: "此 Agent 未宣告 Linux PTY 支援，監控不受影響。",
   terminal_agent_offline: "終端控制連線離線，請檢查本機啟用及 HTTPS 設定。",
   terminal_origin_denied: "終端僅支援內建 HTTPS 管理介面和有效的同源 API 索引。",
-  terminal_custom_frontend: "自訂 / 預覽前端不能使用終端，請先切回內建前端。",
+  terminal_custom_frontend: "請從內建管理頁面開啟終端。",
   terminal_login_required: "請用管理員登入口令重新登入；舊監控工作階段不能開啟終端。",
   terminal_input_overflow: "輸入未傳送：貼上 / 待傳送輸入超過有界的 16 KiB UTF-8 緩衝。請等待額度恢復，或縮小貼上區塊。",
   terminal_disconnected: "連線已遺失，目前 Shell 已關閉。明確重新開啟會建立新 Shell。",

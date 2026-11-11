@@ -161,7 +161,7 @@ export default {
   terminal_unsupported: "此 Agent 未声明 Linux PTY 支持，监控不受影响。",
   terminal_agent_offline: "终端控制连接离线，请检查本地启用及 HTTPS 配置。",
   terminal_origin_denied: "终端仅支持内置 HTTPS 管理界面和有效的同源 API 索引。",
-  terminal_custom_frontend: "自定义 / 预览前端不能使用终端，请先切回内置前端。",
+  terminal_custom_frontend: "请从内置管理页面打开终端。",
   terminal_login_required: "请用管理员登录口令重新登录；旧监控会话不能打开终端。",
   terminal_input_overflow: "输入未发送：粘贴 / 待发送输入超过有界的 16 KiB UTF-8 缓冲。请等待额度恢复，或缩小粘贴块。",
   terminal_disconnected: "连接已丢失，当前 Shell 已关闭。明确重新打开将创建新 Shell。",

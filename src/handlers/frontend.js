@@ -13,7 +13,6 @@ import {
   injectApiBase
 } from '../utils/csp.js';
 import { checkAuth } from '../middleware/auth.js';
-import { terminalPreviewGuard } from './terminal.js';
 
 const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const PREVIEW_COOKIE = 'cfsm_theme_preview';
@@ -505,10 +504,6 @@ export async function serveFrontend(request, env, settings = null) {
 
   if (request.method === 'GET' && path.startsWith('/assets/')) {
     const resolvedTheme = resolveThemeUrlForAsset(request, settings);
-    if (resolvedTheme.preview) {
-      const terminalGuard = await terminalPreviewGuard(env);
-      if (terminalGuard) return terminalGuard;
-    }
     if (!resolvedTheme.themeUrl) {
       return new Response('Not Found', {
         status: 404,
@@ -521,11 +516,8 @@ export async function serveFrontend(request, env, settings = null) {
     return serveThemeAsset(request, resolvedTheme.themeUrl);
   }
 
-  const previewThemeUrl = getPreviewThemeUrlFromQuery(url);
-  if (previewThemeUrl) {
-    const terminalGuard = await terminalPreviewGuard(env);
-    if (terminalGuard) return terminalGuard;
-  }
+  const builtinAdmin = shouldUseBuiltinFrontend(path);
+  const previewThemeUrl = builtinAdmin ? '' : getPreviewThemeUrlFromQuery(url);
   const configuredThemeUrl = normalizeThemeUrl(settings.theme_url);
   const effectiveThemeUrl = previewThemeUrl || configuredThemeUrl;
 
@@ -533,7 +525,7 @@ export async function serveFrontend(request, env, settings = null) {
     return buildPreviewUnauthorizedResponse(request);
   }
 
-  if (!shouldUseBuiltinFrontend(path) && effectiveThemeUrl) {
+  if (!builtinAdmin && effectiveThemeUrl) {
     const themeHtml = await loadThemeIndex(effectiveThemeUrl);
     if (themeHtml) {
       return buildHtmlResponse(themeHtml, settings, request, env, previewThemeUrl);
@@ -545,7 +537,8 @@ export async function serveFrontend(request, env, settings = null) {
   const html = files['dashboard.html'];
 
   if (html) {
-    return buildHtmlResponse(html, settings, request, env);
+    // Public appearance scripts belong to the trusted public theme, not the built-in admin.
+    return buildHtmlResponse(html, builtinAdmin ? {...settings, custom_head:'', custom_script:''} : settings, request, env);
   }
 
   return new Response('Frontend not available. Please build the frontend first with `npm run build:frontend`.', {

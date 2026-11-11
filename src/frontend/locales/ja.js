@@ -161,7 +161,7 @@ export default {
   terminal_unsupported: "Linux PTY 非対応です。監視には影響しません。",
   terminal_agent_offline: "制御接続がオフラインです。ローカル有効化と HTTPS を確認してください。",
   terminal_origin_denied: "内蔵 HTTPS 管理画面と同一オリジンの有効な API 番号が必要です。",
-  terminal_custom_frontend: "カスタム・プレビュー画面では利用不可。内蔵画面へ戻してください。",
+  terminal_custom_frontend: "内蔵管理ページからターミナルを開いてください。",
   terminal_login_required: "管理者秘密で再ログインしてください。監視専用セッションは使えません。",
   terminal_input_overflow: "未送信です。16 KiB UTF-8 バッファ上限です。待つか、小さく分けて貼り付けてください。",
   terminal_disconnected: "切断しました。このシェルは終了します。新規シェルを明示的に開いてください。",
