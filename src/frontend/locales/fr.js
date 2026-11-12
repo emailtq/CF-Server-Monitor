@@ -745,6 +745,7 @@ export default {
   terminalInstallRecovery: "La récupération nécessite un nouveau token depuis les options d’installation et une réinstallation locale explicite. La révocation serveur ne prouve pas l’arrêt local de l’Agent.",
   terminal_pending: "Configuration locale en attente : installez avec le nouveau token et activez le terminal localement.",
   terminal_offline: "Agent terminal hors ligne. Reconnectez l’installation locale activée actuelle.",
+  terminal_local_disabled: "Le terminal local est désactivé. Activez-le dans l’installation de l’Agent.",
   terminal_revoked: "Accès révoqué. Réinstallez localement avec un nouveau token.",
   terminal_query_failed: "Impossible de confirmer l’état du terminal. Connexion interdite.",
   terminal_install_consent_required: "Sélectionnez le terminal et confirmez explicitement les risques d’installation.",

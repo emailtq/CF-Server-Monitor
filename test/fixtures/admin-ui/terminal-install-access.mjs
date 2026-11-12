@@ -206,9 +206,12 @@ try {
     assert.equal(mutations(),before);
     await page.keyboard.press('Escape');
   });
-  await check('edit and keyboard close remain connected to the actual parent', async () => {
+  await check('download footer has only Copy and Close; node table Edit and keyboard close remain connected', async () => {
     await install(); await ready();
-    await dialog.locator('[data-edit-install]').click();
+    assert.equal(await dialog.locator('[data-edit-install]').count(),0);
+    assert.deepEqual(await dialog.locator('footer button').allTextContents(),[en.close,en.copy]);
+    await page.keyboard.press('Escape');
+    await row.getByRole('button',{name:en.edit,exact:true}).click();
     assert.equal(await page.locator('.admin-dialog-edit').count(),1);
     await page.keyboard.press('Escape');
   });

@@ -6,6 +6,7 @@
 .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) h2 { line-height:18px; }
 .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) .admin-dialog-footer { margin:0; }
 .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) .btn { border-radius:8px; font-weight:500; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download [data-copy-command]:hover { background:var(--cf-brand-fill); color:var(--cf-on-brand); }
 .admin-ui.admin-ui.admin-ui .admin-dialog-download :is(.form-select,.form-input) { border-radius:8px; width:100%; }
 .admin-ui .download-body { display:flex; flex-direction:column; gap:20px; }
 .admin-ui .download-options { display:flex; flex-direction:column; gap:12px; }

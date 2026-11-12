@@ -60,7 +60,6 @@
           @delete="openDeleteModal"
           @terminal="openTerminal"
           :terminal-statuses="terminalStatuses"
-          :terminal-opening="terminalOpening"
           @terminal-access="terminalServer = $event"
         />
 
@@ -211,7 +210,6 @@
         :install-version="installVersion"
         :auto-update="autoUpdate"
         :install-command="getCustomInstallCommand()"
-        :copied-cmd="copiedCmd"
         @close="closeCopyModal"
         @copy-cmd="copyCustomCmd"
         @terminal-options="terminalInstallOptions = $event"
@@ -221,7 +219,6 @@
         @update:install-mode="installMode = $event"
         @update:install-gh-proxy="installGhProxy = $event"
         @update:install-version="installVersion = $event"
-        @open-edit-from-copy="openEditModalFromCopy"
       />
 
       <AutoDiscoveryCommandModal
@@ -548,26 +545,17 @@ const trans = computed(() => {
 const TerminalAccessModal = defineAsyncComponent(() => import('./components/TerminalAccessModal.vue'))
 const terminalServer = ref(null)
 const terminalStatuses = ref({})
-const terminalOpening = ref('')
 const terminalInstallOptions = ref({selected:false, enabled:false, token:''})
-const openTerminal = async server => {
-  if (terminalOpening.value) return
-  const owner = requestOwner.value, apiIndex = selectedApiIndex.value
-  terminalOpening.value = server.id
+const openTerminal = server => {
+  const apiIndex = selectedApiIndex.value
+  const status = terminalStatuses.value[server.id]
+  if (!adminActive || !isLoggedIn.value || adminSiteLoading.value || status?.enabled !== true || status.localEnabled === false || !['ready', 'offline'].includes(status.state)) return
   try {
     const base = getTerminalBase(apiIndex)
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(server.id)) throw new Error('terminal_invalid_node')
-    const result = await adminApi({action:'terminal_status',serverId:server.id}, apiIndex, owner)
-    if (!owner()) return
-    if (result.error) {
-      terminalStatuses.value = {...terminalStatuses.value, [server.id]:{state:result.error}}
-      throw new Error(result.error)
-    }
-    terminalStatuses.value = {...terminalStatuses.value, [server.id]:result.data}
-    if (result.data?.state !== 'ready' || !result.data.enabled || !result.data.connected || !result.data.supported) throw new Error('terminal_' + (result.data?.state || 'query_failed'))
+    // Entry is a synchronous navigation; the terminal page checks live authority.
     window.open(`${base}/admin#/admin/terminal/${server.id}?apiIndex=${apiIndex}`, '_blank', 'noopener,noreferrer')
-  } catch (error) { if (owner()) alertMessage.value = trans.value[error.message] || trans.value.terminalRequestFailed }
-  finally { if (owner()) terminalOpening.value = '' }
+  } catch (error) { alertMessage.value = trans.value[error.message] || trans.value.terminalRequestFailed }
 }
 const route = useRoute()
 const router = useRouter()
@@ -762,12 +750,49 @@ const requestOwner = computed(() => {
 })
 const adminApiForSite = (data) => adminApi(data, selectedApiIndex.value, requestOwner.value)
 
-const refreshTerminalStatuses = async () => {
-  const owner = requestOwner.value
-  const result = await adminApiForSite({action:'terminal_status',serverIds:servers.value.map(server=>server.id)})
-  if (!owner()) return
-  terminalStatuses.value = result.error ? Object.fromEntries(servers.value.map(server=>[server.id,{state:result.error}])) : result.data?.nodes || {}
+let terminalStatusTimer = null, terminalStatusRequest = null
+let terminalStatusSequence = 0, terminalStatusGeneration = 0, terminalStatusAgain = false
+let terminalStatusLoggedOut = false
+const terminalStatusActive = () => adminActive && isLoggedIn.value && !terminalStatusLoggedOut && !adminSiteLoading.value && activeTab.value === 'servers' && !document.hidden && servers.value.length > 0
+const cancelTerminalStatuses = () => {
+  terminalStatusGeneration++; terminalStatusSequence++
+  clearTimeout(terminalStatusTimer); terminalStatusTimer = null
+  terminalStatusAgain = false
+  terminalStatusRequest?.abort()
 }
+const refreshTerminalStatuses = async () => {
+  const sequence = ++terminalStatusSequence
+  clearTimeout(terminalStatusTimer); terminalStatusTimer = null
+  if (!terminalStatusActive()) return
+  if (terminalStatusRequest) { terminalStatusAgain = true; return }
+  const generation = terminalStatusGeneration, owner = requestOwner.value
+  const ids = [...new Set(servers.value.map(server => server.id))]
+  const controller = new AbortController()
+  terminalStatusRequest = controller
+  const current = () => owner() && generation === terminalStatusGeneration && sequence === terminalStatusSequence && terminalStatusActive()
+  try {
+    const nodes = {}
+    // The API caps each unique batch at 1000; keep larger lists sequential.
+    for (let offset = 0; offset < ids.length; offset += 1000) {
+      const batch = ids.slice(offset, offset + 1000)
+      const result = await adminApi({action:'terminal_status', serverIds:batch}, selectedApiIndex.value, current, controller.signal)
+      if (!current()) return
+      Object.assign(nodes, result.error ? Object.fromEntries(batch.map(id => [id,{state:/^terminal_[a-z0-9_]+$/.test(result.error) ? result.error : 'query_failed'}])) : result.data?.nodes || {})
+    }
+    if (current()) terminalStatuses.value = nodes
+  } catch (_) {
+    if (current()) terminalStatuses.value = Object.fromEntries(ids.map(id => [id,{state:'query_failed'}]))
+  } finally {
+    if (terminalStatusRequest !== controller) return
+    terminalStatusRequest = null
+    if (terminalStatusAgain || generation !== terminalStatusGeneration) { terminalStatusAgain = false; void refreshTerminalStatuses() }
+    else if (terminalStatusActive()) terminalStatusTimer = setTimeout(refreshTerminalStatuses, 5000)
+  }
+}
+const restartTerminalStatuses = () => { cancelTerminalStatuses(); void refreshTerminalStatuses() }
+const terminalStatusLogout = () => { terminalStatusLoggedOut = true; cancelTerminalStatuses(); terminalStatuses.value = {} }
+const terminalStatusStorage = event => { if (event.key === STORAGE.JWT_TOKEN && !event.newValue) terminalStatusLogout() }
+let terminalStatusChannel
 
 const isLoggedIn = ref(false)
 const loginForm = ref({ username: '', password: '' })
@@ -1008,7 +1033,6 @@ const resetDay = ref(1)
 const rxCorrection = ref('')
 const txCorrection = ref('')
 const autoUpdate = ref(false)
-const copiedCmd = ref(false)
 const showAutoDiscoveryModal = ref(false)
 const autoDiscoveryTargetOs = ref('linux')
 const autoDiscoveryInstallMode = ref('current-user')
@@ -1136,6 +1160,7 @@ const handleLogin = async () => {
 }
 
 const logout = async () => {
+  terminalStatusLogout()
   siteGeneration.value++
   const generation = siteGeneration.value
   terminalServer.value = null
@@ -1202,7 +1227,6 @@ const resetAdminContext = () => {
   notificationConfig.value = null
   terminalServer.value = null
   terminalStatuses.value = {}
-  terminalOpening.value = ''
   terminalInstallOptions.value = {selected:false, enabled:false, token:''}
   selectedServers.value = []
   showEditModal.value = false
@@ -1252,7 +1276,7 @@ const resetAdminContext = () => {
   resetDay.value = 1
   connectionMode.value = 'auto'
   pingMode.value = 'tcp'
-  autoUpdate.value = autoDiscoveryAutoUpdate.value = copiedCmd.value = autoDiscoveryCopied.value = uninstallCopied.value = false
+  autoUpdate.value = autoDiscoveryAutoUpdate.value = autoDiscoveryCopied.value = uninstallCopied.value = false
   draggedRow = null
 }
 
@@ -1713,7 +1737,6 @@ const copyCmd = (serverId) => {
   rxCorrection.value = server?.rx_correction ?? ''
   txCorrection.value = server?.tx_correction ?? ''
   autoUpdate.value = server?.auto_update === '1' || server?.auto_update === 1 || server?.auto_update === true
-  copiedCmd.value = false
   installCommandBlocked.value = true
   showCopyModal.value = true
 }
@@ -1946,25 +1969,12 @@ const copyCustomCmd = async () => {
     alertMessage.value = trans.value.httpsRequired
     return
   }
-
-  copiedCmd.value = true
-  setTimeout(() => {
-    copiedCmd.value = false
-  }, 1500)
 }
 
 const closeCopyModal = () => {
   showCopyModal.value = false
   terminalInstallOptions.value = {selected:false, enabled:false, token:''}
   void refreshTerminalStatuses()
-}
-
-const openEditModalFromCopy = () => {
-  const server = servers.value.find(s => s.id === copyServerId.value)
-  if (server) {
-    showCopyModal.value = false
-    openEditModal(server)
-  }
 }
 
 const copyUninstallCmd = async () => {
@@ -2574,8 +2584,24 @@ watch(() => route.query.apiIndex, async (value) => {
   }
 })
 
-onBeforeUnmount(() => { adminActive = false; siteGeneration.value++; removeTurnstile('#admin-turnstile-container'); document.body.classList.remove('admin-ui-surface') })
+watch(isLoggedIn, loggedIn => { if (loggedIn) terminalStatusLoggedOut = false; restartTerminalStatuses() }, {flush:'sync'})
+watch([activeTab, selectedApiIndex, siteGeneration, adminSiteLoading], restartTerminalStatuses, {flush:'sync'})
+onBeforeUnmount(() => {
+  adminActive = false; siteGeneration.value++; cancelTerminalStatuses()
+  document.removeEventListener('visibilitychange', restartTerminalStatuses)
+  window.removeEventListener('terminal-logout', terminalStatusLogout)
+  window.removeEventListener('storage', terminalStatusStorage)
+  terminalStatusChannel?.close()
+  removeTurnstile('#admin-turnstile-container'); document.body.classList.remove('admin-ui-surface')
+})
 onMounted(() => {
+  document.addEventListener('visibilitychange', restartTerminalStatuses)
+  window.addEventListener('terminal-logout', terminalStatusLogout)
+  window.addEventListener('storage', terminalStatusStorage)
+  if (typeof BroadcastChannel !== 'undefined') {
+    terminalStatusChannel = new BroadcastChannel('cfsm-terminal-logout')
+    terminalStatusChannel.onmessage = event => { if (event.data?.type === 'logout') terminalStatusLogout() }
+  }
   document.body.classList.add('admin-ui-surface')
   initAdmin()
 })

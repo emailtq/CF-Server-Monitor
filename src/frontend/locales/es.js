@@ -745,6 +745,7 @@ export default {
   terminalInstallRecovery: "Para recuperar el acceso necesita un token nuevo desde la configuración de instalación y reinstalar localmente. La revocación del servidor no confirma el cierre local del Agent.",
   terminal_pending: "Pendiente de configuración local: instale con el token nuevo y active el terminal localmente.",
   terminal_offline: "Agent del terminal sin conexión. Reconecte la instalación local habilitada actual.",
+  terminal_local_disabled: "El terminal local está desactivado. Actívelo en la instalación del Agent.",
   terminal_revoked: "Acceso revocado. Reinstale localmente con un token nuevo.",
   terminal_query_failed: "No se puede confirmar el estado del terminal. No se permite la conexión.",
   terminal_install_consent_required: "Seleccione el terminal y confirme expresamente los riesgos de instalación.",

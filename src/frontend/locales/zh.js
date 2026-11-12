@@ -745,6 +745,7 @@ export default {
   terminalInstallRecovery: "恢复须从安装配置获取新 token 并明确在本地重新安装。服务器撤销不代表 Agent 本地已关闭。",
   terminal_pending: "等待本地设置：使用新 token 安装并主动启用终端。",
   terminal_offline: "终端 Agent 离线，请重新接入当前本地已启用的安装。",
+  terminal_local_disabled: "本地终端未开启，请在 Agent 安装配置中启用。",
   terminal_revoked: "授权已撤销，须使用新 token 在本地重装以恢复。",
   terminal_query_failed: "暂时无法确认终端状态，不允许连接。",
   terminal_install_consent_required: "请勾选终端并明确确认本次安装风险。",

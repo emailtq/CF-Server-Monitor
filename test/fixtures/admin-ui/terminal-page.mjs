@@ -37,8 +37,15 @@ const assertNodeTargets = async (width, height) => {
 };
 try {
   h = await harness();
-  const control = await h.control();
-  control.ws.on('message', async (data, binary) => {
+  await h.db.prepare("UPDATE servers SET history_partition_id=1 WHERE id='node-a'").run();
+  const at=Date.now();
+  const observed=await h.fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    id:'node-a',secret:'test-report-secret',terminal_enabled:true,time:{local_ts:at},metrics:{cpu:'1',timestamp:at}
+  })});
+  assert.equal(observed.status,200);
+  assert.equal((await (await h.action('terminal_status',{serverId:'node-a'})).json()).localEnabled,true);
+  report.authenticatedOrdinaryReport=true;
+  const onControlMessage = async (data, binary) => {
     if (binary) return;
     const frame = JSON.parse(data.toString());
     if (frame.type !== 'open') return;
@@ -60,7 +67,7 @@ try {
     await until(() => peer.messages.some(data => typeof data === 'string' && JSON.parse(data).type === 'start'));
     peer.ws.send('{"type":"ready"}');
     peer.ws.send(Buffer.from('REAL BROKER / SYNTHETIC PEER\r\nFINAL OUTPUT\r\n'), { binary: true });
-  });
+  };
   server = await createServer({ frontendExports: true, fixtureEntries: [path.resolve('test/fixtures/admin-ui/terminal-install-access.html')], cacheDir: path.join(out, '.cache'), plugins: [vue()], publicDir: path.resolve('public') });
   const httpOrigin = `http://127.0.0.1:${server.httpServer.address().port}`, origin = httpOrigin.replace('http:', 'https:');
   const bundle = fs.readdirSync(out).find(name => name.startsWith('compiled-fixture-'));
@@ -105,6 +112,22 @@ try {
   page = await context.newPage();
   page.on('pageerror', error => report.errors.push(error.stack));
   await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a?apiIndex=0`);
+  await check('enabled offline page auto-checks authority, reports offline without reservation, then explicit retry works', async () => {
+    await page.locator('.terminal-error').waitFor();
+    assert.ok((await page.locator('.terminal-error').innerText()).includes('terminal_agent_offline'));
+    assert.equal(report.actions.filter(action => action === 'terminal_open').length,0);
+    assert.equal(await page.getByRole('button',{name:en.terminalReopen,exact:true}).isDisabled(),false);
+    const control = await h.control();
+    control.ws.on('message',onControlMessage);
+    await page.getByRole('button',{name:en.terminalReopen,exact:true}).click();
+    await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type('id'); await page.keyboard.press('Enter');
+    await until(() => report.input.join('').includes('id\r'));
+    report.retryKeyboardBytes = report.input.join('');
+    assert.equal(report.retryKeyboardBytes,'id\r');
+    report.input.length = 0;
+  });
   await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
   await check('standalone approved header and one reservation; session details collapsed', async () => {
     await page.waitForTimeout(300);

@@ -422,12 +422,12 @@ export const getTerminalSocketUrl = (serverId, sessionId, browserPath, apiIndex 
   return `${base.replace('https:', 'wss:')}${browserPath}`
 }
 
-export const adminApi = async (data, apiIndex = 0, requestOwner) => {
+export const adminApi = async (data, apiIndex = 0, requestOwner, signal) => {
   if (TERMINAL_ACTIONS.has(data.action)) {
     try { getTerminalBase(apiIndex) } catch (error) { return { error: error.message, status: 0, code: 0 } }
     return http.postByIndex('/admin/api', data, apiIndex, {
       includeAuth: false, includeTurnstile: false, includeTurnstileVerified: false,
-      autoRedirect: false, responsePolicy: 'terminal', timeoutMs: 15000, requestOwner
+      autoRedirect: false, responsePolicy: 'terminal', timeoutMs: 15000, requestOwner, signal
     })
   }
   const result = await http.postByIndex('/admin/api', data, apiIndex, { requestOwner })

@@ -745,6 +745,7 @@ export default {
   terminalInstallRecovery: "復原須從安裝設定取得新 token 並明確在本機重新安裝。伺服器撤銷不代表 Agent 本機已關閉。",
   terminal_pending: "等待本機設定：使用新 token 安裝並主動啟用終端。",
   terminal_offline: "終端 Agent 離線，請重新接入目前本機已啟用的安裝。",
+  terminal_local_disabled: "本機終端未啟用，請在 Agent 安裝設定中啟用。",
   terminal_revoked: "授權已撤銷，須使用新 token 在本機重裝以復原。",
   terminal_query_failed: "暫時無法確認終端狀態，不允許連線。",
   terminal_install_consent_required: "請勾選終端並明確確認本次安裝風險。",

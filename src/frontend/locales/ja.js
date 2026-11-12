@@ -745,6 +745,7 @@ export default {
   terminalInstallRecovery: "復旧にはインストール設定から新しい token を取得し、明示的にローカルで再インストールする必要があります。サーバー側の失効は Agent のローカル停止を証明しません。",
   terminal_pending: "ローカル設定待ち：新しい token でインストールし端末を明示的に有効にしてください。",
   terminal_offline: "端末 Agent はオフラインです。現在のローカル有効インストールを再接続してください。",
+  terminal_local_disabled: "ローカル端末は無効です。Agent のインストール設定で有効にしてください。",
   terminal_revoked: "アクセスは失効しています。新しい token でローカル再インストールしてください。",
   terminal_query_failed: "端末状態を確認できません。接続は許可されません。",
   terminal_install_consent_required: "端末を選択しインストールのリスクを明示的に確認してください。",

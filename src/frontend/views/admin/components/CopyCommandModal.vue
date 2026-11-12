@@ -57,8 +57,7 @@
     </template>
     <template #footer>
       <button class="btn" @click="$emit('close')">{{ trans.close }}</button>
-      <button class="btn" data-edit-install @click="$emit('open-edit-from-copy')">{{ trans.edit }}</button>
-      <button class="btn btn-primary" data-copy-command :disabled="!installCommand || releaseLoading || !release.available || terminalBusy" @click="$emit('copy-cmd')">{{ copiedCmd ? trans.copied : trans.downloadCopyCommand }}</button>
+      <button class="btn btn-primary" data-copy-command :disabled="!installCommand || releaseLoading || !release.available || terminalBusy" @click="$emit('copy-cmd')">{{ trans.copy }}</button>
     </template>
   </AdminDialog>
   <AdminDialog :open="show && confirmReissue" :title="trans.downloadReissueTitle" size="download-confirm" :busy="terminalBusy" @close="confirmReissue = false">
@@ -90,10 +89,9 @@ const props = defineProps({
   installGhProxy: {type:String, default:''},
   installVersion: {type:String, default:''},
   autoUpdate: {type:Boolean, default:false},
-  installCommand: {type:String, default:''},
-  copiedCmd: {type:Boolean, default:false}
+  installCommand: {type:String, default:''}
 })
-const emit = defineEmits(['close','copy-cmd','open-edit-from-copy','update:target-os','update:install-mode','update:install-gh-proxy','update:install-version','update:auto-update','terminal-options','install-available'])
+const emit = defineEmits(['close','copy-cmd','update:target-os','update:install-mode','update:install-gh-proxy','update:install-version','update:auto-update','terminal-options','install-available'])
 const terminalSelected = ref(false)
 const terminalToken = ref('')
 const terminalError = ref('')

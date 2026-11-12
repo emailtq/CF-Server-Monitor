@@ -745,6 +745,7 @@ export default {
   terminalInstallRecovery: "Recovery requires a new token from installation configuration and an explicit local reinstall. Server revocation is not proof that the Agent is locally disabled.",
   terminal_pending: "Pending local setup: install with the new token and local terminal opt-in.",
   terminal_offline: "Terminal Agent offline. Reconnect the current locally enabled installation.",
+  terminal_local_disabled: "Local terminal is disabled. Enable it in the Agent installation.",
   terminal_revoked: "Access revoked. Reinstall locally with a new token to recover.",
   terminal_query_failed: "Cannot confirm terminal status. No connection is permitted.",
   terminal_install_consent_required: "Select terminal and explicitly confirm its installation risks.",

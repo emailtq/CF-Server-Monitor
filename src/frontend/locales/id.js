@@ -745,6 +745,7 @@ export default {
   terminalInstallRecovery: "Pemulihan memerlukan token baru dari konfigurasi instalasi dan instalasi ulang lokal eksplisit. Pencabutan server tidak membuktikan Agent telah dinonaktifkan secara lokal.",
   terminal_pending: "Menunggu pengaturan lokal: instal dengan token baru dan aktifkan terminal secara lokal.",
   terminal_offline: "Agent terminal luring. Hubungkan kembali instalasi lokal aktif saat ini.",
+  terminal_local_disabled: "Terminal lokal dinonaktifkan. Aktifkan di instalasi Agent.",
   terminal_revoked: "Akses dicabut. Instal ulang secara lokal dengan token baru.",
   terminal_query_failed: "Status terminal tidak dapat dipastikan. Koneksi tidak diizinkan.",
   terminal_install_consent_required: "Pilih terminal dan konfirmasikan risiko instalasi secara eksplisit.",

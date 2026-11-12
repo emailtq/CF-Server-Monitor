@@ -25,7 +25,7 @@
             <td><button class="admin-copy-value" @click="emitCopySpec(server, 'price', formatServerPrice(server))">{{ formatServerPrice(server) }}</button><small class="server-secondary admin-expiry-inline">{{ server.expire_date || '-' }}</small></td>
             <td class="admin-expiry-column">{{ server.expire_date || '-' }}</td>
             <td><div class="action-btns">
-              <span class="terminal-entry" tabindex="0" :aria-label="terminalReason(server)"><button @click="$emit('terminal', server)" class="btn btn-icon" :disabled="!terminalReady(server) || !!terminalOpening" :aria-label="trans.terminalOpen" :aria-describedby="'terminal-reason-' + server.id"><AdminIcon name="terminal" /></button><small :id="'terminal-reason-' + server.id" class="terminal-reason">{{ terminalReason(server) }}</small></span>
+              <span class="terminal-entry" tabindex="0" :aria-label="terminalReason(server)"><button @click="$emit('terminal', server)" class="btn btn-icon" :disabled="!terminalReady(server)" :aria-label="trans.terminalOpen" :aria-describedby="'terminal-reason-' + server.id"><AdminIcon name="terminal" /></button><small :id="'terminal-reason-' + server.id" class="terminal-reason">{{ terminalReason(server) }}</small></span>
               <button @click="$emit('copy-cmd', server.id)" class="btn btn-icon" :aria-label="trans.copy" :title="trans.installCommand"><AdminIcon name="download" /></button>
               <button @click="$emit('edit', server)" class="btn btn-icon" :aria-label="trans.edit" :title="trans.edit"><AdminIcon name="pencil" /></button>
               <button @click="$emit('renew', server)" class="btn btn-icon" :aria-label="trans.adminRenew" :title="trans.adminRenew"><AdminIcon name="calendar-clock" /></button>
@@ -57,7 +57,6 @@ const props = defineProps({
   activeTab: { type: String, default: 'servers' },
   selectedApiIndex: { type: Number, default: 0 },
   terminalStatuses: { type: Object, default: () => ({}) },
-  terminalOpening: { type: String, default: '' },
   latestAgentVersion: { type: String, default: '' },
   cacheRefreshing: { type: Boolean, default: false },
   copiedServerId: { type: [String, Number], default: null },
@@ -79,7 +78,7 @@ const terminalAvailable = computed(() => {
 })
 const terminalReady = server => {
   const status = props.terminalStatuses[server.id]
-  return terminalAvailable.value && status?.state === 'ready' && status.enabled && status.connected && status.supported
+  return terminalAvailable.value && status?.enabled === true && status.localEnabled !== false && ['ready', 'offline'].includes(status.state)
 }
 const terminalReason = server => {
   if (!terminalAvailable.value) return props.trans.terminal_origin_denied

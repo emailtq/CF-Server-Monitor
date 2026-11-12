@@ -134,7 +134,7 @@ const doFetch = async (url, init, timeoutMs = null) => {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    return await fetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal })
   } finally {
     clearTimeout(timer)
   }
@@ -151,7 +151,8 @@ const request = async (method, url, body, options = {}) => {
       method,
       headers,
       body: body != null ? JSON.stringify(body) : undefined,
-      credentials: 'include'
+      credentials: 'include',
+      signal: options.signal
     }, timeoutMs)
     return { ...(await handleResponse(res, { autoRedirect, baseUrl: base, responsePolicy: options.responsePolicy, requestOwner: options.requestOwner })), baseUrl: base }
   } catch (e) {
@@ -173,7 +174,8 @@ const fetchWithBase = async (baseUrl, url, options, method = 'GET', body = null)
       method,
       headers,
       body,
-      credentials: 'include'
+      credentials: 'include',
+      signal: options.signal
     }, timeoutMs)
     const result = await handleResponse(res, { autoRedirect, baseUrl, responsePolicy: options.responsePolicy, requestOwner: options.requestOwner })
     return { ...result, baseUrl }
