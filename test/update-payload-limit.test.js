@@ -34,7 +34,7 @@ test('handleUpdate rejects oversized payload before touching D1', async () => {
   assert.equal(dbTouched, false);
 });
 
-test('handleUpdate without Content-Length skips the size guard', async () => {
+test('handleUpdate without Content-Length still requires node credentials before looking up a server', async () => {
   let queriedId = '';
   const env = {
     API_SECRET: 'secret',
@@ -56,10 +56,8 @@ test('handleUpdate without Content-Length skips the size guard', async () => {
     { waitUntil() {} }
   );
 
-  assert.equal(response.status, 404);
-  assert.equal(response.headers.get('X-CFSM-Agent-Status'), 'server_not_found');
-  assert.equal(response.headers.get('Retry-After'), '300');
-  assert.equal(queriedId, 'payload-limit-test-server');
+  assert.equal(response.status, 401);
+  assert.equal(queriedId, '');
 });
 
 test('normalizeMetricSamples keeps only the latest samples before processing', () => {

@@ -69,8 +69,7 @@ function getJwtSecret(env, sys) {
     return sys.jwt_secret;
   }
 
-  const fallback = env.API_SECRET || 'default_jwt_secret_for_server_monitor';
-  return fallback.padEnd(32, 'x').substring(0, 64);
+  throw new Error('jwt_secret_missing');
 }
 
 function getCookieValue(request, name) {
@@ -95,10 +94,9 @@ function extractBearerToken(request) {
 }
 
 async function verifyToken(token, env, sys) {
-  if (!token) return false;
-  const secret = getJwtSecret(env, sys);
-
+  if (!token || !isValidJwtSecret(sys?.jwt_secret)) return false;
   try {
+    const secret = getJwtSecret(env, sys);
     const payload = await verifyJwt(token, secret);
     return payload !== null;
   } catch (e) {
@@ -128,8 +126,7 @@ export async function checkAuth(request, env, sys) {
 
 // Signature-only verification also permits logout to tombstone a never-used jti.
 export async function getTerminalJwtPrincipal(request, env, sys) {
-  if (!isValidJwtSecret(sys?.jwt_secret) || sys.jwt_secret === env.API_SECRET ||
-      sys.jwt_secret === getJwtSecret(env, {})) return null;
+  if (!isValidJwtSecret(sys?.jwt_secret) || sys.jwt_secret === env.API_SECRET) return null;
   const token = extractBearerToken(request) || getCookieValue(request, AUTH_COOKIE_NAME);
   if (!token) return null;
   try {

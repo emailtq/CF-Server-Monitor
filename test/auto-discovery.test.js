@@ -224,7 +224,7 @@ test('discoverServer fails silently without any name source', async () => {
   assert.equal(db.servers.length, 0);
 });
 
-test('handleUpdate keeps the original 404 for an unbound report when the switch is off', async () => {
+test('handleUpdate denies an unbound shared-secret report when the switch is off', async () => {
   clearServersListCache();
   const db = createFakeDb();
   const request = new Request('https://example.com/update', {
@@ -239,7 +239,7 @@ test('handleUpdate keeps the original 404 for an unbound report when the switch 
     { waitUntil() {} }
   );
 
-  assert.equal(response.status, 404);
+  assert.equal(response.status, 401);
   assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), null);
   assert.equal(response.headers.get('X-CFSM-Server-Id'), null);
   assert.deepEqual(db.state.inserted, []);
@@ -274,7 +274,7 @@ test('handleUpdate rejects an unbound report without metrics before creating a s
     { waitUntil() {} }
   );
 
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 401);
   assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), null);
   assert.equal(response.headers.get('X-CFSM-Server-Id'), null);
   assert.deepEqual(db.state.inserted, []);
@@ -282,7 +282,7 @@ test('handleUpdate rejects an unbound report without metrics before creating a s
   clearSiteSettingsCache();
 });
 
-test('handleUpdate creates the server once the payload is valid', async () => {
+test('handleUpdate rejects old shared-secret discovery even with valid metrics', async () => {
   clearServersListCache();
   clearSiteSettingsCache();
   const db = createFakeDb([], { auto_discovery: 'true' });
@@ -298,18 +298,16 @@ test('handleUpdate creates the server once the payload is valid', async () => {
     { waitUntil() {} }
   );
 
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), AUTO_DISCOVERY_MODE_CREATED);
-  assert.equal(db.state.inserted.length, 1);
-  assert.equal(db.servers.length, 1);
-  assert.equal(db.servers[0].name, 'web-01');
-  assert.equal(response.headers.get('X-CFSM-Server-Id'), db.servers[0].id);
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), null);
+  assert.equal(db.state.inserted.length, 0);
+  assert.equal(db.servers.length, 0);
+  assert.equal(response.headers.get('X-CFSM-Server-Id'), null);
   clearSiteSettingsCache();
 });
 
-// 建号已经成功，只是随后读详情失败：必须仍然回传 id，
-// 否则 Agent 下一次上报还是空 id，只会撞到同名服务器然后退出。
-test('handleUpdate still returns the new id when reloading the detail fails', async () => {
+// Retired shared-secret reports must not reach discovery, even if detail lookup would fail.
+test('handleUpdate never creates or exposes an ID through the retired discovery path', async () => {
   clearServersListCache();
   clearServerDetailCache();
   clearSiteSettingsCache();
@@ -327,10 +325,10 @@ test('handleUpdate still returns the new id when reloading the detail fails', as
     { waitUntil() {} }
   );
 
-  assert.equal(response.status, 404);
-  assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), AUTO_DISCOVERY_MODE_CREATED);
-  assert.equal(db.state.inserted.length, 1);
-  assert.equal(response.headers.get('X-CFSM-Server-Id'), db.servers[0].id);
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), null);
+  assert.equal(db.state.inserted.length, 0);
+  assert.equal(response.headers.get('X-CFSM-Server-Id'), null);
   clearSiteSettingsCache();
 });
 
@@ -353,8 +351,8 @@ test('handleUpdate refuses to write when the discovered name already exists', as
     { waitUntil() {} }
   );
 
-  assert.equal(response.status, 404);
-  assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), AUTO_DISCOVERY_MODE_REUSED);
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), null);
   assert.equal(response.headers.get('X-CFSM-Server-Id'), null);
   assert.deepEqual(db.state.inserted, []);
   assert.equal(db.servers.length, 1);

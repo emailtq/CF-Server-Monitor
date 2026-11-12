@@ -169,7 +169,7 @@ function makeSortOrderDb() {
 }
 
 const adminSys = {
-  username: 'admin'
+  username: 'admin', jwt_secret: 'x'.repeat(32)
 };
 const adminToken = await generateToken({ DB: makeSortOrderDb() }, adminSys);
 

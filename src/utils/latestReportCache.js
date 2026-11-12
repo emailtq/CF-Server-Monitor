@@ -6,6 +6,10 @@ import {
 // 普通 Worker isolate 内的尽力而为缓存；不同 isolate 之间不共享。
 const latestReportUpdates = new Map();
 
+export function clearLatestReportUpdate(serverId) {
+  latestReportUpdates.delete(serverId);
+}
+
 function normalizeTimestamp(value, fallback = 0) {
   const timestamp = Number(value);
   if (!Number.isFinite(timestamp) || timestamp <= 0) return fallback;

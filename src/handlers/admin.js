@@ -14,10 +14,12 @@ import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, n
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
-import { getTerminalJwtPrincipal } from '../middleware/auth.js';
+import { getTerminalJwtPrincipal, getTerminalAdminPrincipal } from '../middleware/auth.js';
 import { revokeTerminalAdmin } from '../database/terminal.js';
-import { handleTerminalAdminAction, disableTerminalAccess, notifyTerminalNodeRevoked } from './terminal.js';
-import { revokeTerminalNode } from '../database/terminal.js';
+import { handleTerminalAdminAction, disableTerminalAccess } from './terminal.js';
+import { ensureNodeToken, issueNodeToken } from '../database/nodeCredentials.js';
+import { notifyNodeCredentialsInvalidated } from '../utils/nodeCredentialNotify.js';
+import { clearNodeReportCache } from './update.js';
 import { loadNotificationConfig, saveNotificationConfig, prepareNotificationChannel, notificationChannelSettings, validateNotificationBackup, importNotificationConfig } from '../database/notifications.js';
 import { assertNotificationObject, maskNotificationConfig, NOTIFICATION_CONFIG_MAX_BYTES, notificationConfigError, migrateLegacyNotifications } from '../shared/notificationConfig.js';
 import { LEGACY_NOTIFICATION_FIELDS } from '../utils/settings.js';
@@ -269,13 +271,18 @@ async function deleteServer(db, id, env) {
       await db.prepare('DELETE FROM metrics_history_old WHERE server_id = ?').bind(id).run();
     }
 
-    await revokeTerminalNode(db, id);
-    await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
-    const terminalNode = await db.prepare('SELECT server_id FROM terminal_nodes WHERE server_id = ?').bind(id).first();
-    if (terminalNode) {
-      try { await notifyTerminalNodeRevoked(env, id); }
-      catch (_) { throw new AppError('terminal_broker_notification_failed', 503); }
-    }
+    // Retain a revoked tombstone: re-importing the same ID can never revive the old hash.
+    await db.batch([
+      db.prepare(`UPDATE terminal_nodes SET token_hash = ?, token_ciphertext = NULL, enabled = 0,
+        token_version = MIN(token_version + 1, 9007199254740991),
+        credential_version = MIN(credential_version + 1, 9007199254740991), updated_at = ? WHERE server_id = ?`)
+        .bind(`deleted:${crypto.randomUUID()}`, Date.now(), id),
+      db.prepare('DELETE FROM servers WHERE id = ?').bind(id)
+    ]);
+    clearServersListCache();
+    clearNodeReportCache(id);
+    try { await notifyNodeCredentialsInvalidated(env, id); }
+    catch (_) { throw new AppError('node_revocation_notification_failed', 503); }
   } catch (err) {
     throw err;
   }
@@ -588,7 +595,7 @@ const PUBLIC_ADMIN_ACTION_HANDLERS = {
 };
 
 export function sanitizeAdminSettings(fullSettings = {}, notificationConfigAuthoritative = false) {
-  const { jwt_secret, password, notification_config, ...safeSettings } = fullSettings || {};
+  const { jwt_secret, password, notification_config, api_secret, ...safeSettings } = fullSettings || {};
   if (notificationConfigAuthoritative) {
     for (const field of ['tg_bot_token', 'notification_webhook_url', 'notification_webhook_headers']) delete safeSettings[field];
   }
@@ -603,8 +610,7 @@ async function handleGetSettingsAction({ env, sys, loadFullSettings }) {
   const notificationConfigAuthoritative = Boolean(await env.DB.prepare("SELECT 1 AS present FROM settings WHERE key = 'notification_config'").first());
   return createSuccessResponse({
     success: true,
-    settings: sanitizeAdminSettings(fullSettings, notificationConfigAuthoritative),
-    api_secret: env.API_SECRET
+    settings: sanitizeAdminSettings(fullSettings, notificationConfigAuthoritative)
   });
 }
 
@@ -915,8 +921,10 @@ async function applyImportedSettings({ env, sys, settings, notificationConfig, s
 }
 
 export async function handleAdminAPI(request, env, sys, loadFullSettings = null, ctx = null) {
+  let nodeCredentialAction = false;
   try {
     const data = await request.json();
+    nodeCredentialAction = data.action === 'node_read_install' || data.action === 'node_reset_token';
 
     const publicActionHandler = PUBLIC_ADMIN_ACTION_HANDLERS[data.action];
     if (publicActionHandler) {
@@ -924,7 +932,28 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     }
 
     if (!await checkAuth(request, env, sys)) {
+      if (nodeCredentialAction) return Response.json({error:'node_login_required'}, {status:401, headers:{'Cache-Control':'no-store'}});
       return simpleAuthResponse();
+    }
+
+    if (nodeCredentialAction) {
+      const headers = {'Cache-Control':'no-store'};
+      if (new URL(request.url).protocol !== 'https:' || request.headers.get('Origin') !== new URL(request.url).origin) return Response.json({error:'node_origin_denied'}, {status:403, headers});
+      if (typeof data.serverId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(data.serverId)) return Response.json({error:'node_invalid_id'}, {status:400, headers});
+      const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'site_options'").first();
+      const authority = row ? JSON.parse(row.value) : {};
+      if (!await getTerminalAdminPrincipal(request, env, authority)) return Response.json({error:'node_login_required'}, {status:401, headers});
+      if (!await env.DB.prepare('SELECT id FROM servers WHERE id = ?').bind(data.serverId).first()) return Response.json({error:'node_missing'}, {status:404, headers});
+      const issued = data.action === 'node_reset_token'
+        ? await issueNodeToken(env.DB, data.serverId, Date.now(), authority.jwt_secret)
+        : await ensureNodeToken(env.DB, data.serverId, authority.jwt_secret);
+      if (issued.needsRotation) return Response.json({error:'node_token_reset_required'}, {status:409, headers});
+      if (data.action === 'node_reset_token') {
+        clearNodeReportCache(data.serverId);
+        try { await notifyNodeCredentialsInvalidated(env, data.serverId); }
+        catch (_) { return Response.json({error:'node_revocation_notification_failed', revoked:true}, {status:503, headers}); }
+      }
+      return Response.json(issued, {headers});
     }
 
     const terminalAction = await handleTerminalAdminAction({request, env, sys, data});
@@ -1157,6 +1186,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           region,
           iface: networkInterfaces.value
         });
+        await issueNodeToken(env.DB, id, Date.now(), sys.jwt_secret);
       } catch (e) {
         return handleServerMutationError(env.DB, e, 'serverAddFailed');
       }
@@ -1470,6 +1500,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             skippedIds.push(server.id);
             continue;
           }
+          const issued = await issueNodeToken(env.DB, server.id, Date.now(), sys.jwt_secret);
+          clearNodeReportCache(server.id);
+          if (issued.tokenVersion > 1) await notifyNodeCredentialsInvalidated(env, server.id);
           imported++;
           serverIdMap.set(server.id, server.id);
         } catch (e) {
@@ -1516,6 +1549,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     return createBadRequestResponse('unknownAction');
     
   } catch (e) {
+    if (nodeCredentialAction) return Response.json({error:'node_credential_unavailable'}, {status:503, headers:{'Cache-Control':'no-store'}});
     if (e instanceof SyntaxError) return createBadRequestResponse('invalidRequest');
     console.error('Admin API 错误:', e);
     return createErrorResponse(e);

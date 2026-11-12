@@ -13,7 +13,7 @@ export async function issueTestTerminalToken(db, serverId, now = Date.now()) {
   return {...issued, enabled:true};
 }
 
-export async function harness() {
+export async function harness({apiSecret = 'test-report-secret'} = {}) {
   const source = `
     import worker from './src/index.js';
     import { TerminalBroker } from './src/durable/TerminalBroker.js';
@@ -48,7 +48,30 @@ export async function harness() {
     }
     export class TestMetricsBroadcaster extends MetricsBroadcaster {
       constructor(state, env) {
-        super(state, {...env, DB:countedDb(env.DB)});
+        let broadcaster;
+        const context=new Proxy(state,{get(target,key) {
+          if(key==='storage' && broadcaster?.missingReportStorage) return undefined;
+          if(key==='storage') return new Proxy(target.storage,{get(storage,operation) {
+            if(operation==='setAlarm' && broadcaster?.missingReportSetAlarm) return undefined;
+            if(operation==='setAlarm') return (...args)=> {if(broadcaster?.failReportAlarm) throw new Error('test report alarm outage');return storage.setAlarm(...args);};
+            return typeof storage[operation]==='function'?storage[operation].bind(storage):storage[operation];
+          }});
+          return typeof target[key]==='function'?target[key].bind(target):target[key];
+        }});
+        super(context, {...env, DB:countedDb(env.DB)});
+        broadcaster=this;
+        const db=this.env.DB,self=this;
+        this.env.DB=new Proxy(db,{get(target,key) {
+          if(key==='prepare') return sql=> {
+            if(sql.includes('n.token_version') && self.failNodeAuth) throw new Error('test node authority outage');
+            const statement=target.prepare(sql);
+            if(sql.includes('n.token_version') && self.delayAuthMs) return {bind(...args) {
+              const bound=statement.bind(...args);return {async first() {const row=await bound.first();clockOffset+=self.delayAuthMs;self.delayAuthMs=0;return row;}};
+            }};
+            return statement;
+          };
+          return typeof target[key]==='function'?target[key].bind(target):target[key];
+        }});
         const ns=this.env.TERMINAL_BROKER;
         this.env.TERMINAL_BROKER={idFromName:id=>ns.idFromName(id),get:id=>({fetch:async request=>{
           if (new URL(request.url).pathname==='/local-disable') {
@@ -60,6 +83,14 @@ export async function harness() {
         }})};
       }
       async fetch(request) {
+        if (new URL(request.url).pathname === '/test/report-alarm-missing') {this.missingReportStorage=new URL(request.url).searchParams.get('storage')==='1';this.missingReportSetAlarm=!this.missingReportStorage;return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-alarm-fail') {this.failReportAlarm=true;return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-auth-delay') {this.delayAuthMs=Number(new URL(request.url).searchParams.get('advance'));return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-auth-fail') {this.failNodeAuth=new URL(request.url).searchParams.get('enabled')!=='0';return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-alarm') {await this.state.storage.deleteAlarm();await this.alarm();return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-snapshot') return Response.json({alarm:await this.state.storage.getAlarm(),attachments:this._getAgentReportWebSockets().map(ws=>ws.deserializeAttachment())});
+        if (new URL(request.url).pathname === '/test/report-corrupt') {for(const ws of this._getAgentReportWebSockets()){const a=ws.deserializeAttachment();delete a.tokenVersion;delete a.leaseUntil;ws.serializeAttachment(a);}return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-config') return this._handleAgentConfigChanged(new Request('http://internal/agent-config-changed',{method:'POST',body:JSON.stringify({serverId:new URL(request.url).searchParams.get('node')||'node-a'})}));
         if (new URL(request.url).pathname === '/test/report-stats') return Response.json({...counts,queues:this.terminalObservationQueues.size,observations:this.terminalObservations.size,notificationPending:!!this.notificationPending});
         if (new URL(request.url).pathname === '/test/report-fail') {const q=new URL(request.url).searchParams;this.failNode=q.get('node');this.failNotifications=Number(q.get('count'));return new Response('OK');}
         if (new URL(request.url).pathname === '/test/report-pause') {this.pauseNode=new URL(request.url).searchParams.get('node');return new Response('OK');}
@@ -184,7 +215,7 @@ export async function harness() {
       const url = new URL(request.url);
       if (url.pathname === '/test/worker-stats') return Response.json(counts);
       if (url.pathname === '/test/report-stats') return env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global')).fetch(request);
-      if (['/test/report-clock','/test/report-rebuild','/test/report-fail','/test/report-pause','/test/report-release'].includes(url.pathname)) return env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global')).fetch(request);
+      if (url.pathname.startsWith('/test/report-')) return env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global')).fetch(request);
       if (url.pathname === '/test/cleanup') return terminalDatabase.cleanupTerminalRecords(countedDb(env.DB), Number(url.searchParams.get('now'))).then(() => new Response('OK'));
       if (url.pathname === '/test/cron') {await worker.scheduled({cron:url.searchParams.get('cron')}, {...env,DB:countedDb(env.DB)}, ctx); return new Response('OK');}
       if (url.pathname.startsWith('/test/')) {
@@ -194,7 +225,7 @@ export async function harness() {
     }};
   `;
   const output = await build({ stdin: { contents: source, resolveDir: process.cwd(), sourcefile: 'terminal-test.js' }, bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*'] });
-  const mf = new Miniflare({ modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: {API_SECRET: 'test-report-secret'} });
+  const mf = new Miniflare({ modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: apiSecret ? {API_SECRET:apiSecret} : {} });
   const db = await mf.getD1Database('DB');
   const { initDatabase } = await import('../src/database/schema.js?fixture=' + crypto.randomUUID());
   await initDatabase(db);

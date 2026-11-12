@@ -153,11 +153,11 @@ test('terminal authorization rejects legacy, non-admin, expired and malformed JW
 });
 
 test('terminal authentication never uses the reporting-secret fallback or a missing independent secret', async () => {
-  const fallbackToken = await generateToken(env, {});
-  assert.equal(await checkAuth(requestWithToken(fallbackToken), env, {}), true);
+  await assert.rejects(generateToken(env, {}), /jwt_secret_missing/);
+  const fallbackToken = await generateToken({}, {jwt_secret:env.API_SECRET.padEnd(32, 'x').substring(0, 64)});
+  assert.equal(await checkAuth(requestWithToken(fallbackToken), env, {}), false);
   assert.equal(await getTerminalAdminPrincipal(requestWithToken(fallbackToken), env, {}), null);
   assert.equal(await getTerminalAdminPrincipal(requestWithToken(fallbackToken), env, sys), null);
-  assert.equal(await getTerminalAdminPrincipal(requestWithToken(fallbackToken), env, { jwt_secret: env.API_SECRET.padEnd(32, 'x').substring(0, 64) }), null);
   const valid = await generateToken(env, sys);
   assert.equal(await getTerminalAdminPrincipal(requestWithToken(valid), env, { jwt_secret: 'short' }), null);
 });

@@ -14,6 +14,7 @@ import { handleUpdate } from '../src/handlers/update.js';
 import { MetricsBroadcaster } from '../src/durable/MetricsBroadcaster.js';
 import { generateToken } from '../src/middleware/auth.js';
 import { clearServerDetailCache } from '../src/utils/cache.js';
+import { hashNodeToken } from '../src/database/nodeCredentials.js';
 
 // MetricsBroadcaster 构造时会用到 Workers 运行时的 WebSocketRequestResponsePair。
 globalThis.WebSocketRequestResponsePair = class WebSocketRequestResponsePair {
@@ -40,6 +41,8 @@ function createSettingsDb({ ua = DEFAULT_USER_AGENT, server = null } = {}) {
         return statement;
       },
       async first() {
+        if (text.includes('FROM terminal_nodes n')) return args[0] === await hashNodeToken('a'.repeat(64))
+          ? {server_id:server.id, token_version:1, credential_version:1} : null;
         if (/^SELECT value FROM settings WHERE key = 'site_options'$/.test(text)) {
           return { value: JSON.stringify(siteOptions) };
         }
@@ -227,17 +230,18 @@ test('POST /update 只在认证且配置协商成功时返回 X-Ua', async () =>
   const server = createAgentServer();
   const db = createSettingsDb({ ua: 'MyAgent/1.0', server });
   const env = { API_SECRET: 'secret', DB: db };
-  const report = (secret) => new Request('https://example.com/update', {
+  const report = (token) => new Request('https://example.com/update', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
       'X-Agent-Config-Schema': '7',
       'X-Agent-Config-Md5': 'none'
     },
-    body: JSON.stringify({ id: server.id, secret, metrics: { cpu: '1' } })
+    body: JSON.stringify({ id: server.id, metrics: { cpu: '1' } })
   });
 
-  const ok = await handleUpdate(report('secret'), env, { waitUntil() {} });
+  const ok = await handleUpdate(report('a'.repeat(64)), env, { waitUntil() {} });
   assert.ok(ok.status === 200 || ok.status === 204, `unexpected status ${ok.status}`);
   assert.equal(ok.headers.get('X-Ua'), 'MyAgent/1.0');
 

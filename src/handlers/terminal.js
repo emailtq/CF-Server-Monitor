@@ -2,6 +2,7 @@ import { getTerminalAdminPrincipal } from '../middleware/auth.js';
 import { enableTerminalNode, verifyTerminalNodeToken, revokeTerminalNode, terminalAuthorizationKey, terminalObservationMaxAge } from '../database/terminal.js';
 import { issueNodeToken, readNodeToken, ensureNodeToken } from '../database/nodeCredentials.js';
 import { saveSiteOptions } from '../utils/settings.js';
+import { notifyNodeCredentialsInvalidated } from '../utils/nodeCredentialNotify.js';
 import { validateTerminalSize, TERMINAL_LIMITS } from '../shared/terminalProtocol.js';
 
 const ACTIONS = new Set(['terminal_read_install', 'terminal_enable_install', 'terminal_prepare_install', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close']);
@@ -123,7 +124,7 @@ export async function handleTerminalAdminAction({request, env, sys, data}) {
         : await ensureNodeToken(env.DB, data.serverId, settings.jwt_secret);
       if (issued.needsRotation) return response('terminal_install_reissue_required', 409);
       if (!await enableTerminalNode(env.DB, data.serverId, issued.version)) return response('terminal_install_reissue_required', 409);
-      if (data.action === 'terminal_prepare_install') await notifyTerminalNodeRevoked(env, data.serverId);
+      if (data.action === 'terminal_prepare_install') await notifyNodeCredentialsInvalidated(env, data.serverId);
       return Response.json({...issued, enabled:true}, {headers:{'Cache-Control':'no-store'}});
     }
     if (data.action === 'terminal_status') {

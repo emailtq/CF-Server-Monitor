@@ -14,13 +14,35 @@ globalThis.WebSocketRequestResponsePair = class WebSocketRequestResponsePair {
   }
 };
 
-function makeBroadcaster(webSockets = [], env = { DB: {} }) {
+function agentSocket(attachment, actions = {}) {
+  let current = {tokenVersion:1, leaseUntil:Date.now() + 60000, ...attachment};
+  return {...actions, deserializeAttachment:() => current, serializeAttachment(value) {
+    current = value;
+    actions.serializeAttachment?.(value);
+  }};
+}
+
+function resolveContext(broadcaster, actions, attachment, data) {
+  const ws = agentSocket(attachment, actions);
+  return broadcaster._resolveAgentContext(ws, ws.deserializeAttachment(), data);
+}
+
+function makeBroadcaster(webSockets = [], env = { DB: makeSettingsDb({}) }) {
+  webSockets = webSockets.map(ws => ws.deserializeAttachment()?.kind === 'agent-report'
+    ? agentSocket(ws.deserializeAttachment(), {send:ws.send?.bind(ws), close:ws.close?.bind(ws)}) : ws);
   return new MetricsBroadcaster({
     setWebSocketAutoResponse() {},
     getWebSockets() {
       return webSockets;
     },
     storage: {
+      alarm: null,
+      async setAlarm(deadline) {
+        this.alarm = deadline;
+      },
+      async getAlarm() {
+        return this.alarm;
+      },
       async get() {
         return null;
       },
@@ -34,12 +56,13 @@ function makeSettingsDb(settingsSource) {
     ? settingsSource
     : () => settingsSource;
   return {
-    prepare() {
+    prepare(sql) {
       return {
         bind() {
           return this;
         },
         async first() {
+          if (sql.includes('n.token_version')) return {server_id:'server-1', token_version:1, credential_version:1};
           return {
             value: JSON.stringify({
               jwt_secret: 'x'.repeat(32),
@@ -106,6 +129,7 @@ function makeWebSocketUpgradeRequest(url, headers = {}) {
   return new Request(url, {
     headers: {
       Upgrade: 'websocket',
+      ...(new URL(url).pathname.endsWith('/update') ? {Authorization:`Bearer ${'a'.repeat(64)}`} : {}),
       ...headers
     }
   });
@@ -420,7 +444,7 @@ test('WSS agent context uses current report interval from payload', async () => 
     time: Date.now()
   });
   let serialized = null;
-  const context = await broadcaster._resolveAgentContext({
+  const context = await resolveContext(broadcaster, {
     serializeAttachment(value) {
       serialized = value;
     }
@@ -461,7 +485,7 @@ test('WSS agent context keeps an authenticated session when server lookup throws
   });
   let serialized = null;
 
-  const context = await broadcaster._resolveAgentContext({
+  const context = await resolveContext(broadcaster, {
     serializeAttachment(value) {
       serialized = value;
     },
@@ -484,7 +508,7 @@ test('WSS agent context keeps an authenticated session when server lookup throws
   assert.equal(closed.length, 0);
 });
 
-test('WSS agent context asks the agent to retry when lookup throws before auth', async () => {
+test('WSS agent context rejects anonymous legacy attachments even during a database outage', async () => {
   const sent = [];
   const closed = [];
   const broadcaster = makeBroadcaster([], {
@@ -502,7 +526,7 @@ test('WSS agent context asks the agent to retry when lookup throws before auth',
     }
   });
 
-  const context = await broadcaster._resolveAgentContext({
+  const context = await resolveContext(broadcaster, {
     serializeAttachment() {},
     send(message) {
       sent.push(JSON.parse(message));
@@ -519,8 +543,8 @@ test('WSS agent context asks the agent to retry when lookup throws before auth',
   });
 
   assert.equal(context, null);
-  assert.equal(sent[0].code, 503);
-  assert.equal(closed[0].code, 1013);
+  assert.equal(sent[0].code, 401);
+  assert.equal(closed[0].code, 1008);
 });
 
 test('WSS agent report rejects oversized frames before parsing', async () => {
@@ -566,10 +590,8 @@ test('WSS agent context closes and clears caches when server no longer exists', 
   broadcaster.agentHistoryWrites.set('deleted-server-test', {});
   broadcaster.latestReportUpdates.set('deleted-server-test', {});
 
-  const context = await broadcaster._resolveAgentContext({
-    serializeAttachment() {
-      throw new Error('attachment should not be serialized for a deleted server');
-    },
+  const context = await resolveContext(broadcaster, {
+    serializeAttachment() {},
     send(message) {
       sent.push(JSON.parse(message));
     },
@@ -660,7 +682,7 @@ test('WSS schema 4 agent with matching legacy MD5 does not receive config again'
   assert.equal(Object.prototype.hasOwnProperty.call(ack, 'payload'), false);
 });
 
-test('WSS agent config push uses string body and structured payload', () => {
+test('WSS agent config push uses string body and structured payload', async () => {
   const sent = [];
   const ws = {
     deserializeAttachment() {
@@ -678,7 +700,7 @@ test('WSS agent config push uses string body and structured payload', () => {
   };
   const broadcaster = makeBroadcaster([ws]);
 
-  const result = broadcaster._pushAgentConfigFrame('server-1', makeDescriptor());
+  const result = await broadcaster._pushAgentConfigFrame('server-1', makeDescriptor());
 
   assert.deepEqual(result, { matched: 1, delivered: 1 });
   assert.equal(sent.length, 1);
@@ -691,7 +713,7 @@ test('WSS agent config push uses string body and structured payload', () => {
   assert.equal(Object.prototype.hasOwnProperty.call(sent[0], 'config'), false);
 });
 
-test('WSS agent config push keeps legacy schema without connection mode', () => {
+test('WSS agent config push keeps legacy schema without connection mode', async () => {
   const sent = [];
   const ws = {
     deserializeAttachment() {
@@ -715,7 +737,7 @@ test('WSS agent config push keeps legacy schema without connection mode', () => 
     [3, makeDescriptor('cccccccccccccccccccccccccccccccc', 3)]
   ]);
 
-  const result = broadcaster._pushAgentConfigFrame('server-1', descriptors);
+  const result = await broadcaster._pushAgentConfigFrame('server-1', descriptors);
 
   assert.deepEqual(result, { matched: 1, delivered: 1 });
   assert.equal(sent[0].config_schema, 3);
@@ -806,12 +828,14 @@ test('Agent WSS closes on the first report after entering a disabled UTC hour', 
   const sent = [];
   const closed = [];
   let attachment = {
+    tokenVersion:1, leaseUntil:Date.now() + 60000,
     kind: 'agent-report',
     authenticated: true,
     serverId: 'server-1',
     wssScheduleCheckAfter: Date.now() - 1
   };
   const ws = {
+    deserializeAttachment() {return attachment;},
     serializeAttachment(value) {
       attachment = value;
     },
@@ -1371,3 +1395,65 @@ test('WSS history persistence keeps samples received during a D1 flush for the n
     Date.now = originalNow;
   }
 });
+
+test('WSS history delayed older generation throttle cannot replace the current generation state', async () => {
+  const broadcaster = makeBroadcaster([], {DB:{prepare() {throw new Error('throttle must not write D1');}}});
+  const now = Date.now();
+  const newer = {tokenVersion:2, lastD1WriteTs:now, pendingHistoryAggregate:{max:{net_in_speed:4096}, avg:{cpu:{sum:24,count:2}}}};
+  const before = structuredClone(newer);
+  broadcaster.agentHistoryWrites.set('server-1', newer);
+  const ws = agentSocket({serverId:'server-1', authenticated:true, tokenVersion:1, lastD1WriteTs:now, reportIntervalMs:60000});
+  const result = await broadcaster._persistAgentHistoryIfDue(ws, ws.deserializeAttachment(), {
+    serverId:'server-1', historyPartitionId:42, metrics:{cpu:12}, timestamp:now, reportIntervalMs:60000
+  });
+  assert.equal(result.persisted, false);
+  assert.equal(broadcaster.agentHistoryWrites.get('server-1'), newer);
+  assert.deepEqual(newer, before);
+});
+
+for (const failure of ['none', 'd1', 'attachment']) {
+  for (const replaces of [false, true]) {
+    test(`WSS history old D1 ${failure === 'none' ? 'completion' : failure + ' failure'} preserves ${replaces ? 'newer' : 'removed'} map state without closing the socket`, async () => {
+      let started, release;
+      let d1Failed = false;
+      const pending = new Promise(resolve => {started = resolve;});
+      const db = {
+        prepare() {
+          return {bind() {
+            return {run() {
+              started();
+              return new Promise((resolve, reject) => {release = () => {
+                d1Failed = failure === 'd1';
+                if (d1Failed) reject(new Error('test delayed D1 failure'));
+                else resolve({meta:{changes:1}});
+              };});
+            }};
+          }};
+        }
+      };
+      const broadcaster = makeBroadcaster([], {DB:db});
+      const now = Date.now();
+      const ws = agentSocket({serverId:'server-1', authenticated:true, tokenVersion:1, lastD1WriteTs:now - 61000, reportIntervalMs:60000}, {
+        serializeAttachment() {if (failure === 'attachment') throw new Error('test attachment failure after D1');}
+      });
+      const write = broadcaster._persistAgentHistoryIfDue(ws, ws.deserializeAttachment(), {
+        serverId:'server-1', historyPartitionId:42, metrics:{cpu:12}, timestamp:now, reportIntervalMs:60000
+      });
+      const completion = failure === 'attachment' ? assert.rejects(write, /test attachment failure after D1/) : write;
+      await pending;
+      const newer = {tokenVersion:2, lastD1WriteTs:now, pendingHistoryAggregate:{max:{net_in_speed:8192}, avg:{cpu:{sum:42,count:3}}}};
+      const before = structuredClone(newer);
+      if (replaces) broadcaster.agentHistoryWrites.set('server-1', newer);
+      else broadcaster.agentHistoryWrites.delete('server-1');
+      release();
+      const result = await completion;
+      if (failure === 'none') assert.equal(result.persisted, true);
+      assert.equal(d1Failed, failure === 'd1');
+      assert.equal(ws.deserializeAttachment().authenticated, true);
+      if (replaces) {
+        assert.equal(broadcaster.agentHistoryWrites.get('server-1'), newer);
+        assert.deepEqual(newer, before);
+      } else assert.equal(broadcaster.agentHistoryWrites.has('server-1'), false);
+    });
+  }
+}

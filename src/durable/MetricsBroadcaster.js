@@ -13,6 +13,7 @@
 // - Agent 上报连接使用标准 WebSocket API，避免高频指标消息计为 hibernation wakeup。
 
 import { saveMetricsHistory } from '../database/schema.js';
+import { authenticateNodeRequest, hasReportCredentials } from '../middleware/nodeAuth.js';
 import { validTerminalObservation, saveTerminalObservation, terminalObservationMaxAge } from '../database/terminal.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
@@ -515,6 +516,8 @@ export class MetricsBroadcaster {
   }
 
   _closeWsWithError(ws, message, code = 400, extra = {}, closeCode = WS_POLICY_VIOLATION, closeReason = message) {
+    const attachment = ws.deserializeAttachment?.();
+    if (attachment?.kind === AGENT_REPORT_KIND) ws.serializeAttachment({...attachment, authenticated:false, leaseUntil:0});
     this._sendWsJson(ws, {
       type: 'error',
       ts: Date.now(),
@@ -622,8 +625,7 @@ export class MetricsBroadcaster {
       }
       return {
         ...payload,
-        id: message.id ?? payload.id,
-        secret: message.secret ?? payload.secret
+        id: message.id !== undefined ? message.id : payload.id
       };
     }
     return message;
@@ -692,9 +694,49 @@ export class MetricsBroadcaster {
     return server;
   }
 
+  _hasAgentLease(ws) {
+    const attachment = ws.deserializeAttachment() || {};
+    const now = Date.now();
+    if (attachment.authenticated && this._isValidServerId(attachment.serverId) &&
+        Number.isSafeInteger(attachment.tokenVersion) && attachment.tokenVersion > 0 &&
+        Number.isSafeInteger(attachment.leaseUntil) && now < attachment.leaseUntil && attachment.leaseUntil <= now + 60000) return true;
+    this._closeWsWithError(ws, 'Node authorization expired', 401);
+    return false;
+  }
+
+  async _authorizeAgentSocket(ws, force = false, renew = true) {
+    const attachment = ws.deserializeAttachment() || {};
+    const checkedAt = Date.now();
+    if (!attachment.authenticated || !this._isValidServerId(attachment.serverId) ||
+        !Number.isSafeInteger(attachment.tokenVersion) || attachment.tokenVersion < 1 ||
+        !Number.isSafeInteger(attachment.leaseUntil) || attachment.leaseUntil > checkedAt + 60000) return this._hasAgentLease(ws);
+    if (!force && checkedAt < attachment.leaseUntil - 30000) return true;
+    try {
+      const row = await this.env.DB.prepare(`SELECT n.token_version FROM terminal_nodes n
+        JOIN servers s ON s.id = n.server_id WHERE n.server_id = ?`).bind(attachment.serverId).first();
+      const current = ws.deserializeAttachment() || {};
+      if (!current.authenticated || current.serverId !== attachment.serverId || current.tokenVersion !== attachment.tokenVersion ||
+          !row || row.token_version !== attachment.tokenVersion) {
+        this._closeWsWithError(ws, 'Node token revoked', 401);
+        return false;
+      }
+      if (!renew) return this._hasAgentLease(ws);
+      // Anchor the deadline before the D1 read; delayed reads cannot mint a longer lease.
+      if (Date.now() >= checkedAt + 60000) return this._hasAgentLease(ws);
+      ws.serializeAttachment({...current, leaseUntil:checkedAt + 60000});
+      if (!await this._scheduleAgentWssHourAlarm()) {
+        this._closeWsWithError(ws, 'Authorization alarm unavailable', 503);
+        return false;
+      }
+      return this._hasAgentLease(ws);
+    } catch (_) {
+      // An outage only consumes the existing lease; neither caches nor attachments renew it.
+      return this._hasAgentLease(ws);
+    }
+  }
+
   async _resolveAgentContext(ws, attachment, data) {
-    const rawServerId = data.id ?? attachment.serverId;
-    const serverId = typeof rawServerId === 'string' ? rawServerId.trim() : String(rawServerId || '').trim();
+    const serverId = data.id !== undefined ? data.id : attachment.serverId;
     if (!this._isValidServerId(serverId)) {
       this._closeWsWithError(ws, 'Invalid server ID', 400);
       return null;
@@ -705,23 +747,17 @@ export class MetricsBroadcaster {
       return null;
     }
 
-    const hasSecret = Object.prototype.hasOwnProperty.call(data, 'secret');
-    if (!attachment.authenticated || hasSecret) {
-      if (data.secret !== this.env.API_SECRET) {
-        this._closeWsWithError(ws, 'Invalid secret', 401);
-        return null;
-      }
-    }
+    if (!await this._authorizeAgentSocket(ws)) return null;
+    attachment = ws.deserializeAttachment();
 
-    // 不永久信任附件：每次上报都走 120s 缓存复核，服务器删除后最多 120s 内自动断开。
+    // Cache only metrics/config metadata; the independent credential lease grants authority.
     let serverDetail;
     try {
       serverDetail = await this._getAgentServerDetail(serverId);
     } catch (e) {
-      // 查询异常不等于服务器被删除：已认证会话用附件续期，绝不因为 D1 抖动踢掉健康连接。
-      // 未认证会话无法续期，用 503 + 1013 让 Agent 稍后重试。
+      // Metadata outages may consume an unexpired lease, never extend authorization.
       console.warn('[update-ws] Server detail lookup failed:', e?.message || e);
-      if (attachment.authenticated && attachment.historyPartitionId) {
+      if (attachment.authenticated && Date.now() < attachment.leaseUntil && attachment.historyPartitionId) {
         serverDetail = { id: serverId, history_partition_id: attachment.historyPartitionId };
       } else {
         this._closeWsWithError(ws, 'Service unavailable', 503, { text: 'service_unavailable' }, WS_TRY_AGAIN_LATER, 'Service unavailable');
@@ -774,7 +810,7 @@ export class MetricsBroadcaster {
         ? attachedWssReportIntervalMs
         : this._getWssReportIntervalMs(serverDetail));
     const nextAttachment = {
-      ...attachment,
+      ...ws.deserializeAttachment(),
       kind: AGENT_REPORT_KIND,
       authenticated: true,
       serverId,
@@ -785,6 +821,7 @@ export class MetricsBroadcaster {
       configSchema: agentConfig.schema,
       configMd5: agentConfig.md5
     };
+    if (!this._hasAgentLease(ws)) return null;
     ws.serializeAttachment(nextAttachment);
 
     return {
@@ -861,7 +898,7 @@ export class MetricsBroadcaster {
     }
   }
 
-  _pushAgentConfigFrame(serverId, descriptors) {
+  async _pushAgentConfigFrame(serverId, descriptors) {
     let delivered = 0;
     let matched = 0;
 
@@ -875,7 +912,7 @@ export class MetricsBroadcaster {
     };
 
     for (const ws of this._getAgentReportWebSockets()) {
-      const attachment = ws.deserializeAttachment() || {};
+      let attachment = ws.deserializeAttachment() || {};
       if (
         attachment.kind !== AGENT_REPORT_KIND ||
         !attachment.authenticated ||
@@ -884,6 +921,8 @@ export class MetricsBroadcaster {
         continue;
       }
       matched += 1;
+      if (!await this._authorizeAgentSocket(ws, true)) continue;
+      attachment = ws.deserializeAttachment();
 
       const descriptor = descriptorForSchema(attachment.configSchema);
       if (!descriptor) continue;
@@ -956,22 +995,33 @@ export class MetricsBroadcaster {
   }
 
   _nextUtcHourAlarmTime() {
-    const nextHour = new Date();
+    const nextHour = new Date(Date.now());
     nextHour.setUTCMinutes(60, 0, 0);
     return nextHour.getTime();
   }
 
   async _scheduleAgentWssHourAlarm() {
-    if (!this.state?.storage || typeof this.state.storage.setAlarm !== 'function') return;
+    if (!this.state?.storage || typeof this.state.storage.setAlarm !== 'function') return false;
     try {
-      await this.state.storage.setAlarm(this._nextUtcHourAlarmTime());
+      const leases = this._getAgentReportWebSockets().map(ws => ws.deserializeAttachment()).filter(attachment => attachment?.authenticated)
+        .map(attachment => attachment.leaseUntil || Date.now());
+      if (!leases.length) return true;
+      await this.state.storage.setAlarm(Math.min(this._nextUtcHourAlarmTime(), ...leases));
+      return true;
     } catch (e) {
       console.warn('[update-ws] Failed to schedule WSS hour alarm:', e?.message || e);
+      return false;
     }
   }
 
   async alarm() {
-    const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
+    for (const ws of this._getAgentReportWebSockets()) {
+      if (!this._hasAgentLease(ws)) continue;
+      await this._authorizeAgentSocket(ws, true, false);
+    }
+    let settings;
+    try { settings = await loadSiteSettings(this.env.DB, { forceRefresh: true }); }
+    catch (_) { await this._rescheduleAgentAuthorization(); return; }
     const scheduleState = getWssReportScheduleState(settings);
     if (!scheduleState.configured) {
       this._closeAgentReportWebSockets();
@@ -982,8 +1032,13 @@ export class MetricsBroadcaster {
       return;
     }
     if (this._getAgentReportWebSockets().length > 0) {
-      await this._scheduleAgentWssHourAlarm();
+      await this._rescheduleAgentAuthorization();
     }
+  }
+
+  async _rescheduleAgentAuthorization() {
+    if (await this._scheduleAgentWssHourAlarm()) return;
+    for (const ws of this._getAgentReportWebSockets()) this._closeWsWithError(ws, 'Authorization alarm unavailable', 503);
   }
 
   async _handleAgentConfigChanged(request) {
@@ -1042,7 +1097,7 @@ export class MetricsBroadcaster {
       if (legacyDescriptor) descriptors.set(schemaVersion, legacyDescriptor);
     }
 
-    const result = this._pushAgentConfigFrame(serverId, descriptors);
+    const result = await this._pushAgentConfigFrame(serverId, descriptors);
     return new Response(JSON.stringify({ ok: true, ...result }), {
       headers: {
         'Cache-Control': 'no-store',
@@ -1223,7 +1278,10 @@ export class MetricsBroadcaster {
         continue;
       }
 
+      if (!await this._authorizeAgentSocket(ws)) continue;
+
       const wssReportIntervalMs = await this._getAgentHintReportIntervalMs(attachment);
+      if (!this._hasAgentLease(ws)) continue;
       const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(
         wssReportIntervalMs,
         attachment.reportIntervalMs,
@@ -1244,7 +1302,11 @@ export class MetricsBroadcaster {
   async _persistAgentHistoryIfDue(ws, attachment, payload) {
     const serverId = String(payload.serverId || '');
     const now = Date.now();
-    const state = this.agentHistoryWrites.get(serverId) || {};
+    const tokenVersion = attachment.tokenVersion;
+    const previous = this.agentHistoryWrites.get(serverId);
+    const state = previous?.tokenVersion === tokenVersion ? previous || {} : {tokenVersion};
+    // Register once, monotonically; detached in-flight states must never re-enter the map.
+    if (!previous || tokenVersion > previous.tokenVersion) this.agentHistoryWrites.set(serverId, state);
     const currentAggregate = payload.historyAggregate ||
       collectHistoryMetricAggregates([{ metrics: payload.metrics }]);
 
@@ -1253,7 +1315,6 @@ export class MetricsBroadcaster {
         state.pendingHistoryAggregate,
         currentAggregate
       );
-      this.agentHistoryWrites.set(serverId, state);
       return { persisted: false, nextD1WriteAfterMs: 0 };
     }
 
@@ -1275,14 +1336,12 @@ export class MetricsBroadcaster {
 
     if (lastWriteTs > 0 && now < nextWriteTs) {
       state.lastD1WriteTs = lastWriteTs;
-      this.agentHistoryWrites.set(serverId, state);
       return { persisted: false, nextD1WriteAfterMs: nextWriteTs - now };
     }
 
     state.flushing = true;
     const aggregateForWrite = state.pendingHistoryAggregate;
     delete state.pendingHistoryAggregate;
-    this.agentHistoryWrites.set(serverId, state);
     try {
       const metrics = applyHistoryMetricAggregates(payload.metrics, aggregateForWrite);
       await saveMetricsHistory(
@@ -1330,7 +1389,6 @@ export class MetricsBroadcaster {
       throw e;
     } finally {
       state.flushing = false;
-      this.agentHistoryWrites.set(serverId, state);
     }
   }
 
@@ -1353,7 +1411,20 @@ export class MetricsBroadcaster {
       return;
     }
 
-    if (msg?.type === 'pong') return;
+    if (hasReportCredentials(msg)) {
+      this._closeWsWithError(ws, 'Report credentials must use Authorization', 401);
+      return;
+    }
+    if (!await this._authorizeAgentSocket(ws)) return;
+    attachment = ws.deserializeAttachment();
+    if (msg?.type === 'pong' || msg?.type === 'ping') {
+      if (msg.type === 'ping') this._sendWsJson(ws, {type:'pong'});
+      return;
+    }
+    if (msg?.id !== undefined && msg.payload?.id !== undefined && msg.id !== msg.payload.id) {
+      this._closeWsWithError(ws, 'Server ID changed', 403);
+      return;
+    }
 
     const data = this._normalizeAgentReportData(msg);
     if (!data) {
@@ -1377,7 +1448,7 @@ export class MetricsBroadcaster {
         this._closeWsForInactiveAgentSchedule(ws);
         return;
       }
-      const nextHour = new Date();
+      const nextHour = new Date(Date.now());
       nextHour.setUTCMinutes(60, 0, 0);
       attachment = { ...attachment, wssScheduleCheckAfter: nextHour.getTime() };
       ws.serializeAttachment(attachment);
@@ -1440,6 +1511,7 @@ export class MetricsBroadcaster {
     });
 
     const configAck = await this._buildAgentConfigAck(context);
+    if (!this._hasAgentLease(ws)) return;
     const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(
       context.wssReportIntervalMs,
       context.reportIntervalMs,
@@ -1460,6 +1532,12 @@ export class MetricsBroadcaster {
       return new Response('Expected WebSocket upgrade request', { status: 426 });
     }
 
+    const authenticatedAt = Date.now();
+    let node;
+    try { node = await authenticateNodeRequest(request, this.env.DB); }
+    catch (_) { return new Response('Node authentication unavailable', {status:503}); }
+    if (!node) return new Response('Invalid node token', {status:401});
+
     const origin = request.headers.get('Origin');
     const allowedOrigins = parseAllowedOrigins(this.env.CORS_ALLOWED_ORIGINS);
     const realOrigin = request.headers.get('X-Real-Origin') || `${url.protocol}//${url.host}`;
@@ -1474,14 +1552,16 @@ export class MetricsBroadcaster {
     }
 
     // @ts-ignore - Cloudflare Workers runtime provides WebSocketPair
-    const nextHour = new Date();
+    const nextHour = new Date(Date.now());
     nextHour.setUTCMinutes(60, 0, 0);
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     const agentSocket = this._acceptStandardAgentWebSocket(server, {
       kind: AGENT_REPORT_KIND,
-      authenticated: false,
-      serverId: '',
+      authenticated: true,
+      serverId: node.serverId,
+      tokenVersion: node.tokenVersion,
+      leaseUntil: authenticatedAt + 60000,
       historyPartitionId: 0,
       region: request.headers.get('cf-ipcountry') || '',
       agentVersion: normalizeAgentVersion(request.headers.get('X-Agent-Version')),
@@ -1506,7 +1586,10 @@ export class MetricsBroadcaster {
       ts: Date.now(),
       protocol: 'update'
     });
-    await this._scheduleAgentWssHourAlarm();
+    if (!await this._scheduleAgentWssHourAlarm() || !this._hasAgentLease(agentSocket)) {
+      this._closeWsWithError(agentSocket, 'Authorization alarm unavailable', 503);
+      return new Response('Node authorization unavailable', {status:503});
+    }
 
     const responseHeaders = new Headers();
     if (origin && allowedOrigins.length > 0) {
@@ -1564,6 +1647,27 @@ export class MetricsBroadcaster {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+
+    if (method === 'POST' && path === '/node-invalidated' && url.origin === 'https://metrics.internal') {
+      const data = await request.json();
+      if (!this._isValidServerId(data.serverId) || !Number.isSafeInteger(data.tokenVersion) || data.tokenVersion < 1) return new Response('Invalid node', {status:400});
+      // D1 is authoritative; delayed notifications must not close a newer generation.
+      const current = await this.env.DB.prepare(`SELECT n.token_version, s.id AS live_id FROM terminal_nodes n
+        LEFT JOIN servers s ON s.id = n.server_id WHERE n.server_id = ?`).bind(data.serverId).first();
+      if (!current || current.token_version < data.tokenVersion) return new Response('Invalid epoch', {status:409});
+      if (current.token_version === data.tokenVersion || !current.live_id) {
+        this.agentServerDetails.delete(data.serverId);
+        this.agentHistoryWrites.delete(data.serverId);
+        this.latestReportUpdates.delete(data.serverId);
+        this.terminalObservations.delete(data.serverId);
+        this.pendingFrontendBroadcasts.delete(data.serverId);
+      }
+      for (const ws of this._getAgentReportWebSockets()) {
+        const attachment = ws.deserializeAttachment();
+        if (attachment?.serverId === data.serverId && (!current.live_id || attachment.tokenVersion < data.tokenVersion)) this._closeWsWithError(ws, 'Node token revoked', 401);
+      }
+      return Response.json({ok:true});
+    }
 
     if (method === 'POST' && path === '/terminal-observation' && url.origin === 'https://metrics.internal') {
       try {

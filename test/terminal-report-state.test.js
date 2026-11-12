@@ -9,10 +9,10 @@ import { saveTerminalObservation } from '../src/database/terminal.js';
 
 const secret = 'test-report-secret';
 let sampleSequence = 0;
-const report = (enabled, at = Date.now(), extra = {}) => ({id:'node-a', secret,
+const report = (enabled, at = Date.now(), extra = {}) => ({id:'node-a',
   ...(enabled === undefined ? {} : {terminal_enabled:enabled}),
   time:{local_ts:at}, metrics:{cpu:'1', timestamp:Date.now() - 3600000 + (++sampleSequence * 1000)}, ...extra});
-const post = (h, body) => h.fetch('/update', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+const post = (h, body) => h.fetch('/update', {method:'POST', headers:{'Content-Type':'application/json',...h.agentHeaders(body.id || 'node-a')}, body:JSON.stringify(body)});
 const status = async h => (await h.action('terminal_status', {serverId:'node-a'})).json();
 const row = h => h.db.prepare("SELECT * FROM servers WHERE id = 'node-a'").first();
 async function setup() {
@@ -59,11 +59,11 @@ test('nullable local observation migration is repeatable and preserves legacy da
 test('interleaved HTTP/WSS same-value watermarks reject stale inverse observations from the other transport', async () => {
   const h = await setup();
   try {
-    const at=Date.now(), peer=await h.socket('/update');
+    const at=Date.now(), peer=await h.socket('/update', h.agentHeaders());
     const env={DB:h.db,API_SECRET:secret,METRICS_BROADCASTER:await broadcasterBinding(h)};
     const pending=[];
     const direct=async body=>{
-      const result=await handleUpdate(new Request('https://example.com/update',{method:'POST',body:JSON.stringify(body)}),env,{waitUntil(promise) {pending.push(promise);}});
+      const result=await handleUpdate(new Request('https://example.com/update',{method:'POST',headers:h.agentHeaders(body.id || 'node-a'),body:JSON.stringify(body)}),env,{waitUntil(promise) {pending.push(promise);}});
       await Promise.all(pending.splice(0));
       return result;
     };
@@ -113,7 +113,7 @@ test('failed local false notification is retried by the identical false report a
 test('same-value receipts use minute heartbeats and a stale/future source watermark has a bounded recovery path', async () => {
   const h=await setup();
   try {
-    const at=Date.now(), peer=await h.socket('/update');
+    const at=Date.now(), peer=await h.socket('/update', h.agentHeaders());
     await send(peer,report(false,at));
     const before=await row(h);
     await send(peer,report(false,at+1));
@@ -170,7 +170,7 @@ test('HTTP forwards only validated metadata in a fresh minimal internal request,
       return binding.get(id).fetch(request,options);
     }})}};
     const direct=async body=>{
-      const result=await handleUpdate(new Request('https://example.com/update',{method:'POST',headers:{Cookie:'forged','X-CFSM-Terminal-Context':'forged',Authorization:'Bearer forged'},body:JSON.stringify(body)}),env,{waitUntil(p){pending.push(p);}});
+      const result=await handleUpdate(new Request('https://example.com/update',{method:'POST',headers:{Cookie:'forged','X-CFSM-Terminal-Context':'forged',...h.agentHeaders()},body:JSON.stringify(body)}),env,{waitUntil(p){pending.push(p);}});
       await Promise.all(pending.splice(0));return result;
     };
     assert.equal((await direct(report(true))).status,200);
@@ -250,10 +250,10 @@ test('HTTP strict bool, unauthorized and no-metrics reports have no metadata or 
     await saveSiteOptions(h.db, {auto_discovery:'true'});
     for (const value of ['true','false',1,0,{},[],null]) {
       assert.equal((await post(h, report(value))).status, 400);
-      assert.equal((await post(h, report(value, Date.now(), {id:'',name:'invalid-discovery'}))).status, 400);
+      assert.equal((await post(h, report(value, Date.now(), {id:'',name:'invalid-discovery'}))).status, 401);
     }
     assert.equal((await post(h, report(true, Date.now(), {secret:'wrong'}))).status, 401);
-    assert.equal((await post(h, {id:'node-a',secret,terminal_enabled:true})).status, 400);
+    assert.equal((await post(h, {id:'node-a',terminal_enabled:true})).status, 400);
     assert.equal((await row(h)).terminal_local_enabled, null);
     assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM servers').first()).count, 2);
     assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM metrics_history').first()).count, 0);
@@ -301,7 +301,7 @@ test('true reports never create, rotate or revive terminal authority, and cannot
   const h = await setup();
   try {
     await h.db.prepare("DELETE FROM terminal_nodes WHERE server_id='node-a'").run();
-    assert.equal((await post(h, report(true))).status, 200);
+    assert.equal((await post(h, report(true))).status, 401);
     assert.equal((await status(h)).credentialEnabled, false);
     assert.equal((await status(h)).enabled, false);
     assert.equal(await h.db.prepare("SELECT * FROM terminal_nodes WHERE server_id='node-a'").first(), null);
@@ -327,14 +327,14 @@ test('real WSS common handler rejects malformed/unauth/no-metrics before observa
   const h = await setup();
   try {
     for (const value of ['true','false',1,0,{},[],null]) {
-      const peer = await h.socket('/update');
+      const peer = await h.socket('/update', h.agentHeaders());
       const frame = await send(peer, report(value));
       assert.equal(frame.code, 400);
     }
-    const unauthorized = await h.socket('/update');
+    const unauthorized = await h.socket('/update', h.agentHeaders());
     assert.equal((await send(unauthorized, report(true,Date.now(),{secret:'wrong'}))).code, 401);
-    const empty = await h.socket('/update');
-    assert.equal((await send(empty,{id:'node-a',secret,terminal_enabled:true})).code, 400);
+    const empty = await h.socket('/update', h.agentHeaders());
+    assert.equal((await send(empty,{id:'node-a',terminal_enabled:true})).code, 400);
     assert.equal((await row(h)).terminal_local_enabled, null);
     assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM metrics_history').first()).count, 0);
   } finally {await h.dispose();}
@@ -351,7 +351,7 @@ test('WSS local false is prompt during history throttle and closes existing inpu
     pair.agent.ws.send('{"type":"ready"}');
     await until(() => controls(pair.browser).some(frame=>frame.type==='ready'));
     const credential = await h.db.prepare("SELECT * FROM terminal_nodes WHERE server_id='node-a'").first();
-    const peer = await h.socket('/update');
+    const peer = await h.socket('/update', h.agentHeaders());
     const at = Date.now();
     assert.equal((await send(peer,report(true,at))).persisted, true);
     for (let i=1;i<=12;i++) assert.equal((await send(peer,report(true,at+i))).persisted, false);
@@ -376,7 +376,7 @@ test('stale/order/duplicate observations cannot override newer D1 state, cached 
     const pending=[];
     const ctx={waitUntil(promise) {pending.push(promise);}};
     const direct = async body => {
-      const result=await handleUpdate(new Request('https://example.com/update',{method:'POST',body:JSON.stringify(body)}),env,ctx);
+      const result=await handleUpdate(new Request('https://example.com/update',{method:'POST',headers:h.agentHeaders(body.id || 'node-a'),body:JSON.stringify(body)}),env,ctx);
       await Promise.all(pending.splice(0));
       return result;
     };

@@ -45,7 +45,7 @@ function cleanThemeAssetResponse(response) {
 }
 
 async function getEncryptionKey(env, sys) {
-  let secret = (sys && sys.jwt_secret) || env.TURNSTILE_SECRET_KEY || env.API_SECRET || 'default_secret_key_for_turnstile_encryption';
+  let secret = (sys && sys.jwt_secret) || env.TURNSTILE_SECRET_KEY || 'default_secret_key_for_turnstile_encryption';
   secret += '_turnstile';
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
   const keyMaterial = await crypto.subtle.importKey(
@@ -195,11 +195,6 @@ export default {
     const path = url.pathname;
 
     const corsAllowedOrigins = getCorsAllowedOrigins(env);
-    
-    if (!env.API_SECRET || env.API_SECRET.length === 0) {
-      const response = createBadRequestResponse('API_SECRET is required');
-      return applyCors(response, request, corsAllowedOrigins);
-    }
     
     if (method === 'OPTIONS') {
       return createOptionsResponse(request, corsAllowedOrigins);
