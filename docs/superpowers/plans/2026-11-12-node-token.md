@@ -33,7 +33,7 @@ Set NODE runtime PATH for npm subprocesses. Do not use ambient Node 24 as accept
 
 ## Task 1: Canonical node credentials and independent terminal permission
 
-**Files:** Create src/database/nodeCredentials.js and test/node-credentials.test.js. Modify src/database/terminal.js, src/handlers/terminal.js, src/database/schema.js, src/database/updateDatabase.js, package.json, and connected terminal tests/harnesses.
+**Files:** Create src/database/nodeCredentials.js and test/node-credentials.test.js. Modify src/database/terminal.js, src/handlers/terminal.js, src/durable/TerminalBroker.js for bound revocation confirmation, src/database/schema.js, src/database/updateDatabase.js, package.json, and connected terminal tests/harnesses.
 
 **Consumes:** Existing terminal_nodes storage, generateRandomSecret, AES-GCM server-ID binding, existing terminal broker credential_version behavior.
 

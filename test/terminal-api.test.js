@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { harness, openPair, controls, until } from './terminal-harness.js';
+import { harness, openPair, controls, until, issueTestTerminalToken } from './terminal-harness.js';
 import { handleAdminAPI } from '../src/handlers/admin.js';
 import { serveFrontend } from '../src/handlers/frontend.js';
 import { saveSiteOptions, loadSiteSettings } from '../src/utils/settings.js';
-import { issueTerminalNodeToken } from '../src/database/terminal.js';
 import { handleTerminalUpgrade, handleTerminalAdminAction } from '../src/handlers/terminal.js';
 
 test('actual export/import omits terminal credentials and cannot activate a restored node', async () => {
@@ -160,7 +159,7 @@ test('single and batch server deletion revoke node credentials and close the nod
     const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'];
     for (const id of ids) {
       await h.db.prepare('INSERT INTO servers (id,name) VALUES (?,?)').bind(id,id).run();
-      h.nodes[id] = await issueTerminalNodeToken(h.db, id);
+      h.nodes[id] = await issueTestTerminalToken(h.db, id);
     }
     const control = await h.control(ids[0]);
     const pair = await openPair(h, control, 'delete-session', ids[0]);
@@ -238,7 +237,7 @@ test('missing broker binding cannot prevent authoritative revoke/delete, and ord
     const authorized = '44444444-4444-4444-8444-444444444444';
     const ordinary = '55555555-5555-4555-8555-555555555555';
     for (const id of [authorized,ordinary]) await h.db.prepare('INSERT INTO servers (id,name) VALUES (?,?)').bind(id,id).run();
-    await issueTerminalNodeToken(h.db,authorized);
+    await issueTestTerminalToken(h.db,authorized);
     assert.equal((await handleAdminAPI(request({action:'delete',id:authorized}),env,sys)).status,503);
     assert.equal(await h.db.prepare('SELECT id FROM servers WHERE id = ?').bind(authorized).first(),null);
     assert.equal((await h.db.prepare('SELECT enabled FROM terminal_nodes WHERE server_id = ?').bind(authorized).first()).enabled,0);

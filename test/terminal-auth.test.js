@@ -4,12 +4,13 @@ import { createHash } from 'node:crypto';
 import { Miniflare } from 'miniflare';
 import {
   ensureTerminalSchema,
-  issueTerminalNodeToken,
   verifyTerminalNodeToken,
   revokeTerminalNode,
   revokeTerminalAdmin,
   writeTerminalAudit
 } from '../src/database/terminal.js';
+import { issueTestTerminalToken } from './terminal-harness.js';
+import { issueNodeToken } from '../src/database/nodeCredentials.js';
 import { initDatabase } from '../src/database/schema.js';
 import { updateDatabase } from '../src/database/updateDatabase.js';
 import { generateToken, checkAuth, getTerminalAdminPrincipal } from '../src/middleware/auth.js';
@@ -60,7 +61,7 @@ test('terminal tables are additive in initialization and repeatable database upg
   const tables = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'terminal_%' ORDER BY name").all();
   assert.deepEqual(tables.results.map(row => row.name), ['terminal_audit', 'terminal_auth_sessions', 'terminal_nodes']);
   await db.prepare("INSERT INTO servers (id, name) VALUES ('old-server', 'preserved')").run();
-  await issueTerminalNodeToken(db, 'old-server', 1000);
+  await issueTestTerminalToken(db, 'old-server', 1000);
   const before = await db.prepare("SELECT * FROM terminal_nodes WHERE server_id = 'old-server'").first();
   await db.prepare('DROP TABLE terminal_audit').run();
   assert.equal((await updateDatabase(db)).success, true);
@@ -71,8 +72,9 @@ test('terminal tables are additive in initialization and repeatable database upg
 });
 
 test('node credentials never persist plaintext and cannot authorize another node', async () => {
-  const issued = await issueTerminalNodeToken(db, 'node-a', 2000);
-  const secondNode = await issueTerminalNodeToken(db, 'node-b', 2000);
+  await db.prepare("INSERT INTO servers (id) VALUES ('node-a'), ('node-b')").run();
+  const issued = await issueTestTerminalToken(db, 'node-a', 2000);
+  const secondNode = await issueTestTerminalToken(db, 'node-b', 2000);
   assert.match(issued.token, /^[a-f0-9]{64}$/);
   assert.notEqual(issued.token, secondNode.token);
   assert.deepEqual(issued.version, 1);
@@ -81,6 +83,7 @@ test('node credentials never persist plaintext and cannot authorize another node
     server_id: 'node-a',
     token_hash: createHash('sha256').update(issued.token).digest('hex'),
     token_ciphertext: null,
+    token_version: 1,
     credential_version: 1,
     enabled: 1,
     updated_at: 2000
@@ -95,9 +98,11 @@ test('node credentials never persist plaintext and cannot authorize another node
 });
 
 test('rotation versions are atomic and revoked node credentials stay unusable', async () => {
-  const first = await issueTerminalNodeToken(db, 'node-rotate', 3000);
-  const rotated = await Promise.all([issueTerminalNodeToken(db, 'node-rotate', 4000), issueTerminalNodeToken(db, 'node-rotate', 4001)]);
+  await db.prepare("INSERT INTO servers (id) VALUES ('node-rotate')").run();
+  const first = await issueTestTerminalToken(db, 'node-rotate', 3000);
+  const rotated = await Promise.all([issueNodeToken(db, 'node-rotate', 4000), issueNodeToken(db, 'node-rotate', 4001)]);
   assert.deepEqual(rotated.map(row => row.version).sort(), [2, 3]);
+  assert.deepEqual(rotated.map(row => row.tokenVersion).sort(), [2, 3]);
   assert.equal(await verifyTerminalNodeToken(db, 'node-rotate', first.token), null);
   const latest = rotated.find(row => row.version === 3);
   assert.deepEqual(await verifyTerminalNodeToken(db, 'node-rotate', latest.token), { serverId: 'node-rotate', version: 3 });
@@ -106,7 +111,7 @@ test('rotation versions are atomic and revoked node credentials stay unusable', 
   await revokeTerminalNode(db, 'node-rotate', 6000);
   assert.deepEqual(await db.prepare("SELECT * FROM terminal_nodes WHERE server_id = 'node-rotate'").first(), revoked);
   assert.equal(await verifyTerminalNodeToken(db, 'node-rotate', latest.token), null);
-  const fresh = await issueTerminalNodeToken(db, 'node-rotate', 7000);
+  const fresh = await issueTestTerminalToken(db, 'node-rotate', 7000);
   assert.ok(fresh.version > revoked.credential_version);
   assert.equal(await verifyTerminalNodeToken(db, 'node-rotate', latest.token), null);
   assert.ok(await verifyTerminalNodeToken(db, 'node-rotate', fresh.token));
@@ -188,7 +193,8 @@ test('terminal authority fails closed on D1 read errors without affecting ordina
 });
 
 test('terminal validation uses only indexed authority queries and ordinary auth adds no D1 work', async () => {
-  const issued = await issueTerminalNodeToken(db, 'node-query', 1000);
+  await db.prepare("INSERT INTO servers (id) VALUES ('node-query')").run();
+  const issued = await issueTestTerminalToken(db, 'node-query', 1000);
   const token = await generateToken(env, sys);
   const queries = [];
   const observedDb = {
@@ -213,9 +219,12 @@ test('terminal validation uses only indexed authority queries and ordinary auth 
   assert.equal(await checkAuth(requestWithToken(token), { ...env, DB: observedDb }, sys), true);
   assert.equal(queries.length, 0);
   assert.deepEqual(await verifyTerminalNodeToken(observedDb, 'node-query', issued.token), { serverId: 'node-query', version: 1 });
-  assert.equal(queries.length, 1, 'node validation is one authority read, not schema creation');
-  const nodePlan = await db.prepare(`EXPLAIN QUERY PLAN ${queries[0]}`).bind('node-query', 'a'.repeat(64)).all();
-  assert.match(nodePlan.results.map(row => row.detail).join('\n'), /SEARCH terminal_nodes USING INDEX .*\(server_id=\?\)/);
+  assert.equal(queries.length, 2, 'canonical token validation and terminal permission each read authority without schema creation');
+  const nodePlan = await db.prepare(`EXPLAIN QUERY PLAN ${queries[0]}`).bind('a'.repeat(64), 'node-query', 'node-query').all();
+  assert.match(nodePlan.results.map(row => row.detail).join('\n'), /SEARCH n USING INDEX terminal_nodes_token_hash_unique \(token_hash=\?\)/);
+  assert.match(nodePlan.results.map(row => row.detail).join('\n'), /SEARCH s USING .*\(id=\?\)/);
+  const permissionPlan = await db.prepare(`EXPLAIN QUERY PLAN ${queries[1]}`).bind('node-query').all();
+  assert.match(permissionPlan.results.map(row => row.detail).join('\n'), /SEARCH terminal_nodes USING INDEX .*\(server_id=\?\)/);
   queries.length = 0;
   const principal = await getTerminalAdminPrincipal(requestWithToken(token), { ...env, DB: observedDb }, sys);
   assert.ok(principal);

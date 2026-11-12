@@ -4,6 +4,7 @@ import { attachDiskMetricsObject, flattenDiskMetrics, isDisabledProbeMetric, nor
 import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHistoryIdRange } from './indexOptimization.js';
 import { addHistoryColumns, addServerColumns } from './updateDatabase.js';
 import { ensureTerminalSchema } from './terminal.js';
+import { ensureNodeCredentialSchema } from './nodeCredentials.js';
 import {
   buildSparseHistoryQuery,
   shouldUseSparseHistorySampling
@@ -122,6 +123,7 @@ export async function initDatabase(db) {
     if (!serverColumns.success) throw new Error(serverColumns.error);
     // 确保 metrics_history 表存在（主键 id 已编码分区与时间，无需二级索引）
     await db.prepare(createHistoryTableSql('metrics_history')).run();
+    await ensureNodeCredentialSchema(db);
     await ensureTerminalSchema(db);
 
     debug('✅ 数据库初始化完成');

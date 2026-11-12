@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { harness, until, controls, openPair } from './terminal-harness.js';
 import { parseTerminalControl } from '../src/shared/terminalProtocol.js';
+import { issueNodeToken, readNodeToken } from '../src/database/nodeCredentials.js';
 
 async function capable(h) {
   const peer = await h.socket('/api/agent/terminal/control', h.agentHeaders());
@@ -109,6 +110,44 @@ test('concurrent revoke cannot let a conflicting operation consume the matched A
     const frame = controls(control).find(frame => frame.type === 'disable');
     control.ws.send(JSON.stringify(acknowledge(frame)));
     assert.equal((await (await first).json()).localConfirmed, true);
+  } finally { await h.dispose(); }
+});
+
+test('a matched old disable ACK cannot confirm a reset credential even when terminal permission stays off', async () => {
+  const h = await harness();
+  try {
+    const control = await capable(h);
+    const pending = h.action('terminal_revoke_node', {serverId:'node-a'});
+    await until(() => controls(control).some(frame => frame.type === 'disable'));
+    const frame = controls(control).find(frame => frame.type === 'disable');
+    const reset = await issueNodeToken(h.db, 'node-a', Date.now(), 's'.repeat(64));
+    assert.equal(reset.enabled, false);
+    control.ws.send(JSON.stringify(acknowledge(frame)));
+    const response = await pending;
+    assert.equal(response.status, 409);
+    const result = await response.json();
+    assert.equal(result.serverRevoked, true);
+    assert.equal(result.localConfirmed, false);
+    assert.equal(result.localReason, 'identity_changed');
+    assert.equal((await readNodeToken(h.db, 'node-a', 's'.repeat(64))).token, reset.token);
+  } finally { await h.dispose(); }
+});
+
+test('re-enabling the same token with a new control cannot inherit an old in-flight disable confirmation', async () => {
+  const h = await harness();
+  try {
+    h.nodes['node-a'] = await (await h.action('terminal_prepare_install', {serverId:'node-a',terminal:true,acceptRisk:true})).json();
+    const control = await capable(h);
+    const pending = h.action('terminal_revoke_node', {serverId:'node-a'});
+    await until(() => controls(control).some(frame => frame.type === 'disable'));
+    const resumed = await (await h.action('terminal_enable_install', {serverId:'node-a',terminal:true,acceptRisk:true})).json();
+    assert.equal(resumed.token, h.nodes['node-a'].token);
+    h.nodes['node-a'] = resumed;
+    const freshControl = await capable(h);
+    const result = await (await pending).json();
+    assert.equal(result.localConfirmed, false);
+    assert.equal(result.serverRevoked, false);
+    assert.equal(freshControl.ws.readyState, 1);
   } finally { await h.dispose(); }
 });
 

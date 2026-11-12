@@ -8,6 +8,7 @@ import {
 } from '../utils/serverBilling.js';
 import { HISTORY_UPGRADE_COLUMNS } from '../utils/historyFields.js';
 import { ensureTerminalSchema } from './terminal.js';
+import { ensureNodeCredentialSchema } from './nodeCredentials.js';
 
 
 export async function updateDatabase(db) {
@@ -35,6 +36,7 @@ export async function updateDatabase(db) {
     // 删除弃用的 notification_deliveries 表
     await db.prepare(`DROP TABLE IF EXISTS notification_deliveries`).run();
 
+    await ensureNodeCredentialSchema(db);
     await ensureTerminalSchema(db);
     
     debug('✅ 数据库更新完成');

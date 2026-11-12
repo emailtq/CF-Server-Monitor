@@ -3,8 +3,15 @@ import { Miniflare } from 'miniflare';
 import WebSocket from 'ws';
 
 import { generateToken } from '../src/middleware/auth.js';
-import { issueTerminalNodeToken } from '../src/database/terminal.js';
+import { enableTerminalNode } from '../src/database/terminal.js';
+import { issueNodeToken } from '../src/database/nodeCredentials.js';
 import { saveSiteOptions, clearSiteSettingsCache } from '../src/utils/settings.js';
+
+export async function issueTestTerminalToken(db, serverId, now = Date.now()) {
+  const issued = await issueNodeToken(db, serverId, now);
+  if (!await enableTerminalNode(db, serverId, issued.version, now)) throw new Error('test terminal permission failed');
+  return {...issued, enabled:true};
+}
 
 export async function harness() {
   const source = `
@@ -197,7 +204,7 @@ export async function harness() {
   for (const node of ['node-a', 'node-b']) await db.prepare('INSERT INTO servers (id, name) VALUES (?, ?)').bind(node, node).run();
   const token = await generateToken({API_SECRET: 'test-report-secret'}, sys);
   const otherToken = await generateToken({API_SECRET: 'test-report-secret'}, sys);
-  const nodes = { 'node-a': await issueTerminalNodeToken(db, 'node-a'), 'node-b': await issueTerminalNodeToken(db, 'node-b') };
+  const nodes = { 'node-a': await issueTestTerminalToken(db, 'node-a'), 'node-b': await issueTestTerminalToken(db, 'node-b') };
   const clients = [];
   async function fetch(path, options = {}) { return mf.dispatchFetch(`https://example.com${path}`, options); }
   async function action(action, data = {}, options = {}) {

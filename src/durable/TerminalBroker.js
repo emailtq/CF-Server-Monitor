@@ -423,10 +423,11 @@ export class TerminalBroker {
     let localConfirmed = false;
     let timer;
     let pending;
+    let revokedGeneration;
     for (const session of this.meta.sessions) if (session.credentialVersion <= context.credentialVersion) this.mustClose.add(session.id);
     try {
       // Fence old data immediately, but retain the exact old control for disable/ACK only.
-      await this.mutate((effects, meta) => {
+      revokedGeneration = await this.mutate((effects, meta) => {
         for (const session of meta.sessions) if (session.credentialVersion <= context.credentialVersion) this.mustClose.add(session.id);
         if (meta.credentialVersion <= context.credentialVersion) {
           meta.credentialVersion = revoked.credential_version;
@@ -435,6 +436,7 @@ export class TerminalBroker {
         for (const [id, ws] of this.peers) if (ws !== captured && ws.deserializeAttachment()?.credentialVersion <= context.credentialVersion) {
           effects.push(() => { try { ws.close(1000, 'node_revoked'); } catch (_) {} this.peers.delete(id); });
         }
+        return meta.generation;
       });
       for (const session of [...this.meta.sessions]) if (session.credentialVersion <= context.credentialVersion) await this.closeSession(session.id, 'node_revoked');
       if (captured && a.disableSupported && captured.readyState === 1 && this.peers.get(a.connectionId) === captured) {
@@ -456,8 +458,11 @@ export class TerminalBroker {
         if (this.peers.get(a.connectionId) === captured) this.peers.delete(a.connectionId);
       }
     }
-    const current = await this.env.DB.prepare('SELECT enabled, credential_version FROM terminal_nodes WHERE server_id = ?').bind(context.serverId).first();
-    if (!current || current.enabled !== 0 || current.credential_version !== revoked.credential_version) {
+    const current = await this.env.DB.prepare('SELECT enabled, credential_version, token_version FROM terminal_nodes WHERE server_id = ?').bind(context.serverId).first();
+    // Repeated denial may advance the epoch; it cannot confirm a reset token or new control generation.
+    if (!current || current.enabled !== 0 || current.token_version !== revoked.token_version ||
+        current.credential_version < revoked.credential_version || localConfirmed &&
+        (this.meta.credentialVersion !== revoked.credential_version || this.meta.generation !== revokedGeneration)) {
       return Response.json({error:'terminal_authority_denied', code:409, serverRevoked:current?.enabled === 0,
         localConfirmed:false, localReason:'identity_changed'}, {status:409});
     }
