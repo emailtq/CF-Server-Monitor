@@ -3,6 +3,7 @@ import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './
 import { loadNotificationConfig } from './database/notifications.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
+import { handleAgentRegistration } from './handlers/agentRegistration.js';
 import { handleTerminalUpgrade } from './handlers/terminal.js';
 import { cleanupTerminalRecords } from './database/terminal.js';
 import { serveFrontend } from './handlers/frontend.js';
@@ -219,6 +220,8 @@ export default {
       } catch (e) {
       }
     }
+
+    if (path === '/api/agent/register') return handleAgentRegistration(request, env);
 
     if (path.startsWith('/api/agent/terminal/') || path.startsWith('/admin/api/terminal/')) {
       const terminal = await handleTerminalUpgrade(request, env, null);

@@ -1,106 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AUTO_DISCOVERY_ERROR_NO_NAME,
-  AUTO_DISCOVERY_MODE_CREATED,
-  AUTO_DISCOVERY_MODE_FAILED,
-  AUTO_DISCOVERY_MODE_REUSED,
-  discoverServer,
   isAutoDiscoveryEnabled,
   resolveDiscoveredServerName
 } from '../src/utils/autoDiscovery.js';
-import { HISTORY_MAX_PARTITION_ID, insertServerWithPartition } from '../src/database/indexOptimization.js';
+import { insertServerWithPartition } from '../src/database/indexOptimization.js';
 import { clearServerDetailCache, clearServersListCache } from '../src/utils/cache.js';
 import { clearSiteSettingsCache } from '../src/utils/settings.js';
 import { handleUpdate } from '../src/handlers/update.js';
 
-const normalizeSql = (sql) => String(sql).replace(/\s+/g, ' ').trim();
-
+// Positive registration and atomic writes now use real D1 in agent-registration.test.js.
 function createFakeDb(initialServers = [], siteOptions = null) {
   const servers = initialServers.map(server => ({ ...server }));
-  const state = { inserted: [], deleted: [], failInsert: false, failSelectById: false };
-
-  function prepare(sql) {
-    const text = normalizeSql(sql);
-    const args = [];
-
+  const state = { inserted: [], failSelectById: false };
+  return { servers, state, prepare(sql) {
+    let args = [];
     const statement = {
-      bind(...values) {
-        args.push(...values);
-        return statement;
-      },
+      bind(...values) { args = values; return statement; },
       async first() {
-        if (/^SELECT value FROM settings WHERE key = 'site_options'$/.test(text)) {
+        if (sql.includes("FROM settings WHERE key = 'site_options'")) {
           return siteOptions ? { value: JSON.stringify(siteOptions) } : null;
         }
-        if (/^SELECT id FROM servers WHERE name = \?/.test(text)) {
-          const matches = servers
-            .filter(server => server.name === args[0])
-            .sort((a, b) =>
-              (a.sort_order - b.sort_order) ||
-              (a.timestamp - b.timestamp) ||
-              String(a.id).localeCompare(String(b.id))
-            );
-          return matches.length > 0 ? { id: matches[0].id } : null;
-        }
-        if (/^SELECT \* FROM servers WHERE id = \?$/.test(text)) {
+        if (sql.includes('FROM servers WHERE id = ?')) {
           if (state.failSelectById) throw new Error('D1_ERROR');
-          const row = servers.find(server => server.id === args[0]);
-          return row ? { ...row } : null;
+          return servers.find(server => server.id === args[0]) || null;
         }
         return null;
       },
-      async all() {
-        if (/FROM servers/.test(text)) {
-          return { results: servers.map(server => ({ ...server })) };
-        }
-        return { results: [] };
-      },
       async run() {
-        if (text.includes('INSERT INTO servers')) {
-          if (state.failInsert) throw new Error('D1_ERROR');
-          // 测试替身：只用于 discoverServer 流程，SQL 本身由 test/server-insert-sql.test.js 用真实 D1 覆盖。
-          const [, id, name, server_group, region, iface, timestamp] = args;
-          const usedPartitionIds = new Set(
-            servers.map(server => Number(server.history_partition_id)).filter(pid => pid > 0)
-          );
-          let history_partition_id = 0;
-          for (let pid = 1; pid <= HISTORY_MAX_PARTITION_ID; pid++) {
-            if (!usedPartitionIds.has(pid)) {
-              history_partition_id = pid;
-              break;
-            }
-          }
-          if (!history_partition_id) return { meta: { changes: 0 } };
-          const sort_order = servers.reduce(
-            (max, server) => Math.max(max, Number(server.sort_order ?? -1)),
-            -1
-          ) + 1;
-          servers.push({
-            id,
-            name,
-            server_group,
-            region,
-            interface: iface,
-            sort_order,
-            history_partition_id,
-            timestamp
-          });
-          state.inserted.push(id);
-          return { meta: { changes: 1 } };
-        } else if (text.startsWith('DELETE FROM servers')) {
-          const index = servers.findIndex(server => server.id === args[0]);
-          if (index >= 0) servers.splice(index, 1);
-          state.deleted.push(args[0]);
-        }
-        return { success: true };
+        if (sql.includes('INSERT INTO servers')) state.inserted.push(args);
+        throw new Error('Retired discovery must never write');
       }
     };
-
     return statement;
-  }
-
-  return { servers, state, prepare };
+  }};
 }
 
 test('isAutoDiscoveryEnabled only accepts the explicit switch', () => {
@@ -152,21 +85,6 @@ test('resolveDiscoveredServerName prefers name, then CF-Connecting-IP', () => {
   );
 });
 
-test('discoverServer creates a server when no server matches the name', async () => {
-  clearServersListCache();
-  const db = createFakeDb();
-
-  const result = await discoverServer({ DB: db }, { name: 'web-01' });
-
-  assert.equal(result.mode, AUTO_DISCOVERY_MODE_CREATED);
-  assert.ok(result.id);
-  assert.equal(db.servers.length, 1);
-  assert.equal(db.servers[0].name, 'web-01');
-  assert.equal(db.servers[0].server_group, 'Default');
-  assert.equal(db.servers[0].history_partition_id, 1);
-  assert.equal(db.servers[0].sort_order, 0);
-});
-
 test('insertServerWithPartition only treats changes===0 as no free partition', async () => {
   const makeDb = result => ({
     prepare: () => ({ bind: () => ({ run: async () => result }) })
@@ -183,45 +101,6 @@ test('insertServerWithPartition only treats changes===0 as no free partition', a
     () => insertServerWithPartition(makeDb({ meta: { changes: 0 } }), { id: 'x', name: 'X' }),
     /No available history partition id/
   );
-});
-
-test('discoverServer reuses an existing server with the same name', async () => {
-  clearServersListCache();
-  const db = createFakeDb([
-    { id: 'existing-id', name: 'web-01', sort_order: 0, timestamp: 1, history_partition_id: 1 }
-  ]);
-
-  const result = await discoverServer({ DB: db }, { name: 'web-01' });
-
-  assert.equal(result.mode, AUTO_DISCOVERY_MODE_REUSED);
-  assert.equal(result.id, 'existing-id');
-  assert.equal(db.servers.length, 1);
-  assert.deepEqual(db.state.inserted, []);
-});
-
-test('discoverServer uses CF-Connecting-IP as the name', async () => {
-  clearServersListCache();
-  const db = createFakeDb();
-
-  const result = await discoverServer(
-    { DB: db },
-    { request: { headers: { get: () => '198.51.100.7' } } }
-  );
-
-  assert.equal(result.mode, AUTO_DISCOVERY_MODE_CREATED);
-  assert.equal(db.servers[0].name, '198.51.100.7');
-});
-
-test('discoverServer fails silently without any name source', async () => {
-  clearServersListCache();
-  const db = createFakeDb();
-
-  const result = await discoverServer({ DB: db }, { metrics: {}, request: null });
-
-  assert.equal(result.mode, AUTO_DISCOVERY_MODE_FAILED);
-  assert.equal(result.code, AUTO_DISCOVERY_ERROR_NO_NAME);
-  assert.equal(result.id, '');
-  assert.equal(db.servers.length, 0);
 });
 
 test('handleUpdate denies an unbound shared-secret report when the switch is off', async () => {
@@ -243,19 +122,6 @@ test('handleUpdate denies an unbound shared-secret report when the switch is off
   assert.equal(response.headers.get('X-CFSM-Auto-Discovery'), null);
   assert.equal(response.headers.get('X-CFSM-Server-Id'), null);
   assert.deepEqual(db.state.inserted, []);
-});
-
-test('discoverServer reports db_error and leaves the table untouched when insert fails', async () => {
-  clearServersListCache();
-  const db = createFakeDb();
-  db.state.failInsert = true;
-
-  const result = await discoverServer({ DB: db }, { name: 'web-01' });
-
-  assert.equal(result.mode, AUTO_DISCOVERY_MODE_FAILED);
-  assert.equal(result.code, 'db_error');
-  assert.equal(result.id, '');
-  assert.equal(db.servers.length, 0);
 });
 
 test('handleUpdate rejects an unbound report without metrics before creating a server', async () => {

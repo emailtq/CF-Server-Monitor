@@ -45,6 +45,16 @@ async function encryptCredential(token, serverId, secret) {
   return hex(iv) + hex(new Uint8Array(encrypted));
 }
 
+export async function prepareNodeCredential(serverId, encryptionSecret = '') {
+  if (!isId(serverId)) throw new RangeError('Invalid node');
+  const token = generateRandomSecret(32);
+  return {
+    token,
+    hash: await hashNodeToken(token),
+    ciphertext: encryptionSecret ? await encryptCredential(token, serverId, encryptionSecret) : null
+  };
+}
+
 export async function readNodeToken(db, serverId, encryptionSecret) {
   if (!isId(serverId)) throw new RangeError('Invalid node');
   const row = await db.prepare(`SELECT n.token_hash, n.token_ciphertext, n.token_version, n.credential_version, n.enabled
@@ -64,11 +74,11 @@ export async function ensureNodeToken(db, serverId, encryptionSecret, now = Date
   if (!isId(serverId) || !isTime(now)) throw new RangeError('Invalid node issuance');
   const current = await readNodeToken(db, serverId, encryptionSecret);
   if (current.version) return current;
-  const token = generateRandomSecret(32);
-  const ciphertext = await encryptCredential(token, serverId, encryptionSecret);
+  if (!encryptionSecret) throw new Error('node_credential_key_missing');
+  const {hash, ciphertext} = await prepareNodeCredential(serverId, encryptionSecret);
   await db.prepare(`INSERT INTO terminal_nodes (server_id, token_hash, token_ciphertext, token_version, credential_version, enabled, updated_at)
     SELECT id, ?, ?, 1, 1, 0, ? FROM servers WHERE id = ?
-    ON CONFLICT(server_id) DO NOTHING`).bind(await hashNodeToken(token), ciphertext, now, serverId).run();
+    ON CONFLICT(server_id) DO NOTHING`).bind(hash, ciphertext, now, serverId).run();
   const issued = await readNodeToken(db, serverId, encryptionSecret);
   if (!issued.version) throw new Error('node_missing');
   return issued;
@@ -76,8 +86,7 @@ export async function ensureNodeToken(db, serverId, encryptionSecret, now = Date
 
 export async function issueNodeToken(db, serverId, now = Date.now(), encryptionSecret = '') {
   if (!isId(serverId) || !isTime(now)) throw new RangeError('Invalid node issuance');
-  const token = generateRandomSecret(32);
-  const ciphertext = encryptionSecret ? await encryptCredential(token, serverId, encryptionSecret) : null;
+  const {token, hash, ciphertext} = await prepareNodeCredential(serverId, encryptionSecret);
   const row = await db.prepare(`INSERT INTO terminal_nodes (server_id, token_hash, token_ciphertext, token_version, credential_version, enabled, updated_at)
     SELECT id, ?, ?, 1, 1, 0, ? FROM servers WHERE id = ?
     ON CONFLICT(server_id) DO UPDATE SET
@@ -89,7 +98,7 @@ export async function issueNodeToken(db, serverId, now = Date.now(), encryptionS
     WHERE terminal_nodes.token_version BETWEEN 1 AND 9007199254740990
       AND terminal_nodes.credential_version BETWEEN 1 AND 9007199254740990
     RETURNING token_version, credential_version, enabled
-  `).bind(await hashNodeToken(token), ciphertext, now, serverId).first();
+  `).bind(hash, ciphertext, now, serverId).first();
   if (!row) throw new RangeError('Node missing or credential version exhausted');
   return {token, version:row.credential_version, tokenVersion:row.token_version, enabled:row.enabled === 1, needsRotation:!ciphertext};
 }

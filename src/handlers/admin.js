@@ -17,6 +17,7 @@ import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 import { getTerminalJwtPrincipal, getTerminalAdminPrincipal } from '../middleware/auth.js';
 import { revokeTerminalAdmin } from '../database/terminal.js';
 import { handleTerminalAdminAction, disableTerminalAccess } from './terminal.js';
+import { handlePrepareRegistration } from './agentRegistration.js';
 import { ensureNodeToken, issueNodeToken } from '../database/nodeCredentials.js';
 import { notifyNodeCredentialsInvalidated } from '../utils/nodeCredentialNotify.js';
 import { clearNodeReportCache } from './update.js';
@@ -924,7 +925,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
   let nodeCredentialAction = false;
   try {
     const data = await request.json();
-    nodeCredentialAction = data.action === 'node_read_install' || data.action === 'node_reset_token';
+    nodeCredentialAction = data.action === 'node_read_install' || data.action === 'node_reset_token' || data.action === 'node_prepare_registration';
 
     const publicActionHandler = PUBLIC_ADMIN_ACTION_HANDLERS[data.action];
     if (publicActionHandler) {
@@ -935,6 +936,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       if (nodeCredentialAction) return Response.json({error:'node_login_required'}, {status:401, headers:{'Cache-Control':'no-store'}});
       return simpleAuthResponse();
     }
+
+    if (data.action === 'node_prepare_registration') return handlePrepareRegistration(request, env, data);
 
     if (nodeCredentialAction) {
       const headers = {'Cache-Control':'no-store'};

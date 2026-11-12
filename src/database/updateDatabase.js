@@ -9,6 +9,7 @@ import {
 import { HISTORY_UPGRADE_COLUMNS } from '../utils/historyFields.js';
 import { ensureTerminalSchema } from './terminal.js';
 import { ensureNodeCredentialSchema } from './nodeCredentials.js';
+import { ensureAgentRegistrationSchema } from './agentRegistration.js';
 
 
 export async function updateDatabase(db) {
@@ -37,6 +38,7 @@ export async function updateDatabase(db) {
     await db.prepare(`DROP TABLE IF EXISTS notification_deliveries`).run();
 
     await ensureNodeCredentialSchema(db);
+    await ensureAgentRegistrationSchema(db);
     await ensureTerminalSchema(db);
     
     debug('✅ 数据库更新完成');

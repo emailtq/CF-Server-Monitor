@@ -101,7 +101,7 @@ export const HISTORY_PARTITION_PICK_SQL = `
 
 // 新建服务器的唯一入口：分区号与 sort_order 在同一条 INSERT 内计算。
 // 这里不保留外部传入的分区号（p=0），始终取最小空闲值。
-const SERVER_INSERT_SQL = `
+export const SERVER_INSERT_SQL = `
   WITH pref(p) AS (SELECT ?),
   next AS (
     SELECT

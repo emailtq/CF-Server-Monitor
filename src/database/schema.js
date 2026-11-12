@@ -5,6 +5,7 @@ import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHist
 import { addHistoryColumns, addServerColumns } from './updateDatabase.js';
 import { ensureTerminalSchema } from './terminal.js';
 import { ensureNodeCredentialSchema } from './nodeCredentials.js';
+import { ensureAgentRegistrationSchema } from './agentRegistration.js';
 import {
   buildSparseHistoryQuery,
   shouldUseSparseHistorySampling
@@ -66,6 +67,8 @@ export async function initDatabase(db) {
       `).run();
       await saveSiteOptions(db, { servers_optimized: 'true' });
     }
+
+    await ensureAgentRegistrationSchema(db);
 
     // 判断servers表是否存在
     const ServerTableExists = await db.prepare(`
