@@ -30,6 +30,7 @@ try {
   server = await createServer({ frontendExports: true, configFile: false, cacheDir: path.join(out, '.vite-cache'), optimizeDeps: { noDiscovery: true, include: ['vue', 'vue-router'] }, plugins: [vue()], server: { host: '127.0.0.1', port: 0, hmr: false }, publicDir: path.resolve('public') });
   await server.listen();
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+  const secureOrigin = origin.replace('http:','https:');
   browser = await chromium.launch({ executablePath, headless: true });
   context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: !process.argv.includes('--visual-probe'), deviceScaleFactor: 1, colorScheme: 'light' });
   await context.addInitScript(() => {
@@ -40,12 +41,23 @@ try {
   });
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
-    if (url.origin !== origin) { report.networkDenied.push(url.origin); await route.abort(); return; }
+    if (url.origin === 'https://api.github.com') {
+      const tag=url.pathname.includes('/tags/') ? decodeURIComponent(url.pathname.split('/tags/')[1]) : 'task5.synthetic';
+      if (url.pathname.includes('/contents/')) return route.fulfill({json:{encoding:'base64',content:Buffer.from('fs.StringVar(&token,"token-file","",""); fs.StringVar(&key,"register-key","","")').toString('base64')}});
+      return route.fulfill({json:{tag_name:tag,draft:false,assets:['linux-amd64','darwin-arm64','windows-amd64.exe','freebsd-amd64'].map(platform=>({name:'cf-probe-'+platform,state:'uploaded',browser_download_url:'https://github.com/emailtq/cfsm-agent/releases/download/'+tag+'/cf-probe-'+platform}))}});
+    }
+    if (url.origin !== origin && url.origin !== secureOrigin) { report.networkDenied.push(url.origin); await route.abort(); return; }
+    if (url.origin === secureOrigin && url.pathname === '/admin' && url.searchParams.get('mode') === 'admin') {
+      const response=await route.fetch({url:origin+'/test/fixtures/admin-ui/index.html'+url.search});
+      return route.fulfill({response});
+    }
     if (url.pathname.endsWith('/admin-ui-approved/preview.html')) { await route.fulfill({ contentType: 'text/html; charset=utf-8', body: fs.readFileSync('docs/superpowers/references/admin-ui-approved/preview.html') }); return; }
     if (url.pathname === '/admin' && route.request().isNavigationRequest()) { await route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<p>Owned fixture auth redirect</p>' }); return; }
     if (url.pathname === '/' && route.request().isNavigationRequest()) { await route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<p id="fixture-public-redirect">Owned public redirect</p>' }); return; }
     if (url.pathname.endsWith('/admin/api')) {
       const data = route.request().postDataJSON();
+      if (data.action === 'node_read_install') return route.fulfill({json:{token:'a'.repeat(64),version:1,tokenVersion:1,enabled:false,needsRotation:false}});
+      if (data.action === 'node_prepare_registration') return route.fulfill({json:{key:'b'.repeat(64),expiresAt:Date.now()+900000}});
       const site = url.pathname.startsWith('/site-b') ? 'b' : 'a';
       report.actions.push({ site, ...data });
       const held = hold?.action === data.action && hold.site === site ? hold : null;
@@ -59,7 +71,7 @@ try {
       if (data.action === 'save_order') servers = data.orders.map(id => servers.find(s => s.id === id));
       const result = data.action === 'export_servers' ? { servers, settings: { site: { cloudflare_token: 'fixture-cloudflare' }, appearance: { site_title: site }, ...(data.includeNotificationSecrets ? { notification_config: { schema: 1, channels: [{ secrets: { botToken: 'fixture-notification' } }], rules: [] } } : {}) }, ...(data.includeNotificationSecrets ? { notificationBackup: { sensitive: true, warning: 'notification_backup_contains_credentials' } } : {}) }
         : data.action === 'import_servers' ? { success: true, imported: 1, skipped: 1, skippedIds: ['skipped-node'], settings: { imported: true, ignoredFields: ['jwt_secret'], notification: { unresolvedRuleIds: ['rule-missing'], unresolvedReferences: [{ ruleId: 'rule-missing', serverIds: ['missing-node'] }] } } }
-        : { success: true, ...(data.action === 'login' ? { token: 'fixture-login-token' } : {}), ...(data.action === 'start_theme_preview' ? { preview_url: `${origin}/fixture-preview` } : {}), settings: settings(site), servers: site === 'b' ? [{ id: 'site-b-node', name: 'Site B node' }] : servers, stats: { total: servers.length, online: 4, offline: 2, avg_cpu: 12 }, api_secret: 'fixture-agent-reporting-secret' };
+        : { success: true, ...(data.action === 'login' ? { token: 'fixture-login-token' } : {}), ...(data.action === 'start_theme_preview' ? { preview_url: `${origin}/fixture-preview` } : {}), settings: settings(site), servers: site === 'b' ? [{ id: 'site-b-node', name: 'Site B node' }] : servers, stats: { total: servers.length, online: 4, offline: 2, avg_cpu: 12 } };
       await route.fulfill({ json: result }); return;
     }
     for (const endpoint of ['/api/config', '/theme', '/updateDatabase', '/clearHistory']) {
@@ -71,6 +83,7 @@ try {
       else await route.fulfill({ json: endpoint === '/api/config' ? { version: 'fixture-worker', last_agent_version: '2.8.6' } : endpoint === '/theme' ? { schema: 1, themes: [] } : { success: true } });
       return;
     }
+    if (url.origin === secureOrigin) return route.fulfill({response:await route.fetch({url:origin+url.pathname+url.search})});
     await route.continue();
   });
   page = await context.newPage(); page.setDefaultTimeout(10000); page.setDefaultNavigationTimeout(30000);
@@ -525,6 +538,7 @@ try {
   }
   await goto();
   await check('mobile right-side actions remain hit-testable after table scroll; install/uninstall all platforms', async () => {
+    await page.goto(`${secureOrigin}/admin?mode=admin#/admin`); await page.locator('.server-row').first().waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('.table-wrapper').evaluate(e => { e.scrollLeft = e.scrollWidth; });
     const row = page.locator('.server-row[data-server-id="node-1"]');
@@ -533,6 +547,13 @@ try {
     const dialog = page.getByRole('dialog');
     for (const os of ['linux', 'unix', 'mac', 'windows', 'docker']) {
       await dialog.locator('select').first().selectOption(os);
+      if (os === 'docker') {
+        await dialog.locator('[data-install-blocked]').waitFor();
+        assert.equal(await dialog.locator('[data-copy-command]').isDisabled(),true);
+        assert.equal((await dialog.locator('.cmd-output').innerText()).includes('docker run'),false);
+        continue;
+      }
+      await page.waitForFunction(()=>document.querySelector('[data-copy-command]')?.disabled === false);
       const command = await dialog.locator('.cmd-output').innerText();
       assert.match(command, os === 'windows' ? /powershell|Invoke-WebRequest|\.ps1/i : os === 'docker' ? /docker/ : /curl|wget/);
       if (os !== 'windows' && os !== 'docker') assert.match(command, /\.sh/);

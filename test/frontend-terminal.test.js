@@ -34,9 +34,9 @@ test('terminal setup keeps tokens out of browser storage and supplies the instal
   const composable = await source('src/frontend/composables/useTerminal.js')
   assert.doesNotMatch(modal + composable, /localStorage|sessionStorage|createLiveSocket|searchParams\.set/)
   assert.doesNotMatch(modal, /terminalPath|terminalRisk|usePasswordVisibility/)
-  assert.match(modal, /terminal_read_install/)
+  assert.match(modal, /node_read_install/)
   const admin = await source('src/frontend/views/admin/index.vue')
-  assert.match(admin, /-terminal=1 --install-terminal-token=/)
+  assert.match(admin, /--install-node-token=/)
 })
 
 test('terminal HTTP errors preserve canonical reason without changing ordinary 401/403 policy', async () => {

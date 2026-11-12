@@ -400,7 +400,7 @@ export const fetchAllHistory = async (id, hours, apiIndex = 0) => {
   return Array.isArray(result.data) ? result.data : []
 }
 
-const TERMINAL_ACTIONS = new Set(['terminal_read_install', 'terminal_enable_install', 'terminal_prepare_install', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close'])
+const TERMINAL_ACTIONS = new Set(['node_read_install', 'node_reset_token', 'node_prepare_registration', 'terminal_read_install', 'terminal_enable_install', 'terminal_prepare_install', 'terminal_revoke_node', 'terminal_status', 'terminal_open', 'terminal_renew', 'terminal_close'])
 
 export const getTerminalBase = (apiIndex = 0) => {
   const bases = getApiBases()

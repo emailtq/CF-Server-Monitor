@@ -66,6 +66,13 @@ param(
     [switch]$STA
 )
 
+# Fail before STA relaunch, filesystem changes or service creation. Cleanup remains available.
+if ($Action -notin @("uninstall", "status", "stop")) {
+    [Console]::Error.WriteLine("This legacy Agent is retired: node-token reporting requires reinstalling with the maintained Go Agent.")
+    [Console]::Error.WriteLine("Use the verified download in /admin, or https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.ps1 after a token-capable release is published.")
+    exit 1
+}
+
 if (-not $STA -and $host.Runspace.ApartmentState -ne 'STA') {
     if ($MyInvocation.MyCommand.Path) {
         $scriptPath = $MyInvocation.MyCommand.Path

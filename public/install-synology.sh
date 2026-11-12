@@ -5,6 +5,16 @@
 # 与 install.sh 功能一致，针对群晖系统做了路径、服务管理、命令兼容性适配
 # ==============================================================================
 
+# Retain cleanup for existing installations; this retired Agent cannot report with node tokens.
+case "${1:-}" in
+    uninstall|remove|delete|purge|status|stop) ;;
+    *)
+        printf "%s\n" "This legacy Agent is retired: node-token reporting requires reinstalling with the maintained Go Agent." >&2
+        printf "%s\n" "Use the verified download in /admin (all existing platforms), or https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh after a token-capable release is published." >&2
+        exit 1
+        ;;
+esac
+
 set -euo pipefail
 
 AGENT_VERSION="1.3.8"

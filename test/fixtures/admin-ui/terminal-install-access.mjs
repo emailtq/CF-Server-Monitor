@@ -43,7 +43,7 @@ try {
       if (holdRelease) { holdRelease=false; await new Promise(resolve=>{releaseMetadata=resolve;}); }
       const tag = url.pathname.includes('/tags/') ? decodeURIComponent(url.pathname.split('/tags/')[1]) : 'v9.0';
       if (tag === 'missing') return route.fulfill({status:404,json:{message:'Not Found'}});
-      if (url.pathname.includes('/contents/')) return route.fulfill({json:{encoding:'base64',content:Buffer.from(url.pathname.includes('terminal_control.go') ? 'func (a *Agent) startTerminal(ctx context.Context) {}' : url.search.includes('v0.1') ? '// old' : 'fs.BoolVar(&terminal,"terminal",false,""); fs.StringVar(&token,"terminal-token-file","","")').toString('base64')}});
+      if (url.pathname.includes('/contents/')) return route.fulfill({json:{encoding:'base64',content:Buffer.from(url.pathname.includes('terminal_control.go') ? 'func (a *Agent) startTerminal(ctx context.Context) {}' : url.search.includes('v0.1') ? '// old' : 'fs.BoolVar(&terminal,"terminal",false,""); fs.StringVar(&token,"token-file","",""); fs.StringVar(&key,"register-key","","")').toString('base64')}});
       return route.fulfill({json:{tag_name:tag,draft:false,assets:['linux-amd64','darwin-arm64','windows-amd64.exe','freebsd-amd64'].map(platform=>({name:'cf-probe-'+platform,state:'uploaded',browser_download_url:'https://github.com/emailtq/cfsm-agent/releases/download/'+tag+'/cf-probe-'+platform}))}});
     }
     if (url.origin === 'https://ghcr.io') return route.fulfill({json:url.pathname === '/token' ? {token:'synthetic-public-registry'} : {schemaVersion:2,manifests:[{}]}});
@@ -52,15 +52,15 @@ try {
       const data = req.postDataJSON();
       report.actions.push({action:data.action,serverId:data.serverId,terminal:data.terminal,acceptRisk:data.acceptRisk});
       if (data.action === 'agent_install_image') return route.fulfill({json:{available:true}});
-      if (data.action.startsWith('terminal_')) {
+      if (data.action.startsWith('terminal_') || data.action.startsWith('node_')) {
         if (failStatus && data.action === 'terminal_status') return route.fulfill({status:503,json:{error:'terminal_query_failed'}});
         const response = await h.mf.dispatchFetch(req.url(), {method:'POST',headers:await req.allHeaders(),body:req.postData()});
         const body = await response.text();
-        if (hold && ['terminal_read_install','terminal_enable_install','terminal_prepare_install'].includes(data.action)) { hold=false; await new Promise(resolve=>{release=resolve;}); }
-        if (lostRotation && data.action === 'terminal_prepare_install') { lostRotation=false; return route.abort(); }
+        if (hold && ['node_read_install','terminal_enable_install','node_reset_token'].includes(data.action)) { hold=false; await new Promise(resolve=>{release=resolve;}); }
+        if (lostRotation && data.action === 'node_reset_token') { lostRotation=false; return route.abort(); }
         return route.fulfill({status:response.status,headers:{'content-type':'application/json'},body});
       }
-      return route.fulfill({json:{settings:{site_title:'CF Monitor',username:'fixture',password_configured:true,terminal_enabled:true,theme_url:'https://github.com/test/theme/tree/main'},servers:[{id:'node-a',name:'Node A',os:'Linux',is_online:true},{id:'node-b',name:'Node B',os:'Windows',is_online:false}],stats:{total:2},api_secret:'synthetic-report-only'}});
+      return route.fulfill({json:{settings:{site_title:'CF Monitor',username:'fixture',password_configured:true,terminal_enabled:true,theme_url:'https://github.com/test/theme/tree/main'},servers:[{id:'node-a',name:'Node A',os:'Linux',is_online:true},{id:'node-b',name:'Node B',os:'Windows',is_online:false}],stats:{total:2}}});
     }
     if (url.pathname === '/api/config' || url.pathname === '/theme') return route.fulfill({json:{}});
     const target = url.pathname === '/admin' ? '/test/fixtures/admin-ui/terminal-install-access.html' : url.pathname;
@@ -77,11 +77,11 @@ try {
   const dialog = page.getByRole('dialog');
   const versionInput = dialog.locator('[data-install-version]');
   const command = () => dialog.locator('.cmd-output').innerText();
-  const mutations = () => report.actions.filter(a=>['terminal_prepare_install','terminal_enable_install','terminal_revoke_node'].includes(a.action)).length;
+  const mutations = () => report.actions.filter(a=>['node_reset_token','terminal_prepare_install','terminal_enable_install','terminal_revoke_node'].includes(a.action)).length;
   const ready = () => page.waitForFunction(()=>!document.querySelector('[data-copy-command]')?.disabled);
   const toggle = () => dialog.locator('[data-terminal-install]');
   const rotate = () => dialog.locator('[data-terminal-reissue]');
-  const currentCredential = async () => (await (await h.action('terminal_read_install',{serverId:'node-a'})).json()).token;
+  const currentCredential = async () => (await (await h.action('node_read_install',{serverId:'node-a'})).json()).token;
   await check('trusted theme keeps original download options and default-off open only reads existing credential', async () => {
     const before = mutations(), token = await currentCredential();
     await install(); await ready();
@@ -90,7 +90,7 @@ try {
     assert.equal(await dialog.locator('[data-terminal-risk], [data-terminal-path], #terminal-install-token').count(),0);
     assert.equal(await toggle().isChecked(),false);
     assert.match(await command(),/-terminal=0(?:\s|$)/);
-    assert.equal((await command()).includes(token),false);
+    assert.equal((await command()).includes(token),true);
     assert.equal(mutations(),before);
     await page.keyboard.press('Escape');
     await install(); await ready();
@@ -112,7 +112,8 @@ try {
   await check('selecting terminal reuses long-lived Token and copies the single complete install command', async () => {
     const token=await currentCredential(), before=mutations();
     await toggle().check(); await ready();
-    assert.ok((await command()).includes("-terminal=1 --install-terminal-token='"+token+"'"));
+    assert.ok((await command()).includes("--install-node-token='"+token+"'"));
+    assert.match(await command(), /-terminal=1/);
     assert.equal((await command()).includes('-terminal-token-file'),false);
     await dialog.locator('[data-copy-command]').click();
     assert.equal(await page.evaluate(()=>window.fixtureClipboard),await command());
@@ -120,18 +121,18 @@ try {
     assert.equal(await page.evaluate(t=>Object.values({...localStorage,...sessionStorage}).some(v=>String(v).includes(t)),token),false);
     await toggle().uncheck(); await ready();
     assert.match(await command(),/-terminal=0(?:\s|$)/);
-    assert.equal((await command()).includes(token),false);
+    assert.equal((await command()).includes(token),true);
   });
-  await check('fixed versions are checked individually: old monitoring works, supported terminal works, absent downloads block copy', async () => {
+  await check('fixed versions are checked individually: old protocol blocks, supported terminal works, absent downloads block copy', async () => {
     const before=mutations();
-    await versionInput.fill('v0.1'); await ready();
-    assert.match(await command(),/--install-version='v0.1'/);
-    assert.match(await command(),/-terminal=0(?:\s|$)/);
+    await versionInput.fill('v0.1'); await dialog.locator('[data-install-blocked]').waitFor();
+    assert.equal(await dialog.locator('[data-copy-command]').isDisabled(),true);
+    assert.ok(!(await command()).includes('curl'));
     assert.equal(await toggle().isDisabled(),true);
     await versionInput.fill('v9.0'); await ready();
     assert.equal(await toggle().isDisabled(),false);
     await toggle().check(); await ready();
-    assert.match(await command(),/-terminal=1 --install-terminal-token=/);
+    assert.match(await command(),/--install-node-token=/);
     await versionInput.fill('missing');
     await dialog.locator('[data-install-blocked]').waitFor();
     assert.equal(await dialog.locator('[data-copy-command]').isDisabled(),true);
@@ -143,10 +144,11 @@ try {
     assert.equal(mutations(),before);
     await versionInput.fill(''); await ready();
   });
-  await check('all native and Docker monitoring options remain available, terminal only Linux', async () => {
+  await check('native monitoring options remain available; unverified Docker stays blocked, terminal only Linux', async () => {
     for(const os of ['windows','mac','unix','docker','linux']) {
-      await dialog.locator('[data-target-os]').selectOption(os); await ready();
-      assert.ok((await command()).length>0);
+      await dialog.locator('[data-target-os]').selectOption(os);
+      if(os === 'docker') {await dialog.locator('[data-install-blocked]').waitFor();assert.equal(await dialog.locator('[data-copy-command]').isDisabled(),true);continue;}
+      await ready();assert.ok((await command()).length>0);
       assert.equal(await toggle().isDisabled(),os !== 'linux');
       assert.equal(await dialog.locator('[data-auto-update]').count(),os === 'docker' ? 0 : 1);
     }
@@ -190,7 +192,7 @@ try {
     hold=true; await install();
     await until(()=>!!release);
     await page.keyboard.press('Escape'); await dialog.waitFor({state:'hidden'});
-    await install('node-b'); await ready();
+    await install('node-b'); await dialog.locator('[data-terminal-error]').waitFor();
     release(); release=null;
     await page.waitForTimeout(50);
     assert.equal(await toggle().isChecked(),false);
@@ -198,7 +200,7 @@ try {
     await page.keyboard.press('Escape');
   });
   await check('legacy hash-only credential asks for explicit reissue; no hidden prepare or manual path', async () => {
-    await install('node-b'); await ready();
+    await install('node-b'); await dialog.locator('[data-terminal-error]').waitFor();
     const before=mutations();
     await toggle().check();
     await dialog.locator('[data-terminal-error]').waitFor();
@@ -224,7 +226,7 @@ try {
     releaseMetadata(); releaseMetadata=null;
     await ready();
     assert.equal(await toggle().isChecked(),false);
-    assert.equal((await command()).includes(await currentCredential()),false);
+    assert.equal((await command()).includes(await currentCredential()),true);
     await page.keyboard.press('Escape');
     await page.evaluate(async file=>{const i18n=await import(file);await i18n.setLanguage('en');},exports['/src/frontend/utils/i18n.js']);
   });
@@ -233,13 +235,13 @@ try {
     await install('node-b'); await ready();
     const before=mutations();
     await toggle().check(); await ready();
-    const first=await (await h.action('terminal_read_install',{serverId:'node-b'})).json();
+    const first=await (await h.action('node_read_install',{serverId:'node-b'})).json();
     assert.match(first.token,/^[a-f0-9]{64}$/);
     assert.ok((await command()).includes(first.token));
     assert.equal(mutations(),before+1);
     await toggle().uncheck(); await toggle().check(); await ready();
     assert.equal(mutations(),before+1);
-    assert.equal((await (await h.action('terminal_read_install',{serverId:'node-b'})).json()).token,first.token);
+    assert.equal((await (await h.action('node_read_install',{serverId:'node-b'})).json()).token,first.token);
     await page.keyboard.press('Escape');
   });
   await check('source-derived geometry and all seven locales fit 320,390,1440 light/dark without overflow', async () => {

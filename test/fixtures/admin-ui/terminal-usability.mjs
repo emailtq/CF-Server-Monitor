@@ -51,8 +51,8 @@ try {
   await context.route('**/*',async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === 'https://api.github.com') {
-      if (url.pathname.includes('/contents/')) return route.fulfill({json:{encoding:'base64',content:Buffer.from(url.pathname.includes('terminal_control.go') ? 'func (a *Agent) startTerminal(ctx context.Context) {}' : 'fs.BoolVar(&terminal,"terminal",false,""); fs.StringVar(&token,"terminal-token-file","","")').toString('base64')}});
-      return route.fulfill({json:{tag_name:'v1.1.5',draft:false,assets:[{name:'cf-probe-linux-amd64',state:'uploaded',browser_download_url:'https://github.com/emailtq/cfsm-agent/releases/download/v1.1.5/cf-probe-linux-amd64'}]}});
+      if (url.pathname.includes('/contents/')) return route.fulfill({json:{encoding:'base64',content:Buffer.from(url.pathname.includes('terminal_control.go') ? 'func (a *Agent) startTerminal(ctx context.Context) {}' : 'fs.BoolVar(&terminal,"terminal",false,""); fs.StringVar(&token,"token-file","",""); fs.StringVar(&key,"register-key","","")').toString('base64')}});
+      return route.fulfill({json:{tag_name:'task5.synthetic',draft:false,assets:[{name:'cf-probe-linux-amd64',state:'uploaded',browser_download_url:'https://github.com/emailtq/cfsm-agent/releases/download/task5.synthetic/cf-probe-linux-amd64'}]}});
     }
     if (url.origin !== origin) return route.abort();
     if (url.pathname === '/admin/api') {
@@ -63,9 +63,9 @@ try {
         if (holdNext) { holdNext=false; await new Promise(resolve=>held.push(resolve)); }
         return route.fulfill(failed ? {status:503,json:{error:'terminal_query_failed'}} : {json:data.serverIds ? {nodes:Object.fromEntries(data.serverIds.map(id=>[id,snapshot]))} : snapshot}).catch(()=>{});
       }
-      if (data.action === 'terminal_read_install') return route.fulfill({json:{enabled:true,token:'a'.repeat(64)}});
+      if (data.action === 'node_read_install') return route.fulfill({json:{enabled:true,token:'a'.repeat(64),version:1,tokenVersion:1,needsRotation:false}});
       if (data.action === 'logout') { if (holdLogout) await new Promise(resolve=>held.push(resolve)); return route.fulfill({json:{success:true}}).catch(()=>{}); }
-      return route.fulfill({json:{settings:{site_title:'Fixture',terminal_enabled:true,username:'fixture',password_configured:true},servers:Array.from({length:serverCount},(_,i)=>({id:i ? `node-${i}` : 'node-a',name:i ? `Node ${i}` : site ? 'Site B Node' : 'Site A Node',os:'Linux',is_online:true})),stats:{total:serverCount},api_secret:'synthetic-report-only'}});
+      return route.fulfill({json:{settings:{site_title:'Fixture',terminal_enabled:true,username:'fixture',password_configured:true},servers:Array.from({length:serverCount},(_,i)=>({id:i ? `node-${i}` : 'node-a',name:i ? `Node ${i}` : site ? 'Site B Node' : 'Site A Node',os:'Linux',is_online:true})),stats:{total:serverCount}}});
     }
     if (url.pathname === '/api/config' || url.pathname === '/theme') return route.fulfill({json:{}});
     const target = url.pathname === '/admin' ? '/test/fixtures/admin-ui/terminal-install-access.html' : url.pathname;

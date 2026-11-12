@@ -232,6 +232,10 @@
         :gh-proxy="autoDiscoveryGhProxy"
         :install-command="getAutoDiscoveryInstallCommand()"
         :copied="autoDiscoveryCopied"
+        :command-error="isValidRegistrationName(autoDiscoveryName) ? registrationError : 'invalidServerName'"
+        :api-index="selectedApiIndex"
+        :request-owner="requestOwner"
+        @install-available="autoDiscoveryBlocked = !$event"
         @close="closeAutoDiscoveryModal"
         @copy-cmd="copyAutoDiscoveryCmd"
         @update:target-os="autoDiscoveryTargetOs = $event"
@@ -862,7 +866,6 @@ const settings = ref({
   ua: 'cfsm'
 })
 const defaultSettings = JSON.parse(JSON.stringify(settings.value))
-const apiSecret = ref('')
 const cacheRefreshing = ref(false)
 const savedAutoDiscovery = ref(false)
 const changeAdminPassword = ref(false)
@@ -1041,6 +1044,42 @@ const autoDiscoveryVersion = ref('')
 const autoDiscoveryAutoUpdate = ref(false)
 const autoDiscoveryGhProxy = ref('')
 const autoDiscoveryCopied = ref(false)
+const autoDiscoveryBlocked = ref(true)
+const registrationKey = ref('')
+const registrationExpiresAt = ref(0)
+const registrationError = ref('')
+let registrationSequence = 0, registrationExpiryTimer = null
+const clearRegistrationKey = () => {
+  registrationSequence++
+  clearTimeout(registrationExpiryTimer)
+  registrationExpiryTimer = null
+  registrationKey.value = registrationError.value = ''
+  registrationExpiresAt.value = 0
+  autoDiscoveryCopied.value = false
+}
+const prepareRegistrationKey = async () => {
+  clearRegistrationKey()
+  const sequence = registrationSequence, owner = requestOwner.value
+  const current = () => sequence === registrationSequence && showAutoDiscoveryModal.value && owner() && savedAutoDiscovery.value
+  try {
+    const result = await adminApi({action:'node_prepare_registration'},selectedApiIndex.value,current)
+    if (!current()) return
+    if (result.error) throw new Error(result.error)
+    const data = result.data
+    if (!/^[a-f0-9]{64}$/.test(data?.key) || !Number.isSafeInteger(data.expiresAt) || data.expiresAt <= Date.now() || data.expiresAt > Date.now() + 15 * 60 * 1000) throw new Error('node_registration_failed')
+    registrationKey.value = data.key
+    registrationExpiresAt.value = data.expiresAt
+    registrationExpiryTimer = setTimeout(() => {
+      if (!current()) return
+      clearRegistrationKey()
+      registrationError.value = 'node_registration_expired'
+    },data.expiresAt - Date.now())
+  } catch (error) { if (current()) registrationError.value = error.message }
+}
+watch([showAutoDiscoveryModal,savedAutoDiscovery], ([show,enabled]) => {
+  if (!show || !enabled) { clearRegistrationKey(); showAutoDiscoveryModal.value = false }
+}, {flush:'sync'})
+onBeforeUnmount(clearRegistrationKey)
 
 const isWssReportEnabled = computed(() => settings.value.wss_report_enabled === true)
 const getEffectiveConnectionMode = (value) => {
@@ -1240,7 +1279,6 @@ const resetAdminContext = () => {
   stats.value = { total: '-', online: 0, offline: 0, avg_cpu: 0 }
   groups.value = []
   latestAgentVersion.value = ''
-  apiSecret.value = ''
   changeAdminPassword.value = false
   newServerName.value = ''
   newServerGroup.value = ''
@@ -1383,7 +1421,6 @@ const loadSettings = async () => {
       }
       applyMikusThemeOptions(settingsData.theme_options)
       changeAdminPassword.value = !settings.value.password_configured || !String(settings.value.username || '').trim()
-      apiSecret.value = data.api_secret || ''
       // 只有已保存到服务端的自动发现开关才提供复制安装命令，避免复制出当前并未生效的命令
       savedAutoDiscovery.value = settings.value.auto_discovery
     }
@@ -1658,11 +1695,6 @@ const addServer = async () => {
   }
 }
 
-const getInstallCommand = (serverId) => {
-  const HOST = selectedApiBase.value
-  return `curl -sL ${HOST}/install.sh | bash -s install -id=${serverId} -secret='${apiSecret.value}' -url=${HOST}/update`
-}
-
 const resolveServerPingNode = (server, field) => {
   const value = server?.[field]
   const explicitEmpty = value === 0 || value === '0'
@@ -1817,7 +1849,7 @@ const installUserAgent = () => {
 }
 
 const getCustomInstallCommand = () => {
-  if (installCommandBlocked.value) return ''
+  if (installCommandBlocked.value || !/^[a-f0-9]{64}$/.test(terminalInstallOptions.value.token)) return ''
   const terminalOptions = terminalInstallOptions.value
   if (terminalOptions.selected && !terminalOptions.enabled) return ''
   const HOST = selectedApiBase.value
@@ -1825,7 +1857,7 @@ const getCustomInstallCommand = () => {
   const proxy = installGhProxy.value.trim()
   const version = installVersion.value.trim()
   const isDedicatedUserInstall = targetOs.value === 'linux' && installMode.value === 'cfsm-user'
-  // 安装命令只保留必须写入本地的参数：id / secret / url / auto_update，
+  // 安装命令只保留必须写入本地的参数：id / node token / url / auto_update，
   // 以及站点 UA 非默认值时的 -ua（否则首次上报就会被 /update 的防火墙规则拦下）。
   // collect_interval、interval、connection_mode、ping_mode、reset_day、ct/cu/cm/bd、node_1..4、interface、rx/tx_correction
   // 等属于后端 /api 动态下发的配置（见 agentConfig.buildAgentConfig），Agent 启动后会自动拉取，无需写进安装命令。
@@ -1836,9 +1868,9 @@ const getCustomInstallCommand = () => {
     if (proxy) params.push(`--install-ghproxy=${quotePowerShellArg(proxy)}`)
     if (version) params.push(`--install-version=${quotePowerShellArg(version)}`)
     params.push(
-      `-id='${copyServerId.value}'`,
-      `-secret=${quotePowerShellArg(apiSecret.value)}`,
-      `-url='${HOST}/update'`,
+      `-id=${quotePowerShellArg(copyServerId.value)}`,
+      `--install-node-token=${quotePowerShellArg(terminalOptions.token)}`,
+      `-url=${quotePowerShellArg(`${HOST}/update`)}`,
       `-auto_update='${autoUpdateFlag}'`
     )
     params.push('-terminal=0')
@@ -1855,7 +1887,7 @@ const getCustomInstallCommand = () => {
     return [
       'docker run -d --name cf-probe --restart=unless-stopped --network=host \\',
       '  -v cf-probe-data:/data \\',
-      `  -e SERVER_ID=${quotePosixShellArg(copyServerId.value)} -e SECRET=${quotePosixShellArg(apiSecret.value)} -e WORKER_URL=${quotePosixShellArg(`${HOST}/update`)}${uaEnv} \\`,
+      `  -e SERVER_ID=${quotePosixShellArg(copyServerId.value)} -e NODE_TOKEN=${quotePosixShellArg(terminalOptions.token)} -e WORKER_URL=${quotePosixShellArg(`${HOST}/update`)}${uaEnv} \\`,
       `  ${image}`
     ].join('\n')
   }
@@ -1863,12 +1895,12 @@ const getCustomInstallCommand = () => {
   if (proxy) params.push(`--install-ghproxy=${quotePosixShellArg(proxy)}`)
   if (version) params.push(`--install-version=${quotePosixShellArg(version)}`)
   params.push(
-    `-id=${copyServerId.value}`,
-    `-secret=${quotePosixShellArg(apiSecret.value)}`,
-    `-url=${HOST}/update`,
+    `-id=${quotePosixShellArg(copyServerId.value)}`,
+    `--install-node-token=${quotePosixShellArg(terminalOptions.token)}`,
+    `-url=${quotePosixShellArg(`${HOST}/update`)}`,
     `-auto_update=${autoUpdateFlag}`
   )
-  params.push(terminalOptions.enabled ? `-terminal=1 --install-terminal-token=${quotePosixShellArg(terminalOptions.token)}` : '-terminal=0')
+  params.push(`-terminal=${terminalOptions.enabled ? 1 : 0}`)
   const ua = installUserAgent()
   if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
   const ghUrl = buildGhRawUrl(proxy, `/${AGENT_REPOSITORY}/${AGENT_INSTALL_REF}/install.sh`)
@@ -1879,27 +1911,27 @@ const getCustomInstallCommand = () => {
   return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
 }
 
-// 自动发现模式下安装命令不带 -id：Agent 首次上报时由服务端自动创建服务器。
+// 自动发现命令先用短期 key 注册新节点，再用返回的独立 token 上报。
 // name 留空时服务端回退到请求来源 IP；安装用户、代理、版本、名称与自动更新仅影响本次生成的命令。
+const isValidRegistrationName = name => typeof name === 'string' && name.length <= 100 && !/[\u0000-\u001f\u007f]/.test(name)
 const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode = 'current-user', ghProxy = '', name = '', version = '', autoUpdate = false } = {}) => {
+  if (!isValidRegistrationName(name)) return ''
   const HOST = selectedApiBase.value
   const proxy = String(ghProxy || '').trim()
   const agentVersion = String(version || '').trim()
   const autoUpdateFlag = autoUpdate ? 1 : 0
-  const serverName = String(name || '')
-    .replace(/[\u0000-\u001f\u007f]/g, '')
-    .trim()
-    .slice(0, 100)
+  const serverName = name.trim()
 
   if (os === 'windows') {
     const params = ['install']
     if (proxy) params.push(`--install-ghproxy=${quotePowerShellArg(proxy)}`)
     if (agentVersion) params.push(`--install-version=${quotePowerShellArg(agentVersion)}`)
     params.push(
-      `-secret=${quotePowerShellArg(apiSecret.value)}`,
-      `-url='${HOST}/update'`,
+      `-register-key=${quotePowerShellArg(registrationKey.value)}`,
+      `-url=${quotePowerShellArg(`${HOST}/update`)}`,
       `-auto_update='${autoUpdateFlag}'`
     )
+    params.push('-terminal=0')
     if (serverName) params.push(`-name=${quotePowerShellArg(serverName)}`)
     const ua = installUserAgent()
     if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
@@ -1911,10 +1943,11 @@ const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode =
   if (proxy) params.push(`--install-ghproxy=${quotePosixShellArg(proxy)}`)
   if (agentVersion) params.push(`--install-version=${quotePosixShellArg(agentVersion)}`)
   params.push(
-    `-secret=${quotePosixShellArg(apiSecret.value)}`,
-    `-url=${HOST}/update`,
+    `-register-key=${quotePosixShellArg(registrationKey.value)}`,
+    `-url=${quotePosixShellArg(`${HOST}/update`)}`,
     `-auto_update=${autoUpdateFlag}`
   )
+  params.push('-terminal=0')
   if (serverName) params.push(`-name=${quotePosixShellArg(serverName)}`)
   const ua = installUserAgent()
   if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
@@ -1925,7 +1958,7 @@ const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode =
   return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
 }
 
-const getAutoDiscoveryInstallCommand = () => buildAutoDiscoveryCommand({
+const getAutoDiscoveryInstallCommand = () => !registrationKey.value || registrationExpiresAt.value <= Date.now() || autoDiscoveryBlocked.value ? '' : buildAutoDiscoveryCommand({
   targetOs: autoDiscoveryTargetOs.value,
   installMode: autoDiscoveryInstallMode.value,
   ghProxy: autoDiscoveryGhProxy.value,
@@ -1942,6 +1975,7 @@ const openAutoDiscoveryModal = () => {
 
   autoDiscoveryCopied.value = false
   showAutoDiscoveryModal.value = true
+  void prepareRegistrationKey()
 }
 
 const closeAutoDiscoveryModal = () => {
@@ -1949,7 +1983,11 @@ const closeAutoDiscoveryModal = () => {
 }
 
 const copyAutoDiscoveryCmd = async () => {
-  const copied = await copyTextToClipboard(getAutoDiscoveryInstallCommand())
+  const command = getAutoDiscoveryInstallCommand()
+  if (!command) return
+  const sequence = registrationSequence, owner = requestOwner.value
+  const copied = await copyTextToClipboard(command)
+  if (sequence !== registrationSequence || !showAutoDiscoveryModal.value || !owner()) return
   if (!copied) {
     alertMessage.value = trans.value.httpsRequired
     return
@@ -1964,7 +2002,9 @@ const copyAutoDiscoveryCmd = async () => {
 const copyCustomCmd = async () => {
   const cmd = getCustomInstallCommand()
   if (!cmd) return
+  const owner = requestOwner.value, serverId = copyServerId.value
   const copied = await copyTextToClipboard(cmd)
+  if (!owner() || !showCopyModal.value || serverId !== copyServerId.value) return
   if (!copied) {
     alertMessage.value = trans.value.httpsRequired
     return

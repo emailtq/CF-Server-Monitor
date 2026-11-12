@@ -8,7 +8,7 @@ import { generateToken } from '../src/middleware/auth.js';
 const repo = 'https://api.github.com/repos/emailtq/cfsm-agent';
 const asset = name => ({name, state:'uploaded', browser_download_url:`https://github.com/emailtq/cfsm-agent/releases/download/v9.0/${name}`});
 const release = {tag_name:'v9.0', draft:false, assets:[asset('cf-probe-linux-amd64'), asset('cf-probe-windows-amd64.exe'), asset('cf-probe-darwin-arm64')]};
-function transport(data = release, source = 'fs.BoolVar(&terminal, "terminal", false, "")\nfs.StringVar(&token, "terminal-token-file", "", "")') {
+function transport(data = release, source = 'fs.StringVar(&terminal, "terminal", "", "")\nfs.StringVar(&token, "token-file", "", "")\nfs.StringVar(&key, "register-key", "", "")') {
   const calls = [];
   const request = async (url, options) => {
     calls.push([url, options]);
@@ -29,9 +29,9 @@ test('latest and pinned releases verify actual native assets and same-tag termin
     assert.ok(t.calls.every(([,opts])=>opts.credentials === 'omit'));
   }
 });
-test('old CLI still allows monitoring but not terminal; other native platforms stay off', async () => {
+test('old CLI fails closed for monitoring too; token-capable other native platforms keep terminal off', async () => {
   const old = transport(release,'// historical CLI');
-  assert.deepEqual(await checkAgentInstallRelease('linux','v9.0',undefined,old.request),{available:true,terminal:false,version:'v9.0'});
+  assert.deepEqual(await checkAgentInstallRelease('linux','v9.0',undefined,old.request),{available:false,terminal:false,version:''});
   for (const os of ['windows','mac','unix']) {
     const t = transport();
     assert.equal((await checkAgentInstallRelease(os,'v9.0',undefined,t.request)).available,true);
@@ -43,9 +43,9 @@ test('missing, draft, mismatched or absent platform assets never produce availab
     assert.equal((await checkAgentInstallRelease('linux','v9.0',undefined,transport(data).request)).available,false);
   }
 });
-test('source query failure cannot claim terminal support or hide valid monitoring assets', async () => {
+test('source query failure cannot claim node-token monitoring support from assets alone', async () => {
   const result = await checkAgentInstallRelease('linux','v9.0',undefined,async url=>url.includes('/releases/') ? Response.json(release) : new Response('',{status:404}));
-  assert.equal(result.available,true);
+  assert.equal(result.available,false);
   assert.equal(result.terminal,false);
 });
 test('CLI flags without the same-tag terminal implementation cannot claim terminal support', async () => {
@@ -73,6 +73,20 @@ test('Docker never falls back to browser registry fetch without an authenticated
   const result=await checkAgentInstallRelease('docker','latest',undefined,async()=>{calls++;throw new Error();});
   assert.equal(result.available,false);
   assert.equal(calls,0);
+});
+
+test('Docker manifest presence is not evidence of the node-token protocol', async () => {
+  const t=transport();
+  const result=await checkAgentInstallRelease('docker','v9.0',undefined,t.request,async()=>({available:true}));
+  assert.equal(result.available,false);
+});
+
+test('every platform rejects a CLI missing either token-file or register-key', async () => {
+  for (const os of ['linux','unix','mac','windows']) {
+    for (const source of ['fs.StringVar(&token,"token-file","","")','fs.StringVar(&key,"register-key","","")']) {
+      assert.equal((await checkAgentInstallRelease(os,'v9.0',undefined,transport(release,source).request)).available,false);
+    }
+  }
 });
 
 test('image lookup passes the actual authenticated admin boundary and returns availability only', async () => {

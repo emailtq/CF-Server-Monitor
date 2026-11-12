@@ -51,7 +51,7 @@
         </section>
         <div class="download-option-row">
           <div class="download-option-label">{{ trans.downloadReissueTitle }}<small>{{ trans.downloadReissueHint }}</small></div>
-          <button class="btn" data-terminal-reissue :disabled="!terminalSupported || terminalBusy || credentialLoading" @click="confirmReissue = true">{{ trans.downloadReissue }}</button>
+          <button class="btn" data-terminal-reissue :disabled="!credentialAllowed || terminalBusy || credentialLoading" @click="confirmReissue = true">{{ trans.downloadReissue }}</button>
         </div>
       </div>
     </template>
@@ -94,6 +94,7 @@ const props = defineProps({
 const emit = defineEmits(['close','copy-cmd','update:target-os','update:install-mode','update:install-gh-proxy','update:install-version','update:auto-update','terminal-options','install-available'])
 const terminalSelected = ref(false)
 const terminalToken = ref('')
+const permissionEnabled = ref(false)
 const terminalError = ref('')
 const needsRotation = ref(false)
 const credentialLoading = ref(false)
@@ -111,31 +112,35 @@ const terminalReason = computed(() => {
   return ''
 })
 const terminalSupported = computed(() => !terminalReason.value)
+const credentialAllowed = computed(() => {
+  try { getTerminalBase(props.apiIndex); return true } catch (_) { return false }
+})
 const commandPlaceholder = computed(() => releaseLoading.value ? props.trans.downloadCheckingRelease : !release.value.available ? props.trans.downloadReleaseUnavailable : terminalError.value ? (props.trans[terminalError.value] || props.trans.terminal_request_failed) : props.trans.downloadReadingToken)
 const currentRequest = () => {
   const captured = epoch, owner = props.requestOwner
   return () => captured === epoch && props.show && (!owner || owner())
 }
 const applyCredential = data => {
-  if (!data || (data.token && !/^[a-f0-9]{64}$/.test(data.token))) throw new Error('terminal_request_failed')
-  terminalToken.value = data.token || ''
+  if (!data || !/^[a-f0-9]{64}$/.test(data.token) || data.needsRotation) throw new Error('node_token_reset_required')
+  terminalToken.value = data.token
+  permissionEnabled.value = data.enabled === true
   needsRotation.value = !!data.needsRotation
 }
 const readCredential = async () => {
   const current = currentRequest(), sequence = ++credentialSequence
   credentialLoading.value = true
   try {
-    const result = await adminApi({action:'terminal_read_install',serverId:props.serverId}, props.apiIndex, current)
+    const result = await adminApi({action:'node_read_install',serverId:props.serverId}, props.apiIndex, current)
     if (!current() || sequence !== credentialSequence) return
     if (result.error) throw new Error(result.error)
     applyCredential(result.data)
-    terminalError.value = needsRotation.value && terminalSelected.value ? 'terminal_install_reissue_required' : ''
+    terminalError.value = ''
   } catch (error) {
-    if (current() && sequence === credentialSequence) { terminalToken.value = ''; terminalError.value = error.message }
+    if (current() && sequence === credentialSequence) { terminalToken.value = ''; terminalError.value = error.message; needsRotation.value = error.message === 'node_token_reset_required' }
   } finally { if (current() && sequence === credentialSequence) credentialLoading.value = false }
 }
 const changeCredential = async reissue => {
-  if (terminalBusy.value || !terminalSupported.value) return
+  if (terminalBusy.value || (reissue ? !credentialAllowed.value : !terminalSupported.value)) return
   const current = currentRequest()
   ++credentialSequence
   credentialLoading.value = false
@@ -143,16 +148,16 @@ const changeCredential = async reissue => {
   terminalError.value = ''
   if (reissue) terminalToken.value = ''
   try {
-    const result = await adminApi({action:reissue ? 'terminal_prepare_install' : 'terminal_enable_install',serverId:props.serverId,terminal:true,acceptRisk:true}, props.apiIndex, current)
+    const result = await adminApi(reissue ? {action:'node_reset_token',serverId:props.serverId} : {action:'terminal_enable_install',serverId:props.serverId,terminal:true,acceptRisk:true}, props.apiIndex, current)
     if (!current()) return
     if (result.error) throw new Error(result.error)
     applyCredential(result.data)
-    siteEnabled.value = true
+    if (!reissue) siteEnabled.value = true
   } catch (error) {
     if (current()) {
       // Rotation may have succeeded with its reply lost; never retain a retired command.
       await readCredential()
-      if (current() && !terminalToken.value) terminalError.value = error.message
+      if (current() && (!terminalToken.value || (!reissue && (!permissionEnabled.value || !siteEnabled.value)))) terminalError.value = error.message
     }
   } finally { if (current()) { terminalBusy.value = false; confirmReissue.value = false } }
 }
@@ -160,6 +165,7 @@ const reissueTerminal = () => changeCredential(true)
 const clearTerminal = () => {
   epoch++; credentialSequence++
   terminalSelected.value = terminalBusy.value = credentialLoading.value = confirmReissue.value = needsRotation.value = false
+  permissionEnabled.value = false
   terminalToken.value = terminalError.value = ''
   siteEnabled.value = [true,1,'1','true'].includes(props.settings.terminal_enabled)
 }
@@ -171,10 +177,10 @@ watch([() => props.targetOs, () => props.installVersion], () => { terminalSelect
 watch(terminalSelected, selected => {
   terminalError.value = ''
   if (!selected) return
-  if (needsRotation.value) { terminalError.value = 'terminal_install_reissue_required'; return }
-  if (!terminalToken.value || !siteEnabled.value) void changeCredential(false)
+  if (needsRotation.value) { terminalError.value = 'node_token_reset_required'; return }
+  if (!terminalToken.value || !siteEnabled.value || !permissionEnabled.value) void changeCredential(false)
 }, {flush:'sync'})
-watch([terminalSelected, terminalToken, terminalBusy, credentialLoading, needsRotation], () => emit('terminal-options', {selected:terminalSelected.value,enabled:terminalSelected.value && !!terminalToken.value && !terminalBusy.value && !credentialLoading.value && !needsRotation.value,token:terminalToken.value}), {flush:'sync', immediate:true})
+watch([terminalSelected, terminalToken, terminalBusy, credentialLoading, needsRotation, permissionEnabled, siteEnabled], () => emit('terminal-options', {selected:terminalSelected.value,enabled:terminalSelected.value && siteEnabled.value && permissionEnabled.value && !terminalBusy.value,token:!terminalBusy.value && !credentialLoading.value && !needsRotation.value ? terminalToken.value : ''}), {flush:'sync', immediate:true})
 watch([() => props.show, () => props.targetOs, () => props.installVersion, () => props.serverId, () => props.apiIndex, () => props.trans, () => props.requestOwner], async (_, __, onCleanup) => {
   const controller = new AbortController(), current = currentRequest()
   onCleanup(() => controller.abort())
@@ -183,10 +189,7 @@ watch([() => props.show, () => props.targetOs, () => props.installVersion, () =>
   emit('install-available',false)
   if (!props.show) return
   try {
-    const value = await checkAgentInstallRelease(props.targetOs,props.installVersion,controller.signal,fetch,async tag => {
-      const result = await adminApi({action:'agent_install_image',tag},props.apiIndex,current)
-      return result.data
-    })
+    const value = await checkAgentInstallRelease(props.targetOs,props.installVersion,controller.signal)
     if (controller.signal.aborted || !current()) return
     release.value = value
     emit('install-available',value.available)

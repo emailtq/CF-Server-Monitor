@@ -5,6 +5,16 @@
 # Fixes: 1. 独立协程无 wait 阻塞 2. 原子化原子覆盖 3. 兼容全版本 Systemd 4. 严格 set -u 闭环
 # ==============================================================================
 
+# Retain cleanup for existing installations; this retired Agent cannot report with node tokens.
+case "${1:-}" in
+    uninstall|remove|delete|purge|status|stop) ;;
+    *)
+        printf "%s\n" "This legacy Agent is retired: node-token reporting requires reinstalling with the maintained Go Agent." >&2
+        printf "%s\n" "Use the verified download in /admin (all existing platforms), or https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh after a token-capable release is published." >&2
+        exit 1
+        ;;
+esac
+
 set -euo pipefail
 
 AGENT_VERSION="1.3.8"

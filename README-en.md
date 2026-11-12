@@ -15,7 +15,7 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#license)
 
-[Live Demo](https://demo.huilang.me/) · [API Reference](API.md) · [Go Agent Guide](https://github.com/huilang-me/cfsm-agent) · [Theme Development](theme-develop.md) · [Theme AI Prompt](theme-ai-prompt.md)
+[Live Demo](https://demo.huilang.me/) · [API Reference](API.md) · [Go Agent Guide](https://github.com/emailtq/cfsm-agent) · [Theme Development](theme-develop.md) · [Theme AI Prompt](theme-ai-prompt.md)
 
 </div>
 
@@ -25,7 +25,7 @@ CF-Server-Monitor is a server monitoring system designed for Cloudflare Workers.
 
 It supports mainstream Linux distributions, Alpine Linux, OpenWrt, macOS, Synology DSM, Feiniu fnOS, Windows, and similar systems, and provides Docker image deployment.
 
-Security is stricter by design: by default, the Agent only reports metrics one way and terminal access is disabled. Optional Linux Shell terminals require explicit consent to enable site access, node authorization, and the Agent's local opt-in. This is not SSH and is not a filesystem sandbox; the Shell has the Agent service user's privileges, so a root Agent grants a root Shell. Prefer a non-root user to reduce blast radius.
+Security is stricter by design: by default, the Agent only reports metrics one way and terminal access is disabled. An administrator selects local terminal support in the download dialog and installs on the host before using the optional Linux Shell from the Worker same-origin built-in admin. Site/node permission and local opt-in remain required, but there is no separate blanket authorization action. This is not SSH or a filesystem sandbox; the Shell has the Agent service user's privileges, so a root Agent grants a root Shell. Prefer a non-root user to reduce blast radius.
 
 ## Contents
 
@@ -53,9 +53,9 @@ Security is stricter by design: by default, the Agent only reports metrics one w
 Compared with traditional controller-style monitoring tools, CF-Server-Monitor is designed for low cost, low maintenance, and security-first operation:
 
 - Free hosting: the dashboard, API, database, and realtime push run on Cloudflare and are designed around free-tier limits; the default 60-second reporting interval supports roughly 60 servers, and changing it to 120 seconds can theoretically double that capacity.
-- Safer one-way reporting: no WebSSH, no remote command delivery, and no controller channel; the Agent only reports metrics to the Worker.
+- Monitoring by default: with terminal disabled, the Agent reports metrics and offers no remote Shell. Optional Linux terminals require administrator login and local installation opt-in; when enabled, Shell commands use a protected WSS control channel, not SSH.
 - Practical feature coverage: realtime metrics, history charts, maps, offline notifications, resource alerts, expiration reminders, theme store, multi-language UI, and mobile support are built in.
-- Dynamic Agent config delivery: ping nodes, collect interval, report interval, network interfaces, traffic reset day, upload/download traffic correction, and similar parameters can be changed from the admin panel and picked up by the Agent later; Worker URL, `API_SECRET`, and the auto-update switch require running the install command again.
+- Dynamic Agent config delivery: ping nodes, collect interval, report interval, network interfaces, traffic reset day, upload/download traffic correction, and similar parameters can be changed from the admin panel and picked up by the Agent later; Worker URL, node token, and the auto-update switch require running the install command again.
 - Non-root installation: Linux systems with `systemd --user` can run the Agent as a regular user, with files stored under `~/.cf-probe/`.
 - Clock-tolerant reporting: the Go Agent uses the Worker's HTTP `Date` response header to calibrate sample timestamps and `boot_time`, reducing the impact of wrong local server time on history charts; it does not change the system clock.
 
@@ -68,7 +68,7 @@ Compared with traditional controller-style monitoring tools, CF-Server-Monitor i
 | Network quality | Latency and packet loss tracking for CT, CU, CM, and BGP nodes; when three-net details are enabled, the dashboard samples up to 20 real points from the last 2 hours of D1 history and caches them for 5 minutes |
 | Dashboard views | Bar chart, ring chart, table, and map views for desktop and mobile |
 | Admin panel | Server CRUD, drag sorting, hidden servers, import/export, batch delete, server-list cache refresh, database maintenance |
-| Cross-platform Agent | Mainstream Linux, Alpine Linux, OpenWrt, Synology DSM, Feiniu fnOS, FreeBSD, macOS, Windows, plus Docker image deployment; Go Agent by default, Shell/PowerShell still available |
+| Cross-platform Agent | Mainstream Linux, Alpine Linux, OpenWrt, Synology DSM, Feiniu fnOS, FreeBSD, macOS, Windows, plus Docker image deployment; maintained Go Agent; legacy Shell/PowerShell retained only for cleanup |
 | Realtime push | Durable Objects + WebSocket refresh the UI immediately after Agent reports |
 | Alerts | Offline alerts, recovery notices, expiration reminders, resource load rules |
 | Multi-language | Built-in Chinese, English, and Latin American Spanish frontend switch; notifications in Chinese, English, or Spanish; Chinese and English documentation |
@@ -82,7 +82,7 @@ Compared with traditional controller-style monitoring tools, CF-Server-Monitor i
 
 ```mermaid
 flowchart LR
-  Agent["Server Agent<br/>Go / Shell / PowerShell"] -->|"POST /update"| Worker["Cloudflare Worker"]
+  Agent["Server Agent<br/>Go Agent"] -->|"POST /update"| Worker["Cloudflare Worker"]
   Worker --> D1["Cloudflare D1<br/>servers / settings / history"]
   Worker <--> DO["Durable Object<br/>WebSocket broadcast"]
   Worker --> Assets["Vue Dashboard<br/>Admin Panel"]
@@ -94,7 +94,7 @@ Core flow:
 1. Add a server in the admin panel and copy the install command.
 2. Install the Agent on the target server.
 3. The Agent reports metrics to the Worker at the configured interval.
-4. The Worker verifies `API_SECRET`, writes to D1, and broadcasts realtime data through Durable Objects.
+4. The Worker verifies `Authorization: Bearer <node-token>` and binds the authenticated node, writes to D1, and broadcasts realtime data through Durable Objects.
 5. The dashboard, server detail page, admin panel, and iOS widget read from the same API.
 
 
@@ -110,7 +110,15 @@ Recent changes:
 - `2.8.0`: Added the theme store and one-click third-party theme switching.
 - `2.7.x`: Refactored database writes, monthly table rotation, notifications, security policy, billing fields, import/export, and admin workflows.
 
-For the full Go Agent changelog, see [cfsm-agent releases](https://github.com/huilang-me/cfsm-agent/releases).
+For the full Go Agent changelog, see [cfsm-agent releases](https://github.com/emailtq/cfsm-agent/releases).
+
+## Credential Migration and Release Prerequisite
+
+No compatibility remains for shared `secret` or separate `TERMINAL_TOKEN` Agents. Reinstall each node after a compatible release is published; existing node IDs, metrics, settings and history are preserved. Stable token reads do not enable terminal permission.
+
+The fork's currently public `v1.1.6` does not implement this migration, and no Agent release is published by this work. Native downloads require corresponding uploaded assets and same-tag CLI evidence for `token-file` and `register-key`. Old tags/latest and unverified Docker images remain unavailable. Commands here describe the future compatible interface, not an existing usable release.
+
+Worker-hosted legacy Shell/PowerShell install/run paths fail before modifying files or services and point to the maintained installer. Cleanup remains available; no operating-system option is removed.
 
 ## Quick Deployment
 
@@ -118,7 +126,7 @@ For the full Go Agent changelog, see [cfsm-agent releases](https://github.com/hu
 
 - Cloudflare account
 - GitHub account
-- A strong `API_SECRET`, used as the Agent reporting secret and the initial admin password
+- Optional `API_SECRET` only bootstraps the first administrator login. A configured site does not require it; it is never an Agent credential.
 
 The recommended deployment paths are Cloudflare Workers connected to GitHub, or GitHub Actions. One-click deploy is useful for trials, but it is less convenient for long-term updates.
 
@@ -131,7 +139,7 @@ Recommended for users who want Cloudflare to build and redeploy the project from
 3. Create a Worker and import this repository from GitHub.
 4. Set the build command to `npm run build:frontend`.
 5. Use `npx wrangler deploy` as the deploy command.
-6. After deployment, add `API_SECRET` in the Worker's Variables and Secrets.
+6. If needed, add a random strong `API_SECRET` for first-administrator login, then configure independent administrator credentials.
 
 Chinese visual guide: <https://huilang.me/cf-server-monitor-setup/>
 
@@ -151,7 +159,7 @@ Recommended if you want GitHub Actions to own the full deployment workflow.
 | `CF_API_TOKEN` | Yes | Cloudflare API Token |
 | `CF_ACCOUNT_ID` | Yes | Cloudflare Account ID |
 | `D1_DATABASE_ID` | Yes | D1 database ID |
-| `API_SECRET` | Yes | Agent reporting secret and initial admin password |
+| `API_SECRET` | No | Optional first-administrator login only; never Agent authentication |
 | `CORS_ALLOWED_ORIGINS` | No | Allowed API origins, comma-separated |
 
 Pushing to `main` triggers deployment. You can also manually run the `Deploy to Cloudflare Workers` workflow from the Actions tab.
@@ -163,7 +171,7 @@ Pushing to `main` triggers deployment. You can also manually run the `Deploy to 
 Before deploying:
 
 - Use `npm run build:frontend` as the build command.
-- Replace the default `API_SECRET` with a random strong value.
+- If using optional first-login setup, configure a random strong value. There is no public default credential.
 - Change the admin username and password after the first login.
 
 For long-term use, migrating to Option 1 or Option 2 is recommended.
@@ -183,9 +191,9 @@ Default credentials:
 | Item | Default |
 | --- | --- |
 | Username | `admin` |
-| Password | `API_SECRET` |
+| Password | Configured administrator credential, or optional first-login `API_SECRET` |
 
-Change the admin username and password after login. The admin password can be separated from `API_SECRET`; Agent reporting still uses the Cloudflare `API_SECRET` environment variable.
+Set independent administrator credentials after the first login. JWTs use the independently persisted random `jwt_secret`, never `API_SECRET` or a known default. Agents only use their node tokens.
 
 ### Add a Server
 
@@ -195,42 +203,44 @@ Change the admin username and password after login. The admin password can be se
 4. Click the copy button, choose the target system and Agent version.
 5. Run the generated command on the target server.
 
-For larger fleets you can enable **Auto Discovery** under Settings → Site Settings: install the Agent without `-id` and the server is created automatically on the first report. The name comes from `-name`, or the client IP (`CF-Connecting-IP`) when omitted. An existing server with the same name is never reused: the server rejects that report with 404 and the agent logs a hint and exits instead. New servers may take up to 2 minutes to appear on the dashboard; creation failures, or a server that does not have Auto Discovery enabled, also log a single hint and exit without retrying, notifying, or leaving any marker file behind. The switch is off by default.
+For bulk installation, enable **Auto Discovery**, then explicitly open Bulk Add on the nodes page. Each opening issues a registration key and invalidates the previous one. Keys last 15 minutes and permit at most 100 new nodes; editing options does not rotate them. Closing, logout or expiry discards the key. The Agent first calls HTTPS `POST /api/agent/register` with `Authorization: Bearer <registration-key>` for `{serverId, token}`. Only the node token and ID persist; the key never enters reports. A duplicate name creates a fresh node and cannot steal existing credentials. Ordinary reinstall reuses its saved token, not a registration key.
 
-After Auto Discovery is saved, a copy button appears next to the switch in Settings → Site Settings and copies this `-id`-free Linux install command.
+After publishing a compatible Agent, use the generated registration command. The following examples describe that interface; no compatible public release is available yet.
 
 Install command without `-id` (Linux, OpenWrt, Synology DSM, FreeBSD, macOS):
 
 ```bash
 # name defaults to the machine's public IP
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -secret=SECRET -url=WORKER_URL
+curl -fsSL https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh | sh -s -- install -register-key=REGISTRATION_KEY -url=https://monitor.example.com/update -terminal=0
 
 # explicit name
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -secret=SECRET -url=WORKER_URL -name=hk-1
+curl -fsSL https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh | sh -s -- install -register-key=REGISTRATION_KEY -url=https://monitor.example.com/update -terminal=0 -name=hk-1
 ```
 
 On Windows (administrator PowerShell), also without `-id`:
 
 ```powershell
 $script = "$env:TEMP\install-cf-probe.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
-PowerShell -ExecutionPolicy Bypass -File $script install -secret=SECRET -url=WORKER_URL -name=hk-1
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script install -register-key=REGISTRATION_KEY -url=https://monitor.example.com/update -terminal=0 -name=hk-1
 ```
 
 ## Agent Parameters and Security
 
-Starting from V2.8.3, the default Agent is the standalone [cfsm-agent](https://github.com/huilang-me/cfsm-agent). The installed service name is `cf-probe`. After adding a server, copy the install command from the admin panel; it generates the full command for the target system, server ID, Worker URL, and current parameters.
+Starting from V2.8.3, the default Agent is the standalone [cfsm-agent](https://github.com/emailtq/cfsm-agent). The installed service name is `cf-probe`. After adding a server, copy the install command from the admin panel; it generates the full command for the target system, server ID, Worker URL, and current parameters.
 
-See [cfsm-agent](https://github.com/huilang-me/cfsm-agent) for full install paths, logs, status checks, and upgrade behavior.
+See [cfsm-agent](https://github.com/emailtq/cfsm-agent) for full install paths, logs, status checks, and upgrade behavior.
 
 ### Common Parameters
 
 | Parameter | Description | Default |
 | --- | --- | --- |
-| `-id` | Unique server ID | Required (optional when Auto Discovery is on) |
+| `-id` | Non-secret routing identifier; if supplied, must match the token-bound node | Optional |
 | `-name` | Server name used when Auto Discovery creates the server | Client IP (`CF-Connecting-IP`) |
-| `-secret` | Agent reporting secret; must match `API_SECRET` | Required |
-| `-url` | Worker reporting URL | Required |
+| `-token` / `-token-file` | One node token or an absolute private token file; mutually exclusive with `-register-key` | Required for ordinary installation |
+| `--install-node-token` | Installer privately stages the same token for `-token-file` | Generated by admin |
+| `-register-key` | Short-lived key exchanged once and never persisted | New-node registration only |
+| `-url` | HTTPS reporting endpoint, normally `<site>/update` | Required |
 | `-collect_interval` | Local collection interval; `0` disables extra sampling | `0` |
 | `-interval` | Reporting interval in seconds | `60` |
 | `-ct` / `-cu` / `-cm` / `-bd` | Custom network quality test nodes, supports `host[:port]` | Built-in nodes |
@@ -254,13 +264,13 @@ When uninstalling, select the user that originally installed the Agent. For Open
 
 ### Docker Deployment
 
-The admin copy-install dialog lets you choose Docker as the target system, generating a container command like the one below (server ID, secret, and Worker URL are filled in automatically for the current server; the image tag defaults to `latest` and can be customized in the Agent version field):
+The admin copy-install dialog lets you choose Docker as the target system, generating a container command like the one below (server ID, node token, and Worker URL are filled in automatically for the current server; the image tag defaults to `latest` and can be customized in the Agent version field):
 
 ```bash
 docker run -d --name cf-probe --restart=unless-stopped --network=host \
   -v cf-probe-data:/data \
-  -e SERVER_ID=<server-id> -e SECRET='<API_SECRET>' -e WORKER_URL=https://<your-worker>/update \
-  ghcr.io/huilang-me/cfsm-agent:latest
+  -e SERVER_ID=<server-id> -e NODE_TOKEN='<NODE_TOKEN>' -e WORKER_URL=https://<your-worker>/update \
+  ghcr.io/emailtq/cfsm-agent:latest
 ```
 
 Collect interval, report interval, ping nodes, network interface, traffic reset day, and upload/download correction are pulled dynamically by the Agent from the admin panel via `SERVER_ID`, so they do not need to be repeated in the command; changing the image tag upgrades or rolls back to that version. To remove the container:
@@ -269,15 +279,18 @@ Collect interval, report interval, ping nodes, network interface, traffic reset 
 docker rm -f cf-probe && docker volume rm cf-probe-data
 ```
 
+Docker commands illustrate the `NODE_TOKEN` interface only. No verified node-token image is published for this migration; Docker Copy remains disabled and old images must not be used.
+
 ## Optional Linux Terminals
 
-This is not SSH. The Agent owns local PTYs and uses separate WSS connections through one `TerminalBroker` per node. Site access, node authorization and local `-terminal=1` consent must all be enabled; defaults are off and remote monitoring configuration cannot opt in. A node permits four independent sessions; a new tab creates a new Shell, not a replacement.
+This is not SSH. The Agent owns local PTYs and uses separate WSS connections through one `TerminalBroker` per node. Terminal defaults off. An administrator selects terminal in the download dialog and executes the local install; that installation action sets the required site/node permission, while local `-terminal=1` remains mandatory. No separate blanket authorization step exists, and remote monitoring configuration cannot opt in. A node permits four independent sessions; a new tab creates a new Shell, not a replacement.
 
-### Enable and Authorize
+### Install and Access
 
-1. Release the backend with terminal access disabled. Keep the original `v1` / `MetricsBroadcaster` migration immutable and append `terminal-v1` / `TerminalBroker` plus the `TERMINAL_BROKER` binding in both `wrangler.toml` and the workflow that regenerates it. D1 adds `terminal_nodes`, `terminal_auth_sessions` and `terminal_audit` without replacing monitoring tables.
-2. Update the consenting Linux test Agent, log in again to the built-in admin, then explicitly enable the site and authorize the node. These actions require credential step-up. Legacy JWTs without `jti` need a new login; terminals require the independent `jwt_secret` and valid administrator Cookie, never the reporting secret or a Bearer substitute.
-3. Transfer the one-time independent node token securely to an absolute owner-only regular local file (for example mode `600`), then install/reinstall with `-terminal=1 -terminal-token-file=/absolute/path/node-token`. Symlinks/FIFOs are rejected. D1 stores only its hash. Keep token text out of command lines, screenshots, logs and Git, and restrict the Agent config to its owner. See the [Agent installation guide](https://github.com/huilang-me/cfsm-agent#readme).
+1. Use a node-token-compatible Worker and wait for a compatible Linux Agent release. Without verified release capabilities, the admin does not offer a copyable install command. New installs default terminal off; no prior site/node blanket authorization is required.
+2. Log in to the Worker same-origin built-in admin with a valid revocable administrator Cookie, select terminal for this installation in the node download dialog, and execute the command on the trusted target host. Selecting terminal enables only the required permission and local install opt-in, reusing the monitoring token without rotation. There is no separate authorization dialog or extra authorization action. Legacy JWTs without `jti` require login again; browser terminals never accept node tokens or Bearer credentials as administrator substitutes.
+3. Copy the single complete command. The installer privately stages `--install-node-token` for `-token-file`; no separate terminal credential or manual path is required. D1 stores a SHA-256 hash and node-bound AES-GCM ciphertext, not plaintext. Manually supplied token files must be absolute, owner-only regular files (e.g. mode `600`), not symlinks or FIFOs. Restrict the saved Agent config as well.
+4. Terminal-only disable preserves monitoring and its token. Explicit node Token reset invalidates both reporting and terminal and closes shells, requiring local reinstall. Hash-only or undecryptable credentials require explicit reset, never silent rotation. Commands can leak via shell history, process arguments, clipboard or screenshots: use only trusted hosts and never log or commit real credentials.
 
 The Shell has the Agent service user's privileges: a root Agent grants a root Shell and requires explicit informed consent; prefer non-root. Each Shell starts in HOME with a fixed credential-free environment and no bash profile/rc, but it is not a filesystem sandbox: files readable by that user remain readable.
 
@@ -289,7 +302,7 @@ Linux capability is optional and fail-closed: usable HOME/Shell, `/bin/sleep`, p
 - Data frames are at most 16 KiB, controls 4 KiB, dimensions integer 1..500. Credit is 256 KiB per direction/session: four sessions permit at most 2 MiB endpoint outstanding application data, not a total heap bound. Bounded producers batch cumulative ACKs after actual input writes/output parsing; one stalled session must not block another.
 - Pair/start and no-ACK-progress deadlines are 30 seconds, Agent actual writes time out at 8 seconds, and user inactivity at 30 minutes. Output/heartbeats do not refresh user idle. Admin leases last 60 seconds with UI renewal every 45 seconds. Logout, revoke, rotation/delete, control replacement, Agent restart/update or failed renewal end affected sessions. Alarm latency may delay physical closure; DO `send` is enqueue, not a physical-write guarantee.
 - No detached restoration, automatic Shell recreation or input replay after disconnect. Explicit reopen creates a new session. Rotation requires safely updating local token configuration. Control is independent of HTTP reports and inactive report-WSS hours; existing monitoring schedules are unchanged.
-- Only lifecycle audit is retained (seven-day cleanup through existing maintenance); terminal bytes/commands are not persisted. Backup/export/import excludes credentials/authority and cannot activate restored terminals; explicitly authorize again after restore.
+- Only lifecycle audit is retained (seven-day cleanup through existing maintenance); terminal bytes/commands are not persisted. Backup/export/import excludes credentials/permission and cannot activate restored terminals; after restore, an administrator selects terminal installation again and executes it locally.
 
 ### Development, Acceptance and Rollback
 
@@ -297,7 +310,7 @@ Use Node 22, `npm ci`, `npm run test:all` and both frontend builds; existing dep
 
 Local regressions, non-root WSL PTYs, DO reconstruction and fake-agent browser runs do not prove cloud acceptance. A separately authorized non-production Worker/D1/DO and two Linux nodes are still required for multi-node PTYs, actual hibernation/eviction, resource measurements and public-network latency. Physical-phone keyboard/IME/panning refinement remains deferred/unverified, not a passed test.
 
-Rollback disables the site, revokes nodes and explicitly reinstalls the Agent with `-terminal=0` (omitting options preserves old local consent). End sessions but keep additive tables, binding/migration history and immutable tags; monitoring continues. Release order: backend disabled, update the consenting opt-in test Agent, then explicit site/node authorization and local enablement. Production deployment and pushing main require human approval.
+Rollback disables site terminal permission, revokes node terminal permission and explicitly reinstalls the Agent with `-terminal=0` (omitting options preserves old local consent). End sessions but keep additive tables, binding/migration history and immutable tags; monitoring continues. Deployment and Agent publication still require separate approval and acceptance. Once available, administrators install using the download dialog's local terminal choice, not an independent site/node blanket authorization workflow. Production deployment and pushing main require human approval.
 
 ## Configuration
 
@@ -305,7 +318,7 @@ Rollback disables the site, revokes nodes and explicitly reinstalls the Agent wi
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `API_SECRET` | Yes | Agent reporting secret and initial admin password |
+| `API_SECRET` | No | Optional first-administrator login only; never Agent authentication |
 | `API_BASE` | No | Worker API base URLs for frontend requests, comma-separated; useful for multi-Worker aggregation or separated frontend/backend deployments |
 | `CORS_ALLOWED_ORIGINS` | No | Allowed API origins, comma-separated |
 
@@ -447,7 +460,7 @@ Send a test notification before saving.
 ### API Secret
 
 - Use a random strong value and avoid characters that are likely to be escaped by shells or URLs.
-- After changing `API_SECRET`, redeploy the Worker and reinstall or update all Agents.
+- Changing optional `API_SECRET` does not rotate node tokens or require Agent reinstall. Resetting a node token only affects that node.
 - Keep the admin password separate from `API_SECRET` for long-term use.
 
 ### Frontend WebSocket Timeout
@@ -503,14 +516,14 @@ The Go Agent keeps existing configuration. Re-running the install command upgrad
 Linux / OpenWrt / Synology DSM / FreeBSD / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install
+curl -fsSL https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh | sh -s -- install
 ```
 
 Windows administrator PowerShell:
 
 ```powershell
 $script = "$env:TEMP\install-cf-probe.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.ps1" -OutFile $script -UseBasicParsing
 PowerShell -ExecutionPolicy Bypass -File $script install
 ```
 
@@ -519,7 +532,7 @@ PowerShell -ExecutionPolicy Bypass -File $script install
 Go Agent:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/emailtq/cfsm-agent/terminal/install.sh | sh -s -- uninstall
 ```
 
 The legacy Shell / PowerShell Agent is no longer maintained. The commands below are only for cleaning up historical Shell / PowerShell installations. Use the script that matches the system script used during the original install. If the current Agent is the Go Agent, use the Go uninstall command above.
@@ -595,11 +608,7 @@ npm run test:history-query
 npm run test:agent-config
 ```
 
-Local `.env` requires at least:
-
-```bash
-API_SECRET=123456
-```
+Local secrets belong in an untracked `.dev.vars`. Configured administrator credentials need no `API_SECRET`; optional first-login setup must use a random strong value.
 
 ### Mock Data
 
@@ -623,7 +632,6 @@ https://localhost:8787/cdn-cgi/handler/scheduled?cron=0+12+*+*+* // Daily mainte
 
 ```bash
 node test/api-check.js
-node test/api-check.js --base-url=http://localhost:8787 --api-secret=123456
 node test/api-check.js --help
 ```
 
@@ -653,21 +661,20 @@ CF-Server-Monitor/
 
 ## FAQ
 
-### `API_SECRET is required` after deployment
+### Can a configured site run without `API_SECRET`?
 
-The Worker cannot read the environment variable. In Cloudflare Workers & Pages, open Variables and Secrets, remove any old `API_SECRET`, add it again, save, and wait for redeployment.
+Yes. It is optional first-administrator login setup only. Persisted administrator credentials and an independent random JWT signing key are authoritative; old reporting secrets are not a compatibility path.
 
 ### Agent installed but no data appears
 
-First make sure the server can reach the Worker URL. To enable debug logs, append `-debug=1` to the install parameters. Log commands vary by system, so refer to the matching status and log instructions in the [cfsm-agent documentation](https://github.com/huilang-me/cfsm-agent).
+First make sure the server can reach the Worker URL. To enable debug logs, append `-debug=1` to the install parameters. Log commands vary by system, so refer to the matching status and log instructions in the [cfsm-agent documentation](https://github.com/emailtq/cfsm-agent).
 
 Remove the debug parameter and reinstall after troubleshooting to avoid excessive logs.
 
 ### How do I change `API_SECRET`?
 
-Update `API_SECRET` in Cloudflare, redeploy the Worker, then copy and run the install command again on every server. If you deploy through GitHub Actions, update the GitHub Secret as well.
+Change the optional first-administrator login variable in Cloudflare. This does not change configured credentials, rotate node tokens or require Agent reinstall; synchronize CI configuration if used.
 
-Due to the current Cloudflare version issue, you may need to temporarily modify the value and save it once, then change it back to the original value and save again to trigger a new deployment.
 
 ### Is the D1 free quota enough?
 
@@ -681,7 +688,7 @@ If the image URL redirects or goes through a CDN redirect, open the browser deve
 
 ### I forgot the admin password
 
-Open the Cloudflare D1 database `server-monitor-db`, edit the `setting` table, and update the `password` field in `site_options`. The legacy MD5-compatible value `e10adc3949ba59abbe56e057f20f883e` maps to password `123456`. Log in with it and set a strong password in the admin panel.
+Recover administrator credentials through your trusted Cloudflare administration channel in `settings.site_options`, preserve the independent random JWT authority and revoke existing administrator sessions. Never install a publicly known login or example hash; configure a new random strong credential immediately.
 
 
 ### Domains not hosted on Cloudflare cannot be bound
@@ -735,7 +742,7 @@ The frontend may display Hong Kong, Macao, Taiwan, and country/region informatio
 ## Related Docs
 
 - [API.md](API.md): REST API, WebSocket, auth, error codes, and data structures
-- [https://github.com/huilang-me/cfsm-agent](cfsm-agent): Go Agent configuration, upgrade, logs, and troubleshooting
+- [https://github.com/emailtq/cfsm-agent](cfsm-agent): Go Agent configuration, upgrade, logs, and troubleshooting
 - [theme-develop.md](theme-develop.md): Third-party theme development
 - [theme-ai-prompt.md](theme-ai-prompt.md): Theme development AI prompt — paste it into an AI assistant to build themes that follow project rules
 - [test/README.md](test/README.md): Local mock data and testing workflow
