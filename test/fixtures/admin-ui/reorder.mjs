@@ -2,13 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { setTimeout as delay } from 'node:timers/promises';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const out = path.resolve(process.env.ADMIN_REORDER_REPORT_DIR || `.planning/2026-11-13-admin-ui-polish/task1/run-${Date.now()}`);
 fs.mkdirSync(out, { recursive: true });
-const report = { node: process.version, checks: [], errors: [], screenshots: [], saves: [], geometry: [] };
+const report = { node: process.version, checks: [], errors: [], screenshots: [], saves: [], geometry: [], timeline: [] };
 const makeNodes = (count = 8, prefix = 'node') => Array.from({ length: count }, (_, i) => ({
   id: `${prefix}-${i}`, name: i === 1 ? 'Tokyo production database with a deliberately long node name' : `Node ${i + 1}`,
   server_group: i % 2 ? 'Production' : 'Default', os: i % 2 ? 'Windows' : 'Linux', region: i % 2 ? 'jp' : 'us',
@@ -20,7 +21,13 @@ let nodes = makeNodes(), otherNodes = makeNodes(3, 'other'), saves = [], actions
 let server, browser, context, page, origin, intercept;
 const ids = () => page.locator('#tab-servers tbody > .server-row[data-server-id]').evaluateAll(rows => rows.map(row => row.dataset.serverId));
 const waitIds = expected => page.waitForFunction(expected => JSON.stringify([...document.querySelectorAll('tbody .server-row')].map(row => row.dataset.serverId)) === JSON.stringify(expected), expected);
-const release = () => { for (const resolve of held.splice(0)) resolve(); };
+const trace = (phase, details = {}) => report.timeline.push({ time: Date.now(), phase, ...details });
+const waitForTransport = async predicate => {
+  const deadline = Date.now() + 7000;
+  while (!predicate() && Date.now() < deadline) await delay(5);
+  assert.ok(predicate(), 'fixture transport must reach the expected request/hold state');
+};
+const release = () => { trace('release-held', { count: held.length }); for (const resolve of held.splice(0)) resolve(); };
 const load = async ({ count = 8, locale = 'en', width = 1440, dark = false, reducedMotion = 'no-preference' } = {}) => {
   await page.mouse.up(); hold = holdList = false; release(); await page.waitForTimeout(30); await page.goto('about:blank');
   failure = reconcileError = ''; saves = []; actions = []; inFlight = maxInFlight = 0; nodes = makeNodes(count); otherNodes = makeNodes(3, 'other');
@@ -35,8 +42,13 @@ const point = async index => {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 };
 const start = async (index = 0) => {
+  // A sampled coordinate drifts off the grip during FLIP; hover waits for a stable real hit target.
+  await page.locator('.server-row').nth(index).locator('.drag-handle').hover();
   const p = await point(index);
+  trace('before-pointer-start', await page.evaluate(({ p, index }) => ({ index, p, intended: document.querySelectorAll('.server-row')[index]?.dataset.serverId, hit: document.elementFromPoint(p.x, p.y)?.closest('.server-row')?.dataset.serverId, gripHit: !!document.elementFromPoint(p.x, p.y)?.closest('.drag-handle'), animations: [...document.querySelectorAll('.server-row')].flatMap(row => row.getAnimations()).map(animation => ({ currentTime: animation.currentTime, state: animation.playState })), focus: document.activeElement?.outerHTML.slice(0, 200), events: window.pointerEvidence }), { p, index }));
   await page.mouse.move(p.x, p.y); await page.mouse.down();
+  trace('after-pointer-start', await page.evaluate(() => ({ capture: document.querySelector('tbody')?.hasPointerCapture(window.dragPointerId), events: window.pointerEvidence })));
+  assert.equal(await page.locator('tbody').evaluate(body => body.hasPointerCapture(window.dragPointerId)), true, 'pointer press must hit the grip before the test advances');
   return p;
 };
 const moveTo = async index => {
@@ -45,8 +57,9 @@ const moveTo = async index => {
   await page.mouse.move(p.x, row.y + row.height - 2);
 };
 const check = async (name, fn) => {
+  trace('check-start', { name });
   try { await fn(); report.checks.push({ name, pass: true }); console.log(`PASS ${name}`); }
-  catch (error) { report.checks.push({ name, pass: false, error: error.stack }); console.error(`FAIL ${name}\n${error.stack}`); await page?.mouse.up().catch(() => {}); }
+  catch (error) { report.checks.push({ name, pass: false, error: error.stack }); trace('check-failure', { name, ...(await page.evaluate(() => ({ events: window.pointerEvidence, focus: document.activeElement?.outerHTML.slice(0, 200) })).catch(() => ({}))) }); console.error(`FAIL ${name}\n${error.stack}`); await page?.mouse.up().catch(() => {}); }
 };
 try {
   server = await createServer({ cacheDir: path.join(out, '.cache'), plugins: [vue()], publicDir: path.resolve('public') });
@@ -54,7 +67,15 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.ADMIN_UI_CHROMIUM || 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
   report.chromium = browser.version();
   context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await context.addInitScript(() => document.addEventListener('pointerdown', event => { window.dragPointerId = event.pointerId; }));
+  await context.addInitScript(() => {
+    window.pointerEvidence = [];
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'gotpointercapture', 'lostpointercapture', 'focusin', 'blur']) {
+      document.addEventListener(type, event => {
+        if (type === 'pointerdown') window.dragPointerId = event.pointerId;
+        window.pointerEvidence.push({ time: Date.now(), type, id: event.target?.closest?.('.server-row')?.dataset.serverId, tag: event.target?.tagName, buttons: event.buttons, x: event.clientX, y: event.clientY });
+      }, true);
+    }
+  });
   intercept = async route => {
     const req = route.request(), url = new URL(req.url());
     if (url.origin !== origin) return route.abort();
@@ -62,10 +83,12 @@ try {
       const data = req.postDataJSON(), site = url.pathname.startsWith('/site-b') ? 'b' : 'a';
       actions.push({ site, ...data });
       if (data.action === 'save_order') {
+        trace('save-request', { orders: data.orders, hold, failure });
         saves.push({ site, ...data }); report.saves.push({ site, ...data });
         maxInFlight = Math.max(maxInFlight, ++inFlight);
         const error = failure; failure = '';
         if (hold) await new Promise(resolve => held.push(resolve));
+        trace('save-respond', { orders: data.orders, error });
         if (!error) {
           const rows = site === 'a' ? nodes : otherNodes;
           const ordered = data.orders.map(id => rows.find(row => row.id === id));
@@ -75,6 +98,7 @@ try {
         return route.fulfill({ status: error ? 409 : 200, json: error ? { error } : { success: true } }).catch(() => {});
       }
       if (data.action === 'list') {
+        trace('list-request', { refresh: data.refresh });
         const json = { servers: site === 'a' ? nodes : otherNodes, stats: { total: (site === 'a' ? nodes : otherNodes).length } };
         if (holdList && data.refresh) await new Promise(resolve => held.push(resolve));
         return reconcileError && data.refresh ? route.fulfill({ status: 503, json: { error: reconcileError } }) : route.fulfill({ json }).catch(() => {});
@@ -150,11 +174,12 @@ try {
     await load(); hold = true;
     const handle = page.locator('[data-server-id="node-0"] .drag-handle');
     await handle.focus(); await page.keyboard.press('ArrowDown');
-    await page.waitForTimeout(80); assert.equal(saves.length, 1);
-    failure = 'fixture_order_refused'; await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80);
+    await waitForTransport(() => saves.length === 1 && held.length === 1);
+    failure = 'fixture_order_refused'; await page.keyboard.press('ArrowDown');
+    await waitIds(['node-1', 'node-2', 'node-0', 'node-3', 'node-4', 'node-5', 'node-6', 'node-7']);
     assert.equal(saves.length, 1, 'second save waits'); assert.equal(maxInFlight, 1);
     assert.deepEqual((await ids()).slice(0, 3), ['node-1', 'node-2', 'node-0']);
-    release(); await page.waitForTimeout(80); assert.equal(saves.length, 2); assert.equal(maxInFlight, 1);
+    release(); await waitForTransport(() => saves.length === 2 && held.length === 1); assert.equal(maxInFlight, 1);
     // Change the authoritative list as another admin would; a failed optimistic order must not remain.
     nodes = [nodes[2], nodes[0], nodes[1], ...nodes.slice(3)]; hold = false; release();
     await page.getByText('fixture_order_refused', { exact: true }).waitFor();
@@ -162,15 +187,18 @@ try {
     assert.ok(actions.filter(action => action.action === 'list').length >= 2);
     assert.equal(saves.every(save => save.orders.length === 8 && new Set(save.orders).size === 8), true);
     await load(); hold = true; failure = 'fixture_first_order_refused';
-    await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(60);
+    await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown');
+    await waitForTransport(() => saves.length === 1 && held.length === 1);
     await page.keyboard.press('ArrowDown'); hold = false; release();
     await page.getByText('fixture_first_order_refused', { exact: true }).waitFor();
+    await waitForTransport(() => saves.length === 2 && inFlight === 0);
     await waitIds(['node-1', 'node-2', 'node-0', 'node-3', 'node-4', 'node-5', 'node-6', 'node-7']);
     assert.equal(saves.length, 2); assert.equal(maxInFlight, 1, 'failure must not poison the next queued save');
   });
   await check('stale site saves cannot start queued requests or reconcile/error into a different site, including A-B-A', async () => {
     await load(); hold = true; failure = 'stale_order_failure';
-    await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(60);
+    await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown');
+    await waitForTransport(() => saves.length === 1 && held.length === 1);
     assert.equal(saves.length, 1); await page.keyboard.press('ArrowDown');
     await page.evaluate(() => { location.hash = '/admin?apiIndex=1'; }); await waitIds(['other-0', 'other-1', 'other-2']);
     await page.evaluate(() => { location.hash = '/admin?apiIndex=0'; }); await waitIds(makeNodes().map(row => row.id));
@@ -178,7 +206,8 @@ try {
     assert.equal(saves.length, 1, 'old queued reorder never starts');
     assert.equal(await page.getByText('stale_order_failure', { exact: true }).count(), 0);
     assert.deepEqual(await ids(), makeNodes().map(row => row.id));
-    await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(150);
+    await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown');
+    await waitForTransport(() => saves.length === 2 && inFlight === 0);
     assert.equal(saves.length, 2); assert.equal(saves[1].site, 'a');
   });
   await check('failed final server reconciliation is visible rather than claiming the optimistic order is confirmed', async () => {
@@ -190,27 +219,34 @@ try {
   });
   await check('previous save reconciliation does not cancel a newer pointer drag or erase its live preview', async () => {
     await load(); holdList = true;
+    nodes[0] = { ...nodes[0], name: 'Reconciled' };
     await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown');
-    await page.waitForTimeout(80); assert.equal(saves.length, 1); assert.equal(held.length, 1);
+    await waitForTransport(() => saves.length === 1 && held.length === 1);
     await start(1); await moveTo(3);
     const next = ['node-1', 'node-2', 'node-3', 'node-0', 'node-4', 'node-5', 'node-6', 'node-7']; await waitIds(next);
-    holdList = false; release(); await page.waitForTimeout(100);
+    const reply = page.waitForResponse(response => response.request().postDataJSON()?.action === 'list' && response.request().postDataJSON()?.refresh === true);
+    holdList = false; release(); await (await reply).finished();
+    await page.locator('[data-server-id="node-0"] .server-name-link').filter({ hasText: 'Reconciled' }).waitFor();
     assert.equal(await page.locator('tbody').evaluate(body => body.hasPointerCapture(window.dragPointerId)), true, 'old list cannot take the active drag');
     assert.deepEqual(await ids(), next); assert.equal(saves.length, 1);
-    await page.mouse.up(); await page.waitForTimeout(150); assert.equal(saves.length, 2); assert.deepEqual(saves[1].orders, next);
+    await page.mouse.up(); await waitForTransport(() => saves.length === 2 && inFlight === 0); assert.deepEqual(saves[1].orders, next);
   });
   for (const outcome of ['cancel', 'unchanged-release', 'new-save']) {
     await check(`failed prior save authority is adopted after ${outcome} without interrupting the active pointer`, async () => {
       await load(); const authoritative = await ids(); hold = true; failure = 'fixture_prior_order_refused';
+      nodes[0] = { ...nodes[0], name: 'Reconciled' };
       await page.locator('[data-server-id="node-0"] .drag-handle').focus(); await page.keyboard.press('ArrowDown');
-      await page.waitForTimeout(80); assert.equal(saves.length, 1); assert.equal(held.length, 1);
+      await waitForTransport(() => saves.length === 1 && held.length === 1);
       const p = await start(1);
       const beforeDrag = await ids();
       const next = ['node-1', 'node-2', 'node-3', 'node-0', 'node-4', 'node-5', 'node-6', 'node-7'];
       if (outcome === 'unchanged-release') await page.mouse.move(p.x + 8, p.y);
       else { await moveTo(3); await waitIds(next); }
+      const reply = page.waitForResponse(response => response.request().postDataJSON()?.action === 'list' && response.request().postDataJSON()?.refresh === true);
       hold = false; release(); await page.getByText('fixture_prior_order_refused', { exact: true }).waitFor();
-      await page.waitForTimeout(120);
+      await (await reply).finished();
+      await page.locator('[data-server-id="node-0"] .server-name-link').filter({ hasText: 'Reconciled' }).waitFor();
+      trace('authority-during-pointer', await page.evaluate(() => ({ capture: document.querySelector('tbody')?.hasPointerCapture(window.dragPointerId), events: window.pointerEvidence, focus: document.activeElement?.outerHTML.slice(0, 200) })));
       assert.equal(actions.some(action => action.action === 'list' && action.refresh), true);
       assert.deepEqual(nodes.map(node => node.id), authoritative, 'first refused save cannot change the server order');
       assert.equal(await page.locator('tbody').evaluate(body => body.hasPointerCapture(window.dragPointerId)), true);
@@ -218,11 +254,13 @@ try {
       await page.getByRole('dialog').locator('footer button').evaluate(button => button.click());
       if (outcome === 'cancel') await page.keyboard.press('Escape');
       if (outcome === 'new-save') hold = true;
-      await page.mouse.up(); await page.waitForTimeout(120);
+      await page.mouse.up();
       if (outcome === 'new-save') {
+        await waitForTransport(() => saves.length === 2 && held.length === 1);
         assert.equal(saves.length, 2); assert.deepEqual(saves[1].orders, next); assert.deepEqual(await ids(), next, 'delayed old authority cannot erase the new committed preview');
-        hold = false; release(); await page.waitForTimeout(120); await waitIds(next); assert.deepEqual(nodes.map(node => node.id), next);
+        hold = false; release(); await waitForTransport(() => inFlight === 0); await waitIds(next); assert.deepEqual(nodes.map(node => node.id), next);
       } else {
+        await waitIds(authoritative);
         assert.equal(saves.length, 1, 'cancel or unchanged release must not save');
         assert.deepEqual(await ids(), authoritative, 'canceled failed optimistic order must yield to the authority received during drag');
       }
