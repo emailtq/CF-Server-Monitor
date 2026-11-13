@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="open" class="admin-ui admin-dialog-overlay" @click.self="requestClose">
+    <div v-if="open" class="admin-ui admin-dialog-overlay" :class="{ 'admin-dialog-short': shortViewport }" :style="viewportStyle" @click.self="requestClose">
       <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" :style="size === 'terminal' ? { height: viewportHeight } : undefined" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || undefined" :aria-busy="busy" tabindex="-1">
         <header class="admin-dialog-head">
           <h2 :id="titleId">{{ title }}</h2>
@@ -25,9 +25,17 @@ import '../../../styles/admin.css'
 const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'edit', 'download', 'download-confirm', 'terminal'].includes(value) }, viewportHeight: { type: String, default: '100dvh' }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
 const emit = defineEmits(['close'])
 const dialog = ref(null)
+const viewportStyle = ref({})
+const shortViewport = ref(false)
 const titleId = `admin-dialog-${++nextId}`
 let previousFocus = null
 let registered = false
+let observedViewport = null
+const updateViewport = () => {
+  const height = window.visualViewport?.height || window.innerHeight
+  viewportStyle.value = { top: `${window.visualViewport?.offsetTop || 0}px`, height: `${height}px`, '--admin-dialog-viewport': `${height}px` }
+  shortViewport.value = height <= 480
+}
 const topmost = () => dialogs.at(-1) === titleId
 const focusable = () => [...(dialog.value?.querySelectorAll('button,input,select,textarea,a[href],[tabindex]') || [])].filter(e => !e.disabled && e.tabIndex >= 0 && e.getClientRects().length)
 const focusFirst = () => (focusable()[0] || dialog.value)?.focus()
@@ -52,6 +60,10 @@ const release = () => {
   registered = false
   document.removeEventListener('keydown', keydown, true)
   document.removeEventListener('focusin', focusin)
+  observedViewport?.removeEventListener('resize', updateViewport)
+  observedViewport?.removeEventListener('scroll', updateViewport)
+  window.removeEventListener('resize', updateViewport)
+  observedViewport = null
   if (!dialogs.length) document.body.classList.remove('admin-dialog-open')
   if (wasTop && previousFocus?.isConnected) previousFocus.focus()
 }
@@ -60,6 +72,11 @@ watch(() => props.open, async open => {
   previousFocus = document.activeElement
   dialogs.push(titleId); registered = true
   document.body.classList.add('admin-dialog-open')
+  updateViewport()
+  observedViewport = window.visualViewport
+  observedViewport?.addEventListener('resize', updateViewport)
+  observedViewport?.addEventListener('scroll', updateViewport)
+  window.addEventListener('resize', updateViewport)
   await nextTick()
   if (!registered) return
   document.addEventListener('keydown', keydown, true)

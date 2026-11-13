@@ -191,7 +191,6 @@ onBeforeUnmount(() => {
 <style>
 .admin-ui .admin-dialog-terminal { position: fixed; top: 0; right: 0; margin: 0; width: min(340px, 100vw); max-width: 100vw; max-height: 100dvh; padding: 16px; border-radius: 0; }
 .admin-ui .admin-dialog-terminal .admin-dialog-head { text-align: left; min-height: 44px; display: flex; align-items: center; }
-.admin-ui .admin-dialog-terminal .admin-dialog-body { padding: 0; }
 .admin-ui .admin-dialog-terminal .admin-dialog-close { min-width: 44px; min-height: 44px; }
 .terminal-menu-panel { display: flex; flex-direction: column; gap: 16px; }
 .terminal-menu-panel .terminal-actions { display: flex; flex-direction: column; gap: 8px; }

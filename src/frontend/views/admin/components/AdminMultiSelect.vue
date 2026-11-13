@@ -49,11 +49,15 @@ const close = (restore = false) => { open.value = false; if (restore) trigger.va
 const position = () => {
   if (!open.value || !menu.value) return
   const rect = trigger.value.getBoundingClientRect()
-  const container = root.value.closest('.admin-dialog-body')?.getBoundingClientRect()
+  const body = root.value.closest('.admin-dialog-body')
+  const scrollport = body && (getComputedStyle(body).overflowY === 'visible' ? body.closest('.admin-dialog') : body)
+  const container = scrollport?.getBoundingClientRect()
   const viewport = window.visualViewport
   const top = (viewport?.offsetTop || 0) + 16
   const bottom = top + (viewport?.height || innerHeight) - 32
-  if (rect.bottom <= (container?.top ?? top) || rect.top >= (container?.bottom ?? bottom)) { close(); return }
+  const visibleTop = Math.max(top, container ? container.top + scrollport.clientTop : top)
+  const visibleBottom = Math.min(bottom, container ? container.top + scrollport.clientTop + scrollport.clientHeight : bottom)
+  if (rect.bottom <= visibleTop || rect.top >= visibleBottom) { close(); return }
   const chrome = menu.value.offsetHeight - list.value.offsetHeight
   const below = bottom - rect.bottom - 4
   const above = rect.top - top - 4

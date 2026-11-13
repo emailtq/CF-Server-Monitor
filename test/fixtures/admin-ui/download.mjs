@@ -106,7 +106,10 @@ try {
     for (const dark of [false, true]) {
       await load({ dark });
       const sw = dialog().locator('[data-auto-update]');
-      const css = () => sw.evaluate(el => { const c = getComputedStyle(el), p = getComputedStyle(el, '::before'); return { color: c.backgroundColor, opacity: c.opacity, width: c.width, height: c.height, thumb: p.backgroundColor, transform: p.transform } });
+      const css = async () => {
+        await sw.evaluate(async el => { getComputedStyle(el).backgroundColor; getComputedStyle(el, '::before').transform; await Promise.all(el.getAnimations({ subtree: true }).map(animation => animation.finished)); });
+        return sw.evaluate(el => { const c = getComputedStyle(el), p = getComputedStyle(el, '::before'); return { color: c.backgroundColor, opacity: c.opacity, width: c.width, height: c.height, thumb: p.backgroundColor, transform: p.transform } });
+      };
       const off = await css(); await sw.check(); const on = await css();
       assert.notEqual(off.color, on.color, `checked track must not be overridden (${dark})`);
       assert.notEqual(off.transform, on.transform); assert.equal(on.width, '32px'); assert.equal(on.height, '18px');
@@ -245,14 +248,15 @@ try {
       report.geometry.push({ dark, confirmContrast: contrast });
     }
   });
-  await check('short mobile viewport still has one body scroll and reachable footer', async () => {
+  await check('short mobile viewport still has one dialog scroll owner and reachable footer', async () => {
     await load({ controlled: false, width: 320 });
     await page.setViewportSize({ width: 320, height: 480 });
+    await page.waitForFunction(() => document.querySelector('.admin-dialog-overlay').getBoundingClientRect().height === visualViewport.height);
     const geometry = await dialog().evaluate(el => {
-      const body = el.querySelector('.admin-dialog-body'), footer = el.querySelector('footer'); body.scrollTop = body.scrollHeight;
-      return { bodyScroll: body.scrollHeight > body.clientHeight, bottom: footer.getBoundingClientRect().bottom, height: innerHeight, commandScroll: el.querySelector('pre').scrollHeight > el.querySelector('pre').clientHeight };
+      const body = el.querySelector('.admin-dialog-body'), footer = el.querySelector('footer'), scroll = getComputedStyle(body).overflowY === 'visible' ? el : body; scroll.scrollTop = scroll.scrollHeight;
+      return { ownerScroll: scroll.scrollHeight > scroll.clientHeight, owners: [el, body].filter(node => getComputedStyle(node).overflowY === 'auto' && node.scrollHeight > node.clientHeight).length, bottom: footer.getBoundingClientRect().bottom, height: innerHeight, commandScroll: el.querySelector('pre').scrollHeight > el.querySelector('pre').clientHeight };
     });
-    assert.equal(geometry.bodyScroll, true); assert.equal(geometry.commandScroll, false); assert.ok(geometry.bottom <= geometry.height - 15);
+    assert.equal(geometry.ownerScroll, true); assert.equal(geometry.owners, 1); assert.equal(geometry.commandScroll, false); assert.ok(geometry.bottom <= geometry.height - 15);
     assert.equal(await dialog().locator('[data-copy-command]').isEnabled(), true);
     await dialog().locator('[data-copy-command]').click(); assert.equal(await page.evaluate(() => window.copied), await command());
   });

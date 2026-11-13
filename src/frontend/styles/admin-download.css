@@ -19,8 +19,8 @@
 .admin-ui .download-command { border-top:1px solid var(--cf-border); padding-top:20px; display:flex; flex-direction:column; gap:8px; }
 .admin-ui.admin-ui.admin-ui .admin-dialog-download .cmd-output { display:block; margin:0; padding:12px; min-height:96px; overflow:visible; border:1px solid var(--cf-border); border-radius:8px; background:var(--cf-soft); color:var(--cf-text); font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:12px; line-height:1.625; white-space:pre-wrap; overflow-wrap:anywhere; user-select:all; }
 .admin-ui.admin-ui.admin-ui .admin-dialog-download .cmd-output.is-placeholder { color:var(--cf-muted); user-select:text; }
-.admin-ui.admin-ui.admin-ui input.download-switch { appearance:none; width:32px; height:18px; border:1px solid transparent; border-radius:999px; background:var(--cf-border); margin:1px 0 0; flex-shrink:0; cursor:pointer; position:relative; }
-.admin-ui input.download-switch::before { content:""; display:block; width:16px; height:16px; border-radius:50%; background:light-dark(oklch(1 0 0),var(--cf-text)); box-shadow:0 1px 2px #0000001a; }
+.admin-ui.admin-ui.admin-ui input.download-switch { appearance:none; width:32px; height:18px; border:1px solid transparent; border-radius:999px; background:var(--cf-border); margin:1px 0 0; flex-shrink:0; cursor:pointer; position:relative; transition:background-color 150ms ease-out; }
+.admin-ui input.download-switch::before { content:""; display:block; width:16px; height:16px; border-radius:50%; background:light-dark(oklch(1 0 0),var(--cf-text)); box-shadow:0 1px 2px #0000001a; transform:translateX(0); transition:transform 150ms ease-out, background-color 150ms ease-out; }
 .admin-ui.admin-ui.admin-ui input.download-switch:checked { background:var(--cf-brand-fill); }
 .admin-ui input.download-switch:checked::before { background:var(--cf-on-brand); }
 .admin-ui input.download-switch:checked::before { transform:translateX(14px); }
@@ -30,6 +30,9 @@
 .admin-ui .download-option-control small { overflow-wrap:anywhere; margin:0; }
 .admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .btn-danger { background:light-dark(var(--cf-red),color-mix(in srgb,var(--cf-red) 60%,var(--cf-panel))); border-color:transparent; color:white; }
 .admin-ui .download-confirm-text { margin:0; color:var(--cf-muted); font-size:14px; }
+@media(prefers-reduced-motion:reduce) {
+  .admin-ui.admin-ui.admin-ui input.download-switch, .admin-ui input.download-switch::before { transition:none; }
+}
 @media(max-width:639px) {
   .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download,.admin-dialog-download-confirm) .admin-dialog-head { text-align:center; }
   .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download,.admin-dialog-download-confirm) .admin-dialog-footer { flex-direction:column-reverse; }

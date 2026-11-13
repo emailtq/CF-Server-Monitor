@@ -94,16 +94,28 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-ui.admin-ui .terminal-table :is(th, td) { border-color: var(--cf-border); padding: 12px 16px; white-space: nowrap; }
 .admin-ui.admin-ui.admin-ui .terminal-table tr:hover { background: var(--cf-soft); }
 .admin-ui.admin-dialog-overlay { position: fixed; inset: 0; z-index: 1000; background: #00000080; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.admin-ui .admin-dialog { display: flex; flex-direction: column; width: 100%; max-width: 512px; max-height: calc(100dvh - 32px); padding: 24px; border: 1px solid var(--cf-border); border-radius: 8px; background: var(--cf-panel); color: var(--cf-text); box-shadow: 0 10px 30px #00000026; position: relative; overflow: hidden; }
+.admin-ui .admin-dialog { display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; max-width: 512px; max-height: calc(var(--admin-dialog-viewport, 100dvh) - 32px); padding: 24px; border: 1px solid var(--cf-border); border-radius: 8px; background: var(--cf-panel); color: var(--cf-text); box-shadow: 0 10px 30px #00000026; position: relative; overflow: hidden; }
 .admin-ui .admin-dialog-add { max-width: 448px; }
 .admin-ui .admin-dialog-edit { max-width: 672px; }
 .admin-ui .admin-dialog-head { flex-shrink: 0; padding-right: 20px; margin-bottom: 20px; text-align: left; }
 .admin-ui .admin-dialog-head h2 { font-size: 18px; font-weight: 600; line-height: 1.2; margin: 0; overflow-wrap: anywhere; }
 .admin-ui .admin-dialog-close { position: absolute; right: 12px; top: 12px; width: 32px; height: 32px; padding: 0; color: var(--cf-muted); border: 0; background: none; border-radius: 6px; font-size: 20px; }
 .admin-ui .admin-dialog-close:hover { background: var(--cf-soft); }
-.admin-ui .admin-dialog-body { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.admin-ui .admin-dialog-body { min-width: 0; min-height: 0; padding: 4px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; scroll-padding: 4px; overscroll-behavior: contain; }
+.admin-ui .admin-dialog-body :is(input, select, textarea, button, summary) { scroll-margin: 4px; }
+.admin-ui .admin-dialog-body :is(label, p) { overflow-wrap: anywhere; }
+.admin-ui .admin-dialog-body .admin-node-picker { max-height: none; overflow: visible; }
+.admin-ui .admin-dialog-body .admin-routing-preview .admin-message-preview { max-height: none; overflow: visible; }
+/* Paint a 6px thumb without reducing its 8px native drag region or layout gutter. */
+.admin-ui.admin-dialog-overlay ::-webkit-scrollbar { width: 8px; height: 8px; }
+.admin-ui.admin-dialog-overlay ::-webkit-scrollbar-thumb { border: 1px solid var(--cf-panel); background-color: color-mix(in srgb, var(--cf-muted) 60%, var(--cf-panel)); background-clip: padding-box; }
+.admin-ui.admin-dialog-overlay ::-webkit-scrollbar-thumb:hover { background-color: var(--cf-muted); }
+@supports not selector(::-webkit-scrollbar) {
+  .admin-ui.admin-dialog-overlay * { scrollbar-width: thin; scrollbar-color: var(--cf-muted) var(--cf-panel); }
+}
 .admin-ui .admin-dialog-footer { margin-top: 20px; display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
 .admin-ui .admin-dialog-footer > div:empty { display: none; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-footer .btn { height: auto; white-space: normal; overflow-wrap: anywhere; }
 .admin-ui .admin-dialog-body .form-row { display: flex; gap: 16px; }
 .admin-ui .admin-dialog-body .form-group { min-width: 0; }
 .admin-ui .admin-dialog-body :is(pre, .cmd-input) { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; font-family: var(--cf-font); }
@@ -155,6 +167,9 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 @media (max-width: 360px) {
   .admin-ui .admin-public-link { display: none; }
 }
+/* A short keyboard viewport cannot fit fixed header/footer chrome plus the form. */
+.admin-ui.admin-dialog-short .admin-dialog { overflow-y: auto; scrollbar-gutter: stable; scroll-padding: 4px; overscroll-behavior: contain; }
+.admin-ui.admin-dialog-short .admin-dialog-body { flex-shrink: 0; overflow: visible; }
 @media (pointer: coarse) {
   .admin-ui .admin-header-inner { padding-top: 8px; padding-bottom: 8px; }
   .admin-ui .admin-header-actions select,
