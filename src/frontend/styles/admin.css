@@ -192,15 +192,18 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-ui.admin-ui .admin-node-table { width: 100%; min-width: 820px; font-size: 14px; table-layout: auto; }
 .admin-ui.admin-ui.admin-ui .admin-node-table th { height: 40px; padding: 0 8px; background: var(--cf-panel); color: var(--cf-text); font-size: 14px; font-weight: 500; text-transform: none; }
 .admin-ui.admin-ui.admin-ui .admin-node-table td { padding: 8px; }
-.admin-ui .admin-col-name { width: 26%; }
+.admin-ui .admin-col-name { width: 25%; }
 .admin-ui .admin-col-ip { width: 18%; }
 .admin-ui .admin-col-actions { text-align: right; }
 .admin-ui .admin-node-name { display: flex; align-items: center; gap: 4px; }
-.admin-ui .admin-node-name > div { min-width: 96px; max-width: 220px; }
+.admin-ui .admin-node-name > div { min-width: 178px; max-width: 220px; flex: 1; }
 .admin-ui .admin-node-name .server-info { display: flex; align-items: center; gap: 6px; }
 .admin-ui .admin-node-name .flag-img { flex-shrink: 0; }
-.admin-ui .admin-node-name .admin-node-metadata { display: flex; align-items: flex-start; gap: 5px; overflow-wrap: anywhere; }
+.admin-ui .admin-node-name .admin-node-metadata { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 8px; overflow-wrap: anywhere; }
+.admin-ui .admin-node-metadata .admin-node-os { display: inline-flex; align-items: flex-start; gap: 5px; min-width: 0; max-width: 100%; }
+.admin-ui .admin-node-metadata .admin-node-group { min-width: 0; max-width: 100%; }
 .admin-ui .admin-node-metadata .os-icon-img { flex-shrink: 0; }
+.admin-ui .server-name-link .admin-country-code { display: inline-flex; vertical-align: middle; white-space: nowrap; padding: 0 5px; border: 1px solid var(--cf-border); border-radius: 6px; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--cf-muted); }
 .admin-ui .server-secondary { display: block; font-size: 12px; color: var(--cf-muted); font-weight: 400; white-space: normal; }
 .admin-ui .server-name-link { border: 0; background: none; color: var(--cf-text); padding: 0; font-weight: 500; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .admin-ui .admin-copy-value { border: 0; background: none; color: inherit; padding: 0; text-align: left; }
@@ -276,7 +279,7 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle:hover { background: var(--cf-soft); color: var(--cf-text); }
 .admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle:disabled { cursor: default; opacity: .4; background: transparent; }
 .admin-ui .admin-node-name { gap: 8px; }
-.admin-ui .admin-node-name > div { max-width: 240px; }
+.admin-ui .admin-node-name > div { max-width: 220px; }
 .admin-ui .admin-node-table .country-os-icons { gap: 5px; }
 .admin-ui .admin-node-table .flag-img { width: 20px; height: 15px; border-radius: 2px; }
 .admin-ui .admin-node-table .os-icon-img { width: 16px; height: 16px; }

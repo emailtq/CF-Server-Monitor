@@ -12,7 +12,7 @@ fs.mkdirSync(out, { recursive: true });
 const report = { node: process.version, checks: [], errors: [], screenshots: [], saves: [], geometry: [], timeline: [] };
 const makeNodes = (count = 8, prefix = 'node') => Array.from({ length: count }, (_, i) => ({
   id: `${prefix}-${i}`, name: i === 1 ? 'Tokyo production database with a deliberately long node name' : `Node ${i + 1}`,
-  server_group: i === 5 ? 'Production-team-with-a-deliberately-long-unbroken-group-name-for-wrap-validation' : i % 2 ? 'Production' : 'Default', os: i === 0 ? 'Ubuntu 22.04.5 LTS' : i === 2 ? '' : i === 3 ? 'MysteryOS 7.3 build 12' : i % 2 ? 'Windows Server 2025' : 'Debian GNU/Linux 12', region: i % 2 ? 'jp' : 'us',
+  server_group: i === 2 ? '' : i === 5 ? 'Production-team-with-a-deliberately-long-unbroken-group-name-for-wrap-validation' : i % 2 ? 'Production' : 'Default', os: i === 0 ? 'Ubuntu 24.04.3 LTS' : i === 2 ? '' : i === 3 ? 'MysteryOS 7.3 build 12' : i === 5 ? 'Alibaba Cloud Linux 3.2104 LTS kernel 5.10.134' : i === 6 ? 'Linux 6.8.0-101 generic build 42' : i === 7 ? 'macOS 15.2.1' : i % 2 ? 'Windows Server 2025' : 'Debian GNU/Linux 13 (trixie)', region: i >= 8 && i <= 12 ? ['SH-AC', 'SH-TA', 'GB-ENG', 'GB-SCT', 'GB-WLS'][i - 8] : i === 0 ? 'hk' : i === 2 ? '' : i === 3 ? 'xx' : i === 4 ? 'uk' : i === 6 ? 'not-a-region' : i === 7 ? 'TW' : i % 2 ? 'jp' : 'us',
   ip_v4: `192.0.2.${i % 250 + 1}`, ip_v6: i % 2 ? '2001:db8:abcd:1234::1234' : '', is_online: i % 3 !== 0,
   timestamp: Date.now() - 7200000, is_hidden: i === 2 ? '1' : '0', traffic_limit: 100, traffic_calc_type: 'sum',
   net_rx_monthly: 12 * 1024 ** 3, net_tx_monthly: 8 * 1024 ** 3, price: '5.00', currency: '$', billing_cycle: 'month', expire_date: '2026-12-01'
@@ -169,23 +169,53 @@ try {
   page = await context.newPage(); page.setDefaultTimeout(7000);
   page.on('pageerror', error => report.errors.push(error.stack));
 
-  await check('two-line metadata keeps flag/name above concise OS and only real groups, with full OS searchable/editable', async () => {
+  await check('two-line metadata retains reported product major version, independent Default/unassigned group and full OS search/edit', async () => {
     await load();
-    for (const [id, os, group, full] of [['node-0', 'Ubuntu', '', 'Ubuntu 22.04.5 LTS'], ['node-1', 'Windows', 'Production', 'Windows Server 2025'], ['node-2', 'Unknown', '', ''], ['node-3', 'MysteryOS', 'Production', 'MysteryOS 7.3 build 12']]) {
+    for (const [id, os, group, full] of [['node-0', 'Ubuntu 24', 'Default', 'Ubuntu 24.04.3 LTS'], ['node-1', 'Windows Server 2025', 'Production', 'Windows Server 2025'], ['node-2', 'Unknown', 'Default', ''], ['node-3', 'MysteryOS', 'Production', 'MysteryOS 7.3 build 12'], ['node-4', 'Debian 13', 'Default', 'Debian GNU/Linux 13 (trixie)'], ['node-6', 'Linux', 'Default', 'Linux 6.8.0-101 generic build 42'], ['node-7', 'macOS 15', 'Production', 'macOS 15.2.1']]) {
       const row = page.locator(`[data-server-id="${id}"]`), first = row.locator('.server-info'), second = row.locator('.admin-node-metadata');
       assert.equal(await first.locator('.flag-img').count(), 1);
       assert.equal(await first.locator('.os-icon-img').count(), 0, 'OS image belongs only on second line');
       assert.equal(await second.locator('.os-icon-img').count(), 1);
-      assert.equal((await second.innerText()).trim(), group ? `${os} · ${group}` : os);
+      assert.equal((await second.innerText()).trim().split(/\s+/).join(' '), `${os} ${group}`);
+      assert.equal(await second.locator('.admin-node-os').innerText(), os);
+      assert.equal(await second.locator('.admin-node-group').innerText(), group, 'group is its own visible element even for Default/unassigned');
       assert.equal(await second.getAttribute('title'), full || 'Unknown');
       const a = await first.boundingBox(), b = await second.boundingBox(); assert.ok(b.y >= a.y + a.height - 1);
     }
-    await page.locator('input[type="search"]').fill('22.04.5'); assert.deepEqual(await ids(), ['node-0']);
+    await page.locator('input[type="search"]').fill('24.04.3'); assert.deepEqual(await ids(), ['node-0']);
     await page.locator('input[type="search"]').fill('');
     await page.locator('[data-server-id="node-0"] .server-name-link').click();
     await page.getByRole('dialog').waitFor();
     assert.equal(await page.getByRole('dialog').locator('[name="edit_name"]').inputValue(), 'Node 1', 'existing name edit action still opens the right node');
     await page.keyboard.press('Escape');
+  });
+  await check('actual country badge follows name text flow after the existing flag, neutral outline only; missing/invalid stays absent', async () => {
+    await load();
+    for (const [id, country, flag] of [['node-0', 'HK', 'hk'], ['node-1', 'JP', 'jp'], ['node-2', '', 'xx'], ['node-3', '', 'xx'], ['node-4', 'GB', 'gb'], ['node-6', '', 'not-a-region'], ['node-7', 'TW', 'cn']]) {
+      const row = page.locator(`[data-server-id="${id}"]`), badge = row.locator('.admin-country-code');
+      assert.equal(await badge.count(), country ? 1 : 0);
+      assert.ok((await row.locator('.flag-img').getAttribute('src')).endsWith(`flags/${flag}.svg`));
+      if (country) {
+        assert.equal(await badge.innerText(), country);
+        const visual = await badge.evaluate(element => { const style = getComputedStyle(element); return { insideName: !!element.closest('.server-name-link'), background: style.backgroundColor, border: style.borderTopWidth, size: style.fontSize, height: element.getBoundingClientRect().height, position: style.position, preceding: [...element.parentNode.childNodes].slice(0, [...element.parentNode.childNodes].indexOf(element)).map(node => node.textContent).join('') }; });
+        report.geometry.push({ kind: 'country-badge', id, ...visual });
+        assert.equal(visual.insideName, true, 'badge is inline in name text flow, not a separately flexed side chip'); assert.equal(visual.background, 'rgba(0, 0, 0, 0)'); assert.equal(visual.border, '1px'); assert.equal(visual.size, '12px'); assert.ok(visual.height <= 24); assert.equal(visual.position, 'static'); assert.ok(visual.preceding.includes(nodes.find(node => node.id === id).name));
+      }
+    }
+  });
+  await check('existing extended-region flag assets remain independent of the two-letter country badge', async () => {
+    await load({ count: 13 });
+    for (const [index, flag] of [[8, 'sh-ac'], [9, 'sh-ta'], [10, 'gb-eng'], [11, 'gb-sct'], [12, 'gb-wls']]) {
+      const row = page.locator(`[data-server-id="node-${index}"]`), image = row.locator('.flag-img');
+      assert.ok((await image.getAttribute('src')).endsWith(`flags/${flag}.svg`), 'badge validator must not replace a supported flag with xx');
+      await page.waitForFunction(id => { const img = document.querySelector(`[data-server-id="${id}"] .flag-img`); return img.complete && img.naturalWidth > 0; }, `node-${index}`);
+      assert.equal(await row.locator('.admin-country-code').count(), 0, 'extended region does not fabricate a two-letter country');
+    }
+    const screenshot = path.join(out, 'extended-region-flags.png'); await page.screenshot({ path: screenshot, fullPage: true }); report.screenshots.push(screenshot);
+  });
+  await check('node name slot follows latest compact 185-198px range without squeezing IP/status/actions or page overflow', async () => {
+    await load(); const geometry = await page.evaluate(() => { const table = document.querySelector('.admin-node-table'), name = document.querySelector('[data-server-id="node-1"] .server-name-link'), slot = name.closest('.admin-node-name').lastElementChild; return { name: name.getBoundingClientRect().width, slot: slot.getBoundingClientRect().width, page: document.documentElement.scrollWidth, viewport: innerWidth, cell: table.querySelector('td').getBoundingClientRect().width, other: [...table.querySelectorAll('tbody tr:first-child td')].slice(1).map(cell => cell.getBoundingClientRect().width) }; });
+    report.geometry.push({ kind: 'name-width', ...geometry }); assert.ok(geometry.slot >= 185 && geometry.slot <= 198, JSON.stringify(geometry)); assert.ok(geometry.name > 155); assert.ok(geometry.page <= geometry.viewport); assert.ok(geometry.other[0] >= 170); assert.ok(geometry.other.at(-1) >= 180);
   });
   await check('real keyed row overlaps before half-short-row threshold, then displaces without boundary jitter in all height/direction pairs', async () => {
     for (const tallId of ['node-0', 'node-1']) for (const direction of ['down', 'up']) {
@@ -438,6 +468,10 @@ try {
       assert.ok(geometry.nameWidth >= 96, 'flag/OS assets must not squeeze the name below the reference 6rem slot');
       const metadata = await page.locator('[data-server-id="node-5"] .admin-node-metadata').evaluate(element => ({ width: element.getBoundingClientRect().width, scroll: element.scrollWidth, text: element.innerText, nameSize: getComputedStyle(element.parentElement.querySelector('.server-name-link')).fontSize }));
       assert.ok(metadata.scroll <= metadata.width + 1, 'long group wraps inside node metadata, not by shrinking the name'); assert.equal(metadata.nameSize, '14px'); assert.ok(metadata.text.includes('long-unbroken-group-name'));
+      const group = await page.locator('[data-server-id="node-5"] .admin-node-group').boundingBox(); assert.ok(group.width > 0 && group.height > 0);
+      assert.equal(await page.locator('[data-server-id="node-5"] .admin-node-os').innerText(), 'Alibaba Cloud Linux 3');
+      assert.equal(await page.locator('[data-server-id="node-2"] .admin-node-group').innerText(), { zh: '\u9ed8\u8ba4', en: 'Default', ja: '\u30c7\u30d5\u30a9\u30eb\u30c8' }[locale]);
+      assert.equal(await page.locator('[data-server-id="node-1"] .server-name-link').evaluate(element => { const text = element.firstChild, range = document.createRange(); range.setStart(text, text.textContent.trimEnd().lastIndexOf('name')); range.setEnd(text, text.textContent.trimEnd().length); const word = range.getBoundingClientRect(), badge = element.querySelector('.admin-country-code').getBoundingClientRect(); return Math.abs(word.top - badge.top) <= 4; }), true, 'country badge follows the final name word rather than a separate width-consuming side slot');
       const buttonSize = geometry.coarse ? 44 : 36;
       assert.deepEqual(geometry.button, { width: buttonSize, height: buttonSize }); assert.equal(geometry.padding, '8px');
       assert.equal(geometry.coarse, width < 640);
