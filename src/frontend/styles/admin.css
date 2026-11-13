@@ -48,6 +48,7 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui button { cursor: pointer; }
 .admin-ui button:disabled { cursor: not-allowed; opacity: .5; }
 .admin-ui :is(button, input, select, textarea, a):focus-visible { outline: 2px solid var(--cf-muted); outline-offset: 2px; }
+.admin-ui :is(button, input, select, textarea, a, label, .terminal-entry) { -webkit-tap-highlight-color: transparent; }
 .admin-ui [hidden] { display: none !important; }
 .admin-ui input[type=checkbox] { accent-color: var(--cf-text); width: 16px; height: 16px; margin: 0; flex-shrink: 0; }
 .admin-ui .admin-header { border-bottom: 1px solid var(--cf-border); background: var(--cf-panel); }
@@ -182,6 +183,9 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui .admin-node-name { display: flex; align-items: center; gap: 4px; }
 .admin-ui .admin-node-name > div { min-width: 96px; max-width: 220px; }
 .admin-ui .admin-node-name .server-info { display: flex; align-items: center; gap: 6px; }
+.admin-ui .admin-node-name .flag-img { flex-shrink: 0; }
+.admin-ui .admin-node-name .admin-node-metadata { display: flex; align-items: flex-start; gap: 5px; overflow-wrap: anywhere; }
+.admin-ui .admin-node-metadata .os-icon-img { flex-shrink: 0; }
 .admin-ui .server-secondary { display: block; font-size: 12px; color: var(--cf-muted); font-weight: 400; white-space: normal; }
 .admin-ui .server-name-link { border: 0; background: none; color: var(--cf-text); padding: 0; font-weight: 500; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .admin-ui .admin-copy-value { border: 0; background: none; color: inherit; padding: 0; text-align: left; }
@@ -311,7 +315,7 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui .admin-node-table .server-row { position: relative; z-index: 1; background: var(--cf-panel); transition: opacity 150ms; }
 .admin-ui .admin-node-table .server-row[data-reordering] { z-index: 0; opacity: .4; }
 :root[data-server-reordering] .admin-ui * { cursor: grabbing; }
-:root[data-server-reordering] .admin-ui.admin-ui.admin-ui .admin-node-table .server-row:hover { background: var(--cf-panel); }
+.admin-ui.admin-ui.admin-ui .admin-node-table .server-row:hover { background: var(--cf-panel); }
 @media (prefers-reduced-motion: reduce) {
   .admin-ui .admin-node-table .server-row { transition: none; }
 }

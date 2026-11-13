@@ -17,7 +17,7 @@
           <tr v-for="server in filteredServers" :key="server.id" class="server-row" :data-server-id="server.id" :data-reordering="dragging === String(server.id) ? '' : undefined">
             <td><div class="admin-node-name">
               <button type="button" class="drag-handle" :disabled="sortingDisabled" :aria-label="trans.dragSort + ': ' + server.name" :title="trans.dragSort" draggable="false" @pointerdown="handlePointerDown($event, server.id)" @keydown="handleKeyDown($event, server.id)"><AdminIcon name="grip-vertical" /></button>
-              <div><div class="server-info"><span class="country-os-icons"><img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(server.region || 'xx') + '.svg')" :alt="server.region || 'xx'" class="flag-img"><OsIcon :os="server.os" /></span><button class="server-name-link" :title="server.name" @click="$emit('edit', server)">{{ server.name }}</button></div><div class="server-secondary">{{ server.server_group || trans.default }} · {{ server.os || '-' }}</div></div>
+              <div><div class="server-info"><img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(server.region || 'xx') + '.svg')" :alt="server.region || 'xx'" class="flag-img"><button class="server-name-link" :title="server.name" @click="$emit('edit', server)">{{ server.name }}</button></div><div class="server-secondary admin-node-metadata" :title="server.os || getOSName(server.os)"><OsIcon :os="server.os" /><span>{{ getOSName(server.os) }}<template v-if="server.server_group && server.server_group !== 'Default'"> · {{ server.server_group }}</template></span></div></div>
             </div></td>
             <td><div v-if="getServerIpRows(server).length" class="server-ip-list"><button v-for="ip in getServerIpRows(server)" :key="ip.copyField" class="admin-copy-value" :class="{ 'spec-copied': isSpecCopied(server, ip.copyField) }" :aria-label="trans.copy + ': ' + ip.address" @click="emitCopySpec(server, ip.copyField, ip.address)">{{ ip.address }}</button></div><span v-else>-</span></td>
             <td><div class="admin-status-stack"><span class="admin-node-status" :class="{ 'is-offline': !server.is_online }">{{ server.is_online ? trans.online : trans.offline }}</span><span v-if="isEnabledFlag(server.is_hidden)" class="admin-private-status">{{ trans.adminPrivateNode }}</span><span v-if="!server.is_online && server.timestamp" class="server-secondary">{{ offlineAge(server) }}</span></div></td>
@@ -25,7 +25,7 @@
             <td><button class="admin-copy-value" @click="emitCopySpec(server, 'price', formatServerPrice(server))">{{ formatServerPrice(server) }}</button><small class="server-secondary admin-expiry-inline">{{ server.expire_date || '-' }}</small></td>
             <td class="admin-expiry-column">{{ server.expire_date || '-' }}</td>
             <td><div class="action-btns">
-              <span class="terminal-entry" tabindex="0" :aria-label="terminalReason(server)"><button @click="$emit('terminal', server)" class="btn btn-icon" :disabled="!terminalReady(server)" :aria-label="trans.terminalOpen" :aria-describedby="'terminal-reason-' + server.id"><AdminIcon name="terminal" /></button><small :id="'terminal-reason-' + server.id" class="terminal-reason">{{ terminalReason(server) }}</small></span>
+              <span class="terminal-entry" :class="{ 'terminal-unavailable': !terminalReady(server) }" :tabindex="terminalReady(server) ? undefined : 0" :aria-label="terminalReason(server)" @focus="$event.currentTarget.parentElement.scrollIntoView({ block: 'nearest', inline: 'nearest' })" @click="!terminalReady(server) && $event.currentTarget.focus({ preventScroll: true })"><button @click="$emit('terminal', server)" class="btn btn-icon" :disabled="!terminalReady(server)" :aria-label="trans.terminalOpen" :aria-describedby="'terminal-reason-' + server.id"><AdminIcon name="terminal" /></button><small :id="'terminal-reason-' + server.id" class="terminal-reason">{{ terminalReason(server) }}</small></span>
               <button @click="$emit('copy-cmd', server.id)" class="btn btn-icon" :aria-label="trans.copy" :title="trans.installCommand"><AdminIcon name="download" /></button>
               <button @click="$emit('edit', server)" class="btn btn-icon" :aria-label="trans.edit" :title="trans.edit"><AdminIcon name="pencil" /></button>
               <button @click="$emit('renew', server)" class="btn btn-icon" :aria-label="trans.adminRenew" :title="trans.adminRenew"><AdminIcon name="calendar-clock" /></button>
@@ -47,6 +47,7 @@ import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, getLoc
 import { normalizeTimestamp } from '../../../utils/time.js'
 import { getTrafficUsageBytes } from '../../../composables/useServerCardData.js'
 import OsIcon from '../../../components/OsIcon.vue'
+import { getOSName } from '../../../utils/osIcon.js'
 import AdminIcon from './AdminIcon.vue'
 import { useServerReorder } from '../composables/useServerReorder.js'
 
@@ -150,6 +151,13 @@ const formatTraffic = server => trafficBytes(server) === null ? '-' : formatByte
 
 <style scoped>
 .terminal-entry { position: relative; display: inline-flex; }
-.terminal-reason { display: none; position: absolute; right: 0; top: 100%; z-index: 5; width: 200px; padding: 8px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); white-space: normal; }
-.terminal-entry:focus .terminal-reason, .terminal-entry:focus-within .terminal-reason, .terminal-entry:hover .terminal-reason { display: block; }
+.terminal-reason { display: none; position: absolute; left: 0; top: 100%; z-index: 5; width: 180px; padding: 8px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); white-space: normal; }
+.terminal-entry:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; }
+.terminal-unavailable button { pointer-events: none; }
+.terminal-unavailable:focus .terminal-reason, .terminal-unavailable:focus-within .terminal-reason { display: block; }
+.server-row:has(.terminal-unavailable:focus-within) { z-index: 2; }
+@media (hover: hover) and (pointer: fine) {
+  .terminal-unavailable:hover .terminal-reason { display: block; }
+  .server-row:has(.terminal-unavailable:hover) { z-index: 2; }
+}
 </style>

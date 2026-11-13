@@ -12,9 +12,15 @@ export function useServerReorder(props, sortingDisabled, emit) {
   const ids = () => orderedServers.value.map(server => String(server.id))
   let pointer = null, frame = 0, moving = false, slideRevision = 0, alive = true
 
-  const slide = next => {
+  const positions = () => new Map([...(body.value?.rows || [])].map(row => [row, row.getBoundingClientRect().top]))
+  const track = () => {
+    if (!pointer?.active) return
+    const row = pointer.row
+    const top = row.offsetParent.getBoundingClientRect().top + row.offsetTop
+    row.style.transform = `translateY(${pointer.y - pointer.grab - top}px)`
+  }
+  const slide = (next, before = positions()) => {
     const rows = [...(body.value?.rows || [])]
-    const before = new Map(rows.map(row => [row, row.getBoundingClientRect().top]))
     rows.forEach(row => row.getAnimations().forEach(animation => { if (animation.id === 'server-slide') animation.cancel() }))
     const revision = ++slideRevision
     manualOrder.value = next
@@ -22,8 +28,10 @@ export function useServerReorder(props, sortingDisabled, emit) {
     nextTick(() => {
       if (!alive || revision !== slideRevision) return
       moving = false
+      track()
       if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
       for (const [row, top] of before) {
+        if (row === pointer?.row) continue
         const dy = top - row.getBoundingClientRect().top
         if (dy && row.isConnected) row.animate({ transform: [`translateY(${dy}px)`, 'none'] }, { id: 'server-slide', duration: 150, easing: 'ease-out' })
       }
@@ -44,22 +52,30 @@ export function useServerReorder(props, sortingDisabled, emit) {
       pointer.y >= Math.max(table.top, wrapper.top, 0) && pointer.y <= Math.min(table.bottom, wrapper.bottom, innerHeight)
   }
   const at = () => {
-    if (!pointer?.active || moving || !inside()) return
+    if (!pointer?.active) return
+    track()
+    if (moving || !inside()) return
     const rows = [...body.value.rows]
     if (!rows.length) return
     // Layout offsets ignore the in-flight FLIP transforms, unlike elementFromPoint.
-    const y = pointer.y - rows[0].offsetParent.getBoundingClientRect().top
+    const top = pointer.y - pointer.grab - pointer.row.offsetParent.getBoundingClientRect().top
     const from = rows.findIndex(row => row.dataset.serverId === pointer.id)
-    const to = rows.findIndex(row => y >= row.offsetTop && y < row.offsetTop + row.offsetHeight)
-    if (from < 0 || to < 0 || from === to) return
-    const target = rows[to], height = rows[from].offsetHeight
-    // A short row only crosses a tall row once it will cover the pointer in its new slot.
-    if (to > from ? y < target.offsetTop + target.offsetHeight - height : y >= target.offsetTop + height) return
+    if (from < 0) return
+    const direction = top > rows[from].offsetTop ? 1 : -1, to = from + direction
+    const target = rows[to]
+    if (!target) return
+    const height = rows[from].offsetHeight, threshold = Math.min(height, target.offsetHeight) / 2
+    if (direction > 0 ? top + height < target.offsetTop + threshold : top > target.offsetTop + target.offsetHeight - threshold) return
+    // Unequal rows still overlap after swapping: require a real reversal, not a one-pixel boundary wobble.
+    const last = pointer.swap
+    if (last?.id === target.dataset.serverId && last.direction !== direction && direction * (top - last.top) < threshold) return
+    pointer.swap = { id: target.dataset.serverId, direction, top }
     move(pointer.id, to)
   }
   const cleanup = () => {
     const previous = pointer
     pointer = null
+    if (previous) previous.row.style.transform = ''
     dragging.value = null
     cancelAnimationFrame(frame)
     document.documentElement.removeAttribute('data-server-reordering')
@@ -74,14 +90,16 @@ export function useServerReorder(props, sortingDisabled, emit) {
   }
   const cancel = () => {
     const before = pointer?.before, refreshed = pointer?.refreshed
+    const drawn = positions()
     cleanup()
-    if (before) slide(refreshed ? [] : before)
+    if (before) slide(refreshed ? [] : before, drawn)
   }
   const finish = () => {
     const before = pointer.before, refreshed = pointer.refreshed, next = ids()
+    const drawn = positions()
     cleanup()
+    slide(refreshed && next.join() === before.join() ? [] : next, drawn)
     if (next.join() !== before.join()) emit('reorder', next)
-    else if (refreshed) slide([])
   }
   const onKey = event => { if (event.key === 'Escape') cancel() }
   const onPointer = event => {
@@ -132,7 +150,9 @@ export function useServerReorder(props, sortingDisabled, emit) {
     rows.setPointerCapture(event.pointerId)
     const before = ids()
     manualOrder.value = before
-    pointer = { pointerId: event.pointerId, id: String(serverId), x: event.clientX, y: event.clientY, x0: event.clientX, y0: event.clientY, active: false, before, refreshed: false, scroller, last: 0 }
+    const row = event.currentTarget.closest('tr')
+    row.getAnimations().forEach(animation => { if (animation.id === 'server-slide') animation.cancel() })
+    pointer = { pointerId: event.pointerId, id: String(serverId), row, grab: event.clientY - row.getBoundingClientRect().top, x: event.clientX, y: event.clientY, x0: event.clientX, y0: event.clientY, active: false, before, refreshed: false, scroller, last: 0, swap: null }
     document.addEventListener('pointermove', onPointer, { passive: false })
     document.addEventListener('pointerup', onPointer)
     document.addEventListener('pointercancel', onPointer)
