@@ -220,8 +220,11 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
   }
   const scrollToBottom = () => screen?.scrollToBottom()
   const attachHistory = () => {
+    const renderer = screen
     const element = screen.element
     let gesture = null
+    let thumb = null
+    let thumbPending = false
     let pending = 0
     let frame = 0
     const canScroll = () => screen?.buffer.active.type === 'normal' && screen.modes.mouseTrackingMode === 'none' && !screen.hasSelection() && !window.getSelection()?.toString()
@@ -229,13 +232,22 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       const buffer = screen.buffer.active
       readingHistory.value = buffer.type === 'normal' && buffer.viewportY < buffer.baseY
     }
+    const moveThumb = () => {
+      if (!thumbPending || !thumb || screen !== renderer) return
+      thumbPending = false
+      if (renderer.buffer.active.type !== 'normal') { endThumb(); return }
+      const track = thumb.slider.parentElement.getBoundingClientRect()
+      const travel = track.height - thumb.slider.getBoundingClientRect().height
+      if (travel > 0) renderer.scrollToLine(Math.round(Math.max(0, Math.min(1, (thumb.y - track.top - thumb.grab) / travel)) * renderer.buffer.active.baseY))
+    }
     const schedule = () => {
       if (frame) return
       frame = requestAnimationFrame(() => {
-        frame = 0
+        moveThumb()
         if (pending && canScroll()) screen.scrollLines(pending)
         pending = 0
         update()
+        frame = 0
       })
     }
     const cancel = () => { gesture = null; pending = 0 }
@@ -271,6 +283,41 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       schedule()
     }
     const end = () => { gesture = null }
+    const endThumb = () => {
+      if (!thumb) return
+      const previous = thumb
+      thumb = null
+      thumbPending = false
+      previous.slider.classList.remove('active')
+      if (previous.slider.hasPointerCapture(previous.id)) previous.slider.releasePointerCapture(previous.id)
+    }
+    const startThumb = event => {
+      const slider = event.target.closest('.scrollbar.vertical > .slider')
+      if (!slider || !event.isPrimary || event.button !== 0 || renderer.buffer.active.type !== 'normal') return
+      // xterm 6 resets Windows drags after lateral drift; own only the real thumb, not the track.
+      endThumb()
+      try { slider.setPointerCapture(event.pointerId) } catch (_) { return }
+      cancel()
+      thumb = { slider, id: event.pointerId, y: event.clientY, grab: event.clientY - slider.getBoundingClientRect().top }
+      slider.classList.add('active')
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+    const dragThumb = event => {
+      if (!thumb || event.pointerId !== thumb.id) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      thumb.y = event.clientY
+      thumbPending = true
+      schedule()
+    }
+    const finishThumb = event => { if (thumb && event.pointerId === thumb.id) { if (event.type === 'pointerup') moveThumb(); endThumb() } }
+    element.addEventListener('pointerdown', startThumb, true)
+    element.addEventListener('pointermove', dragThumb, true)
+    element.addEventListener('pointerup', finishThumb, true)
+    element.addEventListener('pointercancel', finishThumb, true)
+    element.addEventListener('lostpointercapture', finishThumb, true)
+    window.addEventListener('blur', endThumb)
     element.addEventListener('touchstart', start, { passive: true })
     element.addEventListener('touchmove', move, { passive: false })
     element.addEventListener('touchend', end, { passive: true })
@@ -279,6 +326,13 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     update()
     return () => {
       if (frame) cancelAnimationFrame(frame)
+      endThumb()
+      element.removeEventListener('pointerdown', startThumb, true)
+      element.removeEventListener('pointermove', dragThumb, true)
+      element.removeEventListener('pointerup', finishThumb, true)
+      element.removeEventListener('pointercancel', finishThumb, true)
+      element.removeEventListener('lostpointercapture', finishThumb, true)
+      window.removeEventListener('blur', endThumb)
       element.removeEventListener('touchstart', start)
       element.removeEventListener('touchmove', move)
       element.removeEventListener('touchend', end)

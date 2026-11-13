@@ -437,9 +437,12 @@ async function pagePasteHandler(terminal, readText, uiError = { value: '' }) {
   const ast = parseJS(script, { sourceType: 'module' })
   const declaration = ast.program.body.flatMap(node => node.declarations || []).find(node => node.id?.name === 'pasteClipboard')
   assert.ok(declaration?.init, 'actual component paste handler must be exercised')
-  return vm.runInNewContext(script.slice(declaration.init.start, declaration.init.end), {
-    terminal, uiError, navigator: { clipboard: { readText } }
+  const helpers = ast.program.body.flatMap(node => node.declarations || []).filter(node => ['clearUiError', 'clearPasteDraft'].includes(node.id?.name)).map(node => `const ${script.slice(node.start, node.end)};`).join('\n')
+  const pasteOwner = { value: '' }, pasteDraft = { value: '' }
+  const handler = vm.runInNewContext(`${helpers}\n(${script.slice(declaration.init.start, declaration.init.end)})`, {
+    terminal, status: terminal.status, errorCode: terminal.errorCode, uiError, dismissedNotice: { value: '' }, pasteOwner, pasteDraft, pasteInput: { value: null }, nextTick: async () => {}, navigator: { clipboard: { readText } }
   })
+  return Object.assign(handler, { pasteOwner, pasteDraft })
 }
 
 test('pending component clipboard input and focus cannot cross a close/reopen session boundary', () => fixture(async ({ create, open, tick }) => {
@@ -486,6 +489,8 @@ test('same-session component clipboard paste still sends UTF-8 and reports permi
   const denied = await pagePasteHandler(t, async () => { throw new Error('permission denied') }, uiError)
   await denied()
   assert.equal(uiError.value, 'terminal_clipboard_denied')
+  assert.equal(denied.pasteOwner.value, t.sessionId.value)
+  assert.equal(denied.pasteDraft.value, '')
 }))
 
 test('exit closes transport immediately but drains final output into a retained read-only screen', () => fixture(async ({ create, open, tick, timers }) => {
@@ -617,6 +622,26 @@ test('renderer theme refresh uses effective CSS colors without reserving, reconn
   t.dispose()
   assert.equal(t.refreshTheme(), false)
 }))
+
+test('late component status observation cannot replace a fresh session message', async () => {
+  const page = await source('src/frontend/views/admin/Terminal.vue')
+  const script = page.match(/<script setup>([\s\S]*?)<\/script>/)[1]
+  const ast = parseJS(script, { sourceType: 'module' })
+  const declaration = ast.program.body.flatMap(node => node.declarations || []).find(node => node.id?.name === 'refreshStatus')
+  assert.ok(declaration?.init)
+  let resolveStatus
+  const sessionId = { value: 'old-session' }, uiError = { value: 'fresh-message' }, availability = { value: null }
+  const refresh = vm.runInNewContext(script.slice(declaration.init.start, declaration.init.end), {
+    sessionId, uiError, availability, connected: { value: true }, live: true, serverId: 'node-a', apiIndex: 0,
+    adminApi: () => new Promise(resolve => { resolveStatus = resolve })
+  })
+  const pending = refresh()
+  sessionId.value = 'fresh-session'
+  resolveStatus({ error: 'terminal_node_missing' })
+  await pending
+  assert.equal(uiError.value, 'fresh-message')
+  assert.equal(availability.value, null)
+})
 
 test('compiled standalone terminal preserves actual theme, input ownership and bounded workspace', { timeout: 120000 }, () => {
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/terminal-page.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 120000, env: process.env })

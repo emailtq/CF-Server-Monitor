@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import en from '../../../src/frontend/locales/en.js';
+import { connectionChecks, refinementChecks } from './terminal-refinement-checks.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
@@ -13,7 +15,12 @@ fs.mkdirSync(base, { recursive: true });
 const out = process.env.TERMINAL_WORKSPACE_REPORT_DIR || fs.mkdtempSync(path.join(base, 'workspace-'));
 fs.mkdirSync(out, { recursive: true });
 const report = { checks: [], errors: [], actions: [], inputs: [], resizes: [], sockets: 0, ack: 0, outputBytes: 0, realXterm: true, syntheticPeer: true, physicalDevice: false };
+report.sourceSHA256 = Object.fromEntries(['src/frontend/views/admin/Terminal.vue', 'src/frontend/views/admin/components/AdminDialog.vue', 'src/frontend/composables/useTerminal.js', 'test/fixtures/admin-ui/terminal-workspace.mjs', 'test/fixtures/admin-ui/terminal-refinement-checks.mjs'].map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
 let server, browser, page, context, socket, session = 0;
+const refinement = process.env.TERMINAL_REFINEMENT === '1';
+let releaseCreating, releaseStarting;
+const creatingGate = refinement ? new Promise(resolve => { releaseCreating = resolve; }) : Promise.resolve();
+const startingGate = refinement ? new Promise(resolve => { releaseStarting = resolve; }) : Promise.resolve();
 const check = async (name, fn) => {
   try { await fn(); report.checks.push({ name, pass: true }); console.log('PASS ' + name); }
   catch (error) { report.errors.push({ name, error: error.stack }); console.error('FAIL ' + name + ': ' + error.message); }
@@ -27,8 +34,8 @@ const output = async text => {
   for (let offset = 0; offset < bytes.length; offset += 16384) { const frame = bytes.subarray(offset, offset + 16384); report.outputBytes += frame.length; socket.send(frame); }
   await page.waitForFunction(bytes => window.fixtureAck >= bytes, report.outputBytes);
 };
-const menu = async () => { if (!await page.locator('.admin-dialog-terminal').count()) await page.locator('[data-terminal-menu]').click(); };
-const closeMenu = async () => { if (await page.locator('.admin-dialog-terminal').count()) await page.keyboard.press('Escape'); };
+const menu = async () => { if (await page.locator('[data-terminal-menu]').getAttribute('aria-expanded') !== 'true') await page.locator('[data-terminal-menu]').click(); await page.locator('.admin-dialog-terminal').waitFor(); await page.waitForFunction(() => !document.querySelector('.terminal-menu-enter-active')); };
+const closeMenu = async () => { if (await page.locator('[data-terminal-menu]').getAttribute('aria-expanded') === 'true') await page.keyboard.press('Escape'); await page.locator('.admin-dialog-terminal').waitFor({ state: 'hidden' }); };
 try {
   server = await createServer({ frontendExports: true, fixtureEntries: [path.resolve('test/fixtures/admin-ui/terminal-workspace.html')], cacheDir: path.join(out, '.cache'), plugins: [vue()], publicDir: path.resolve('public') });
   const httpOrigin = `http://127.0.0.1:${server.httpServer.address().port}`, origin = httpOrigin.replace('http:', 'https:');
@@ -41,14 +48,15 @@ try {
   report.pointer = touch ? 'coarse' : 'fine';
   await context.addInitScript(() => {
     window.fixtureAck = 0;
-    Object.defineProperty(navigator, 'clipboard', { value: { readText: () => new Promise(resolve => { window.clipboardResolve = resolve; }), writeText: async text => { window.copied = text; } } });
+    window.fixtureNativeClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: () => new Promise((resolve, reject) => { window.clipboardResolve = resolve; window.clipboardReject = reject; }), writeText: async text => { window.copied = text; } } });
   });
   await context.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url());
     if (url.origin !== origin) return route.abort();
     if (url.pathname === '/admin/api') {
       const data = req.postDataJSON(); report.actions.push(data.action);
-      if (data.action === 'terminal_status') return route.fulfill({ json: { enabled: true, connected: true, supported: true, protocol: 1, platform: 'linux' } });
+      if (data.action === 'terminal_status') { await creatingGate; return route.fulfill({ json: { enabled: true, connected: true, supported: true, protocol: 1, platform: 'linux' } }); }
       if (data.action === 'terminal_open') { session++; report.outputBytes = report.ack = 0; return route.fulfill({ json: { sessionId: `session-${session}`, browserPath: `/admin/api/terminal/node-a/session-${session}/ws` } }); }
       return route.fulfill({ json: { servers: [{ id: 'node-a', name: 'Hong Kong production node with a long name', region: 'HK', os: 'Debian 12' }], success: true } });
     }
@@ -56,7 +64,7 @@ try {
     const target = url.pathname === '/admin' ? '/test/fixtures/admin-ui/terminal-workspace.html' : url.pathname;
     return route.fulfill({ response: await route.fetch({ url: httpOrigin + target + url.search }) });
   });
-  await context.routeWebSocket('**/admin/api/terminal/**', ws => {
+  await context.routeWebSocket('**/admin/api/terminal/**', async ws => {
     report.sockets++;
     socket = ws;
     let consumed = 0;
@@ -67,12 +75,20 @@ try {
       if (frame.type === 'resize') report.resizes.push(frame);
       if (frame.type === 'ping') ws.send('{"type":"pong"}');
     });
-    ws.send('{"type":"start","cols":80,"rows":24}'); ws.send('{"type":"ready"}');
+    ws.send('{"type":"start","cols":80,"rows":24}');
+    await startingGate;
+    ws.send('{"type":"ready"}');
+    if (refinement) { const first = Buffer.from('FIRST REMOTE LINE\r\n'); report.outputBytes += first.length; ws.send(first); }
   });
   page = await context.newPage();
+  page.on('console', message => { if (message.type() === 'error' || message.type() === 'warning') (report.console || (report.console = [])).push({ type: message.type(), text: message.text() }); });
   page.on('pageerror', error => report.errors.push({ name: 'pageerror', error: error.stack }));
   await page.goto(`${origin}/admin#/admin/terminal/node-a?apiIndex=0`);
+  if (refinement) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report });
   await page.waitForFunction(() => window.fixtureScreen && !window.fixtureScreen.options.disableStdin);
+  if (refinement) {
+    await refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, socket: () => socket });
+  } else {
   const cdp = await context.newCDPSession(page);
   const swipe = async (delta = 180, options = {}) => {
     const box = await page.locator('.xterm-screen').boundingBox(), x = box.x + Math.min(box.width / 2, 100), y = box.y + Math.min(box.height / 3, 80);
@@ -222,6 +238,7 @@ try {
       await menu(); await page.locator('[data-terminal-back]').click(); await page.waitForFunction(() => !document.querySelector('.xterm'));
       assert.ok(page.url().endsWith('#/admin?apiIndex=0'));
     });
+  }
   }
 } catch (error) { report.errors.push({ name: 'fixture', error: error.stack }); await page?.screenshot({ path: path.join(out, 'failure.png') }).catch(() => {}); }
 finally {

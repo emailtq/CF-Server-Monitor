@@ -26,6 +26,7 @@ const screenshot = async name => { const file = path.join(out, `${name}.png`); a
 const open = async (kind, stress = false) => {
   await page.evaluate(({ kind, stress }) => window.dialogFixture.open(kind, stress), { kind, stress });
   await page.locator('.admin-dialog').last().waitFor();
+  if (kind === 'terminal') await page.waitForFunction(() => !document.querySelector('.terminal-menu-enter-active'));
   await frames();
   // Expand real optional sections so containment includes their real forms/previews.
   await page.locator('.admin-dialog-body details').evaluateAll(elements => elements.forEach(element => { element.open = true; }));
@@ -239,17 +240,48 @@ try {
     await page.setViewportSize({ width: 390, height: 600 }); await open('download');
     await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
     const toggle = page.locator('#download-auto-update');
-    await frames(); await page.waitForFunction(() => !document.querySelector('#download-auto-update').getAnimations({ subtree: true }).some(animation => animation.playState === 'running'));
+    await toggle.evaluate(async e => {
+      getComputedStyle(e).backgroundColor; getComputedStyle(e, '::before').transform;
+      await Promise.all(e.getAnimations({ subtree: true }).map(animation => animation.finished));
+    });
     const sample = () => toggle.evaluate(e => ({ checked: e.checked, transform: getComputedStyle(e, '::before').transform, track: getComputedStyle(e).backgroundColor, thumb: getComputedStyle(e, '::before').backgroundColor, tap: getComputedStyle(e).webkitTapHighlightColor }));
-    const before = await sample(); await toggle.click();
-    const mid = await page.evaluate(() => new Promise(resolve => {
-      requestAnimationFrame(() => requestAnimationFrame(() => { const e = document.querySelector('#download-auto-update'); resolve({ checked: e.checked, transform: getComputedStyle(e, '::before').transform, track: getComputedStyle(e).backgroundColor, thumb: getComputedStyle(e, '::before').backgroundColor }); }));
-    }));
+    const before = await sample();
+    await toggle.evaluate(e => {
+      window.switchNativeChange = null;
+      e.addEventListener('change', event => { window.switchNativeChange = { trusted: event.isTrusted, checked: e.checked }; }, { once: true });
+      window.switchTransitions = new Promise((resolve, reject) => {
+        const onRun = event => {
+          if (event.target !== e) return;
+          const transitions = e.getAnimations({ subtree: true }).filter(animation => ['transform', 'background-color'].includes(animation.transitionProperty));
+          if (!transitions.some(animation => animation.transitionProperty === 'transform')) return;
+          e.removeEventListener('transitionrun', onRun); clearTimeout(timeout);
+          for (const animation of transitions) animation.pause();
+          resolve(transitions);
+        };
+        const timeout = setTimeout(() => { e.removeEventListener('transitionrun', onRun); reject(new Error('native switch transition did not start')); }, 5000);
+        e.addEventListener('transitionrun', onRun);
+      });
+    });
+    await toggle.click();
+    const mid = await toggle.evaluate(async e => {
+      const transitions = await window.switchTransitions;
+      await Promise.all(transitions.map(animation => animation.ready));
+      // Sample native CSS effects at half their real duration, not at an assumed RAF count.
+      for (const animation of transitions) animation.currentTime = animation.effect.getTiming().duration / 2;
+      const sampled = { checked: e.checked, transform: getComputedStyle(e, '::before').transform, track: getComputedStyle(e).backgroundColor, thumb: getComputedStyle(e, '::before').backgroundColor, nativeChange: window.switchNativeChange, animations: transitions.map(animation => ({ property: animation.transitionProperty, pseudo: animation.effect.pseudoElement, duration: animation.effect.getTiming().duration, currentTime: animation.currentTime })) };
+      for (const animation of transitions) animation.play();
+      await Promise.all(transitions.map(animation => animation.finished));
+      return sampled;
+    });
     await page.waitForFunction(() => getComputedStyle(document.querySelector('#download-auto-update'), '::before').transform === 'matrix(1, 0, 0, 1, 14, 0)');
     const after = await sample(); report.geometry.push({ kind: 'switch-motion', dark, before, mid, after });
     assert.equal(mid.checked, true, 'state update is synchronous, not delayed until animation ends');
+    assert.deepEqual(mid.nativeChange, { trusted: true, checked: true });
+    assert.ok(mid.animations.some(animation => animation.property === 'transform'));
+    assert.ok(mid.animations.every(animation => animation.duration === 150 && animation.currentTime === 75));
     assert.notEqual(mid.transform, before.transform); assert.notEqual(mid.transform, after.transform);
     assert.notEqual(mid.track, before.track); assert.notEqual(mid.track, after.track); assert.equal(after.tap, 'rgba(0, 0, 0, 0)');
+    assert.notEqual(mid.thumb, before.thumb); assert.notEqual(mid.thumb, after.thumb);
     await screenshot(`switch-${dark ? 'dark' : 'light'}`);
     const disabled = page.locator('#download-terminal');
     await page.locator('.admin-dialog-download select').first().selectOption('windows');

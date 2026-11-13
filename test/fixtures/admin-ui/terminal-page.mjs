@@ -20,8 +20,8 @@ const peers = [];
 const pendingRoutes = new Set();
 const drainRoutes = async () => { while (pendingRoutes.size) await Promise.all([...pendingRoutes]); };
 const check = async (name, fn) => { await fn(); report.checks.push({ name, pass: true }); console.log(name); };
-const menu = async () => { if (!await page.locator('.admin-dialog-terminal').count()) await page.locator('[data-terminal-menu]').click(); };
-const closeMenu = async () => { if (await page.locator('.admin-dialog-terminal').count()) await page.keyboard.press('Escape'); };
+const menu = async () => { if (await page.locator('[data-terminal-menu]').getAttribute('aria-expanded') !== 'true') await page.locator('[data-terminal-menu]').click(); await page.locator('.admin-dialog-terminal').waitFor(); await page.waitForFunction(() => !document.querySelector('.terminal-menu-enter-active')); };
+const closeMenu = async () => { if (await page.locator('[data-terminal-menu]').getAttribute('aria-expanded') === 'true') await page.keyboard.press('Escape'); await page.locator('.admin-dialog-terminal').waitFor({ state: 'hidden' }); };
 const assertNodeTargets = async (width, height) => {
   const targets = await page.evaluate(() => ['[data-terminal-menu]'].map(selector => {
     const element = document.querySelector(selector), box = element.getBoundingClientRect();
@@ -119,22 +119,24 @@ try {
   await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a?apiIndex=0`);
   await check('enabled offline page auto-checks authority, reports offline without reservation, then explicit retry works', async () => {
     await page.locator('.terminal-error').waitFor();
-    assert.ok((await page.locator('.terminal-error').innerText()).includes('terminal_agent_offline'));
+    assert.equal((await page.locator('.terminal-error').innerText()).trim(), en.terminal_agent_offline);
     assert.equal(report.actions.filter(action => action === 'terminal_open').length,0);
     await menu();
     assert.equal(await page.getByRole('button',{name:en.terminalReopen,exact:true}).isDisabled(),false);
     const control = await h.control();
     control.ws.on('message',onControlMessage);
     await page.getByRole('button',{name:en.terminalReopen,exact:true}).click();
-    await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
+    await closeMenu();
+    await page.waitForFunction(() => document.querySelector('.xterm-helper-textarea') && document.querySelector('.terminal-mobile-input')?.disabled === false);
     await page.locator('.xterm-helper-textarea').focus();
+    assert.equal(await page.locator('.xterm-helper-textarea').evaluate(e => e === document.activeElement), true, 'keyboard input waits for both menu release and running session');
     await page.keyboard.type('id'); await page.keyboard.press('Enter');
     await until(() => report.input.join('').includes('id\r'));
     report.retryKeyboardBytes = report.input.join('');
     assert.equal(report.retryKeyboardBytes,'id\r');
     report.input.length = 0;
   });
-  await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
+  await page.waitForFunction(() => document.querySelector('.xterm-helper-textarea') && document.querySelector('.terminal-mobile-input')?.disabled === false);
   await check('standalone full viewport and one reservation; session details/risk are in overlay', async () => {
     await page.waitForTimeout(300);
     assert.equal(await page.locator('.admin-header').count(), 0);
@@ -212,7 +214,8 @@ try {
     await page.getByRole('button', { name: en.terminalDisconnect, exact: true }).click();
     await menu();
     await page.getByRole('button', { name: en.terminalReopen, exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
+    await closeMenu();
+    await page.waitForFunction(() => document.querySelector('.xterm-helper-textarea') && document.querySelector('.terminal-mobile-input')?.disabled === false);
     const count = report.input.length;
     await page.locator('.terminal-mobile-input').evaluate(el => el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '旧会话' })));
     await page.evaluate(() => window.clipboardResolve('STALE'));
@@ -270,7 +273,7 @@ try {
     failMetadata = true;
     await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a?apiIndex=0`);
     await page.reload();
-    await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
+    await page.waitForFunction(() => document.querySelector('.xterm-helper-textarea') && document.querySelector('.terminal-mobile-input')?.disabled === false);
     assert.equal(await page.locator('.terminal-node-name').innerText(), 'node-a');
     await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('FINAL OUTPUT'));
     peers.at(-1).ws.close();
@@ -292,12 +295,18 @@ try {
     await denied.close();
     await context.addCookies([{ name: 'cfsm_auth', value: encodeURIComponent(h.token), url: origin, secure: true, httpOnly: true }]);
   });
-  await check('long fallback ID stays truncated and unavailable capability cannot reserve', async () => {
+  await check('metadata failure and missing-node initial failure show one plain error, never a duplicate bottom notice', async () => {
     const before = report.actions.filter(action => action === 'terminal_open').length;
+    failMetadata = true;
     const denied = await context.newPage(), id = 'node-' + 'x'.repeat(100);
     await denied.setViewportSize({ width: 320, height: 844 });
     await denied.goto(`${origin}/admin?locale=en#/admin/terminal/${id}`);
-    await denied.locator('.terminal-error').waitFor();
+    await denied.locator('.terminal-connection .terminal-error').waitFor();
+    await denied.waitForLoadState('networkidle');
+    await drainRoutes();
+    const failure = await denied.evaluate(() => ({ errors: document.querySelectorAll('.terminal-error').length, notices: document.querySelectorAll('.terminal-notice').length, text: document.querySelector('.terminal-connection .terminal-error')?.textContent.trim() }));
+    report.initialMissingNode = failure;
+    assert.deepEqual(failure, { errors: 1, notices: 0, text: en.terminal_node_missing });
     assert.equal(await denied.locator('.terminal-node-name').innerText(), id);
     assert.equal(await denied.locator('.terminal-node-name').getAttribute('title'), id);
     assert.equal(await denied.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -306,6 +315,7 @@ try {
     await denied.waitForLoadState('networkidle');
     await drainRoutes();
     await denied.close();
+    failMetadata = false;
   });
   await check('disconnect retains final output; back preserves apiIndex and disposes', async () => {
     assert.ok((await page.locator('.xterm-rows').innerText()).includes('FINAL OUTPUT'));
