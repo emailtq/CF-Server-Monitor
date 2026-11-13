@@ -175,7 +175,14 @@ try {
         await menu().locator('[data-scope-all]').uncheck(); assert.deepEqual(await draftScope(), { mode: 'selected', serverIds: ['node-0'] }); assert.equal(await menu().locator('input[value="node-0"]').isDisabled(), true);
         await page.keyboard.press('Escape'); await save({ mode: 'selected', serverIds: ['node-0'] });
         await reset(0); assert.equal(await dialog.locator('.admin-picker-summary').count(), 2); await dialog.locator('.admin-picker-summary').first().click(); assert.equal(await menu().locator('[data-scope-all]').isChecked(), true); assert.equal(await menu().locator('[data-scope-all]').isDisabled(), true); assert.deepEqual(await draftScope(), { mode: 'all', serverIds: [] }); await page.keyboard.press('Escape'); await save({ mode: 'all', serverIds: [] });
-        await open(); await dialog.evaluate(el => { el.__vueParentComponent.parent.props.draft.scope = { mode: 'selected', serverIds: [] }; }); const before = report.saves.length;
+        await open();
+        await dialog.evaluate(el => {
+          let owner = el.__vueParentComponent;
+          while (owner && ((owner.type?.__name || owner.type?.name) !== 'AlertDialog' || !owner.props?.draft)) owner = owner.parent;
+          if (!owner || typeof owner.props.draft !== 'object') throw new Error('Mounted AlertDialog draft owner is missing');
+          owner.props.draft.scope = { mode: 'selected', serverIds: [] };
+        });
+        const before = report.saves.length;
         await dialog.locator('[data-action=save-rule]').click(); assert.equal(await dialog.locator('[role=alert]').count(), 1); assert.equal(report.saves.length, before, 'invalid empty-selected draft is never sent'); await dialog.locator('[data-action=cancel]').click();
       });
       await check(`missing import remains disabled and cannot widen until a separately saved exact repair/${coarse}`, async () => {
