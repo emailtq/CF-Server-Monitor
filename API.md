@@ -5,7 +5,7 @@
 >
 > **Base URL**：`https://<your-worker-domain>`（部署后由 Cloudflare Workers 提供）
 >
-> **最后核对源码日期**：`2026-09-07`
+> **鉴权/注册/终端协议核对日期**：`2026-11-13`；其他接口字段沿用原参考，未宣称全部重新验收。
 >
 > **修订标记约定**：自 `2026-07-26` 起，已过期但有迁移参考价值的说明使用删除线保留，紧随其后给出当前实现。
 >
@@ -76,14 +76,15 @@
 
 ### 0.1 鉴权机制
 
-项目使用 **三套并行的鉴权机制**，按接口范围区分使用。所有请求还依赖非空的 `env.API_SECRET`；未配置时 Worker 会在路由处理前返回 `400 { "error": "API_SECRET is required", "code": 400 }`。
+项目按接口范围区分节点 token、管理员凭据/JWT 和前端访问权限。已配置管理员凭据的站点无需 API_SECRET；它仅可用于首次管理员登录引导，不用于 Agent 或 JWT 签名。
 
-#### A. 探针 Secret（Agent → Worker）
+#### A. 每节点 token（Agent → Worker）
 
-- **使用位置**：`POST /update`
-- **方式**：请求体字段 `secret`
-- **值**：必须等于 Worker 环境变量 `API_SECRET`
-- **失败返回**：`401 { "error": "Invalid secret", "code": 401 }`
+- **使用位置**：HTTPS POST /update、WSS GET /update 握手及 Agent terminal control/session。
+- **方式**：Authorization: Bearer <node-token>；32 随机字节编码为 64 lowercase hex。
+- token 决定节点身份；非秘密 id/X-CFSM-Server-Id 必须与身份一致。缺失、错误、跨节点、旧 secret、body/query 凭据均拒绝。
+- HTTP 每次验证；WSS 在升级前验证，消息/配置推送/空闲 alarm 共用至多 60 秒授权租约。D1 故障不延长租约。
+- 终端关闭不影响上报；reset/delete 撤销两个通道。浏览器终端仍要求管理员 Cookie、exact Origin、owner 和 ticket，node token 不是管理员凭据。
 
 #### B. Basic Auth（管理登录 → JWT）
 
@@ -101,19 +102,16 @@
 - **使用位置**：所有非 `login` 的 `POST /admin/api`、`POST /api/theme_options`、`POST /updateDatabase`、`POST /clearHistory`
 - **方式**：`Authorization: Bearer <token>` Header
 - **Token 签发**：`HS256` JWT，默认有效期 **604800 秒（7 天）**
-- **签名密钥**（优先级）：
-  1. `site_options.jwt_secret`（长度 ≥ 32）
-  2. `API_SECRET`（不够 32 字符时 `padEnd` 补 `'x'` 后取前 64 位）
-  3. 回退常量：`'default_jwt_secret_for_server_monitor'`
+- **签名密钥**：仅数据库独立持久化的 site_options.jwt_secret（长度 ≥32）；缺失/无效时 fail-closed，没有 API_SECRET 或固定常量 fallback。
 - **Payload 字段**：
   ```json
-  { "sub": "admin", "iat": <unix>, "exp": <unix + 604800> }
+  { "sub": "admin", "iat": <unix>, "exp": <unix + 604800>, "jti": "<random-session-id>" }
   ```
 - **失败返回**：`401 { "error": "Unauthorized", "code": 401 }`
 
-> **缓存提示**：管理端登录成功后，前端应将 `token` 存于 `localStorage`，并对所有非登录的 `admin/api` 请求自动加上 `Authorization: Bearer <token>` Header。
+> 普通管理接口支持 JWT Bearer；敏感节点凭据/注册 key/终端操作只使用管理员 Cookie + exact HTTPS Origin，并校验可撤销 jti。不得把节点 token 保存为登录 JWT 或浏览器 URL 凭据。
 >
-> **2026-07-26 修订**：加载站点设置时，后端会在缺少有效 `jwt_secret` 时生成并持久化一个 32 字节随机密钥。因此第 2、3 级回退主要用于数据库加载异常等兜底场景。
+> 加载设置会生成并持久化独立随机 jwt_secret；生成/持久化失败不能以其他秘密兜底签名。
 
 #### D. WebSocket JWT（私有站点前端实时推送）
 
@@ -223,8 +221,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 ### 1.1 `POST /update` - 指标上报（Agent 入口）
 
-> **调用方**：服务器侧探针（[Bash install.sh](./public/install.sh) / [Windows cf-server-monitor.ps1](./public/cf-server-monitor.ps1)）。~~旧链接使用 `../public` 且指向不存在的 `.pyw` 文件。~~（2026-07-26 修订）
-> **鉴权**：`secret` 字段 == `env.API_SECRET`
+> **调用方**：[维护的 Go Agent](https://github.com/emailtq/cfsm-agent)。Worker-hosted Bash/PowerShell Agents 已退役，仅保留旧安装清理入口，不可用于新安装/上报。
+> **鉴权**：HTTPS 请求/Upgrade header `Authorization: Bearer <node-token>`；旧 Agent 必须重装，无共享 secret 兼容。
 > **Turnstile**：不参与
 
 **Request**
@@ -235,6 +233,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - Headers：
   ```
   Content-Type: application/json
+  Authorization: Bearer <node-token>
   User-Agent: <自定义 UA，默认 cfsm>
   X-Agent-Version: <探针版本号>
   X-Agent-Config-Schema: 5
@@ -254,19 +253,17 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   {
     "type": "update",
     "id": "9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f",
-    "secret": "<API_SECRET>",
     "payload": {
       "metrics": { "...": "metrics" }
     }
   }
   ```
 
-  第一条有效上报必须携带 `id` 与 `secret`。连接认证成功后，后续消息可以省略 `id` 与 `secret`；如果后续消息显式携带不同 `id` 或错误 `secret`，服务端会发送错误帧并关闭连接。
+  握手必须携带节点 Authorization header，并在接受 socket 前验证。消息可以省略 id；提供时必须匹配已认证身份。任何 body/query secret/token 或跨节点 id 均拒绝。消息中不得携带凭据，也不能用第一条消息补认证。
 - Body（JSON）：
   ```json
   {
     "id": "9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f",
-    "secret": "<API_SECRET>",
     "metrics": {
       "cpu": "12.34",
       "ram_total": "8192",
@@ -321,7 +318,6 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   ```json
   {
     "id": "9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f",
-    "secret": "<API_SECRET>",
     "metrics": { "...": "latest metrics, kept for compatibility" },
     "samples": [
       { "ts": 1737638340000, "metrics": { "...": "metrics at this timestamp" } },
@@ -402,30 +398,23 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   （`Content-Type: application/x-www-form-urlencoded; charset=utf-8`）
 - ~~动态配置包含 `traffic_calc_type`、`traffic_limit`、`auto_update` 等全部探针运行参数。~~ **2026-07-26 修订，2026-07-31 更新，2026-08-15 更新，2026-08-18 更新，2026-08-19 更新，2026-08-28 更新**：schema `3` 不包含 `connection_mode`；schema `4` 增加 `connection_mode`，并保持原有序列化与 MD5 计算不变；schema `5` 在 WSS 全局开启且服务器 `connection_mode=auto` 时追加 `wss_report_interval`（`1-5` 秒，默认 `2`），并将 `collect_interval=0` 或大于 WSS 间隔的值规范为 WSS 间隔；schema `6` 追加 `ping_mode`（`tcp|icmp`，默认 `tcp`），参与配置 MD5 并下发给 Agent。待应用的 `rx_correction`、`tx_correction` 会追加到响应体，但不参与配置 MD5；启用自动更新且版本不一致时追加 `update=1`。
 - 探针应用流量修正后，可在下一次 `POST /update` 顶层回传 `rx_correction` / `tx_correction`。值匹配时后端清空待修正字段并直接返回纯文本 `OK`，本次请求不要求 `metrics`。
-- **自动发现（2026-10-21 新增）**：`site_options.auto_discovery === 'true'` 时，若请求体 `id` 为空，服务端会在本次请求内创建服务器并继续正常入库：
-  - 名称优先级：请求体 `name`（≤100 字符）→ 请求头 `CF-Connecting-IP`；都取不到时放弃创建。`CF-Connecting-IP` 为 `"0"`、`"0.0.0.0"` 等占位值时视为无效。`metrics.ip_v4` / `metrics.ip_v6` 不参与命名。
-  - 去重：已存在同名服务器时不新建，也不写入本次上报（直接返回 404），响应头标记 `reused` 且不回传 `X-CFSM-Server-Id`；Agent 收到 `reused` 后应输出提示并退出，避免把本机数据写进同名服务器。
-  - 新建的 `id` 通过响应头 `X-CFSM-Server-Id` 回传，Agent 需落盘并在后续请求中使用。
-  - 结果标记通过响应头 `X-CFSM-Auto-Discovery` 回传：`created`、`reused`、`failed:<code>`（`no_name` / `db_error`）。
-  - 创建失败只写服务端日志，返回下方原有 404，不重试、不发送通知；Agent 收到 `failed` 后会在本次运行内停止自动发现与上报（空 `id` 的上报必然是 404），重启 Agent 服务后才会重新尝试一次。
-  - 建号前先校验本次上报能否入库（`samples`/`metrics` 为空、`rx_correction`/`tx_correction` 非法时直接返回 400），校验不通过不会建号，避免留下永远不会被写入的空壳服务器。
-  - 该分支只在 `id` 为空时生效；`id` 非空但查不到仍返回 404，已删除的服务器不会被自动重建。
-  - 未开启自动发现时，空 `id` 的上报仍是原有 404，且不带任何自动发现响应头；Agent 应据此提示用户开启自动发现或改用 `-id` 安装后退出，不要静默重试。
-  - `wss://.../update` 不参与自动发现：未绑定的 Agent 必须先通过 POST 建号，再按下发的 `connection_mode` 切换。
+- **自动注册**：先用短期 registration key 调用 POST /api/agent/register，取得独立 serverId/token 后正常上报；/update 不建号，不返回旧自动发现响应头，也不按同名节点复用凭据。见 §1.2。
 - **自定义 UA（2026-10-27 新增）**：站点设置 `ua`（默认 `cfsm`，仅允许字母、数字、空格与 `. _ - / , : ; ( ) + = @ # * ? ~`，长度 ≤100）通过**独立通道**下发，不参与配置 MD5，也不会出现在配置 body 中：
-  - `POST /update`：`secret` 校验通过后，**走配置协商分支**的 `200` / `204` 响应头携带 `X-Ua: <当前站点 UA>`。以下 2xx 不携带（它们不加载站点设置）：流量校正确认的 `200 OK`、请求 schema 超出服务端支持范围时直接返回的 `200 OK`。`401` / `400` / `404` / `413` 同样不携带，避免向未认证请求暴露。
+  - `POST /update`：节点 header token 校验通过后，**走配置协商分支**的 `200` / `204` 响应头携带 `X-Ua: <当前站点 UA>`。以下 2xx 不携带（它们不加载站点设置）：流量校正确认的 `200 OK`、请求 schema 超出服务端支持范围时直接返回的 `200 OK`。`401` / `400` / `404` / `413` 同样不携带，避免向未认证请求暴露。
   - `wss://.../update`：认证通过后，**本次 ack 携带配置协商字段**（`config_schema` / `config_md5`）时，顶层才有 `ua` 字段；普通 ack 不带。握手 `101` 与调度 `409` 响应不携带。
   - Agent 收到后与本地上报 UA 比对，不同才写入配置文件的 `UA` 键；相同则忽略，避免每个上报周期重复写盘。
   - 该值同时用于 `/update` 的 WAF 放行规则：修改站点 `ua` 时必须先在防火墙同时放行新旧两个值，再更新设置，否则 Agent 切换 UA 后会立即被拦截。
 - 失败：
   ```json
-  { "error": "Invalid secret", "code": 401 }
+  { "error": "Invalid node token", "code": 401 }
   { "error": "Server not found", "code": 404 }
   ```
 
 **WebSocket 上报响应 / 错误**
 
 - 握手失败：
+  - `401`：节点 header token 缺失/无效/跨节点或 query 凭据；不会接受 socket
+  - `403 node_https_required`：远端明文 HTTP 请求/Upgrade，即使 bearer 有效也拒绝
   - `503 { "error": "WebSocket not enabled", "code": 503 }`：未绑定 `METRICS_BROADCASTER` Durable Object
   - `426 Expected WebSocket upgrade request`：`GET /update` 未携带 `Upgrade: websocket`
   - `403 Forbidden`：设置了 WebSocket `Origin`，且不在 `CORS_ALLOWED_ORIGINS` 中
@@ -474,7 +463,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   ```
 - 上报失败：服务端先发送错误帧，然后使用 close code `1008` 关闭 WebSocket；close reason 与 `error` 一致。
   ```json
-  { "type": "error", "ts": 1737638343000, "error": "Invalid secret", "code": 401 }
+  { "type": "error", "ts": 1737638343000, "error": "Invalid node token", "code": 401 }
   ```
   常见错误：
 
@@ -483,7 +472,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   | 400 | `Invalid JSON` | 否 | WebSocket 消息不是合法 JSON |
   | 400 | `Invalid report payload` | 否 | 消息不是对象，或 `type:"update"` 的 `payload` 非对象 |
   | 400 | `Invalid server ID` | 否 | `id` 为空、过长或包含非法字符 |
-  | 401 | `Invalid secret` | 否 | 第一条有效上报未携带正确 `secret`；认证后显式发送错误 `secret` 也会关闭连接 |
+  | 401 | `Report credentials must use Authorization` / `Invalid node token` | 视认证状态而定 | 无效/过期/撤销 token，或消息携带凭据；握手缺失/错误 token 在升级前拒绝 |
   | 403 | `Server ID changed` | 否 | 已认证连接切换为另一个 `id` |
   | 404 | `Server not found` | 是 | `id` 格式合法，但 `servers` 表不存在该服务器 |
   | 400 | `Missing history_partition_id` | 是 | 服务器历史分区未初始化，且自动优化后仍不可用 |
@@ -497,7 +486,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - 建立 `wss://.../update` 连接需要一次 `GET + Upgrade`，该握手按一次 Workers request 计入。
 - 连接建立后的 Agent 上报消息由 Durable Object 标准 WebSocket API 接收，不使用 Hibernation API 接管 `/update` 连接；它们作为 Durable Objects WebSocket incoming messages 计量，Cloudflare 计费口径按 `20:1` 折算为 DO requests。
 - 该模式避免高频 Agent 指标消息表现为 hibernation wakeup，但只要 Agent 长连接存在，DO 会保持非休眠状态并产生 duration（GB-s）。前端订阅 `/api/ws` 仍使用 WebSocket Hibernation API。
-- 因此，Agent 应保持长连接；不要每次采样都断开重连。错误 `id` / `secret` 当前在 DO 消息阶段返回错误帧并关闭，避免每次上报都走 Worker 401。
+- 因此，Agent 应保持长连接；不要每次采样都断开重连。无效 token 在握手前拒绝；已认证消息跨节点 id 或携带凭据时发送错误帧并关闭。reset/delete 会主动通知两个 DO，通知失败仍以版本/租约 fail-closed。
 
 **副作用**
 
@@ -506,6 +495,14 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 3. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段。~~服务端会统一转大写。~~ **2026-07-26 修订**：当前按原值入库；Cloudflare 的国家代码通常为大写，但自定义回退 Header 不会被规范化。
 
 ***
+
+### 1.2 POST /api/agent/register - 首次自动注册
+
+要求 HTTPS，Authorization: Bearer <registration-key>；Content-Type: application/json，body 为 {"name":"web-01"}（可省略 name，使用可信 source-IP display metadata）。最多 4096 bytes JSON；name 是字符串、≤100 UTF-16 code units、无 ASCII controls。拒绝 caller-selected id/serverId、body/query key。成功 200 no-store 返回 {"serverId":"<new-id>","token":"<64-lowercase-hex>"}。
+
+管理员在 auto_discovery 启用后通过 node_prepare_registration 获取 key：固定 15 分钟、最多 100 个新节点；新 key/关闭功能使旧 key 失效。hash-only key 存储及事务同时检查 key/到期/额度/设置权威，失败回滚。每次注册创建独立节点；同名不返回已有节点 token。key 不可用于上报、terminal 或已有凭据读取。Agent 安装前交换并仅保存 NODE_TOKEN/serverId，不保存 key；已有安装使用原 token 重装。
+
+无效/过期/替换 key、禁用、quota 满返回拒绝；JSON/字段格式错误 400、body 超限 413、D1 故障 fail-closed。终端状态只接受正常已认证 report 的 terminal_enabled/time.local_ts（状态不是本地 opt-in 的替代品）。
 
 ## 2. 公开 API（前端/管理端共用）
 
@@ -1189,14 +1186,13 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 ```json
 {
   "success": true,
-  "settings": { /* Settings 对象（不含 password），并包含 password_configured，见 5.4 */ },
-  "api_secret": "<env.API_SECRET>"
+  "settings": { /* Settings 对象（不含 password），并包含 password_configured，见 5.4 */ }
 }
 ```
 
 `settings.password` 不会返回；`settings.password_configured` 表示是否已配置独立管理员密码。
 
-> `api_secret` 仅在 `get_settings` 中返回，方便前端展示/复制。
+> get_settings/list/export/public config 不返回 api_secret、节点 token 或 registration key。凭据仅在专用管理员动作的 no-store 响应中读取。
 >
 > ~~`settings` 包含 `jwt_secret`。~~ **2026-09-19 修订**：后端会从返回对象中剔除 `jwt_secret`、`password`；其他敏感值（如 Cloudflare Token、Turnstile Secret）仍可能存在，必须使用 HTTPS 并限制管理 Token。
 
@@ -1770,14 +1766,17 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 
 ### 3.15 可选终端 API（内置同源后台）
 
-默认关闭；终端与监控 `/api/ws`、`/update` 的认证/传输独立。必须重新登录获得含随机 `jti` 的管理员 JWT，由独立 `jwt_secret` 签名，未过期且未撤销。不能使用 reporting `API_SECRET` 的签名 fallback。以下 JSON 操作都发往 `POST /admin/api`，使用 `Content-Type: application/json`、管理员 Cookie 和 exact HTTPS Origin；不接受 Bearer 替代。`serverId`、`sessionId`、`clientRequestId` 是 1..128 个字母/数字/下划线/连字符。
+默认关闭；Agent 终端与 /update 使用同一个节点 token，浏览器终端和前端 /api/ws 使用独立管理员/站点访问授权。必须重新登录获得含随机 `jti` 的管理员 JWT，由独立 `jwt_secret` 签名，未过期且未撤销。无管理员签名 fallback；API_SECRET 仅可用于首次管理员登录引导。以下 JSON 操作都发往 `POST /admin/api`，使用 `Content-Type: application/json`、管理员 Cookie 和 exact HTTPS Origin；不接受 Bearer 替代。`serverId`、`sessionId`、`clientRequestId` 是 1..128 个字母/数字/下划线/连字符。
 
 | action | 额外字段 | 成功结果/语义 |
 | --- | --- | --- |
-| `terminal_enable_site` | 管理员凭据 step-up（沿用 login 字段） | `{enabled:true}`；自定义 `theme_url` 存在则 409 |
-| `terminal_authorize_node` | `serverId`、管理员凭据 step-up | `{token,version}`，64 lowercase hex 一次性独立 token；再次调用轮换版本并关闭旧会话，安全更新本地文件 |
-| `terminal_revoke_node` | `serverId` | `{enabled:false,brokerClosed:true}`；先撤销 D1，通知失败报 503 不代表凭据仍有效 |
-| `terminal_status` | `serverId` | `{enabled,connected,supported,protocol,platform,activeCount}`，无 token；connected 不等于 Linux capability supported |
+| `node_read_install` | `serverId` | `{token,version,tokenVersion,enabled,needsRotation}`，稳定读取；enabled 仅指终端权限；不可解密/仅 hash 时 409，要求显式 reset |
+| `node_reset_token` | `serverId` | 显式重置同一节点 token，递增 reporting/terminal epochs；关闭两个通道，需重装对应 Agent；no-store |
+| `node_prepare_registration` | 无 | `{key,expiresAt}`；要求 auto_discovery；15 分钟/最多 100 节点，新 key 替换旧 key；no-store |
+| `terminal_enable_install` | `serverId,terminal:true,acceptRisk:true` | 启用安装终端权限，保持可用 token 不变；内置下载选择自动调用；no-store |
+| `terminal_prepare_install` | 同上 | 保留的显式重置入口：轮换统一 token 并撤销两个通道，普通下载不调用；no-store |
+| `terminal_revoke_node` | `serverId` | `{enabled:false,serverRevoked,localConfirmed,localReason}`；只撤销终端、不更换上报 token；本地确认失败不等于 D1 未撤销，503 仍需检查返回字段 |
+| `terminal_status` | `serverId` 或 `serverIds` | 含 `state,credentialEnabled,localEnabled,localObservationFresh,connected,supported,activeCount`，无 token；状态仅来自已认证 report/Agent capability，connected 不等于 supported |
 | `terminal_open` | `serverId,clientRequestId,cols,rows` | 包含 `sessionId,browserPath`；同 owner/同 requestId/同尺寸幂等，不匹配重试 409；每节点四槽，第五个 409 |
 | `terminal_renew` | `serverId,sessionId` | 只允许原 owner 续租，重新读取当前 D1 权限，失败 fail-closed |
 | `terminal_close` | `serverId,sessionId` | owner 关闭，幂等；不影响其他会话 |
@@ -1787,7 +1786,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 **WebSocket endpoints（GET + Upgrade）**
 
 - Browser：使用 `terminal_open` 返回的 `browserPath`（`/admin/api/terminal/{serverId}/{sessionId}/ws`），同源管理员 Cookie + exact Origin，绑定原 owner；不使用 JWT query、Bearer、`createLiveSocket` 或报告重连。
-- Agent control：`/api/agent/terminal/control`，`Authorization: Bearer <independent-node-token>`、`X-CFSM-Server-Id`。Agent `hello` 需 `protocol:1,platform:"linux",capabilities:["terminal.pty.v1"]` 且本地能力预检成功。
+- Agent control：`/api/agent/terminal/control`，`Authorization: Bearer <node-token>`（与 /update 相同）、`X-CFSM-Server-Id`。Agent `hello` 需 `protocol:1,platform:"linux",capabilities:["terminal.pty.v1"]` 且本地能力预检成功。
 - Agent session：`/api/agent/terminal/session/{sessionId}`，相同 node headers，加 `X-CFSM-Terminal-Ticket`。ticket 仅限原节点/角色/当前控制 generation，30 秒有效且只能消费一次，永不放 URL 或持久化 plaintext。
 
 控制 `open` 不立即启动 PTY：Browser/Agent 配对和 admission 审计成功后 broker 发 `start`，Agent 才创建 PTY，`ready` 后允许数据。控制替换/Agent restart 会关闭旧会话和 tickets，不 detached 恢复或重放输入。所有这些路径拒绝 query credentials；自定义前端不能获得终端权限。内置后台同源/Origin 是门禁的一部分，不是“来自内置 markup”本身的可信证明。
@@ -1800,9 +1799,9 @@ Data 是二进制（含看起来像 JSON 的输入），每帧 <=16 KiB；文本
 
 常见错误为 400 尺寸/字段/query 非法、401 登录/step-up/node token 无效、403 Origin/权限/禁用、404 node/session 不存在、409 四槽/票据/generation/自定义 frontend 冲突、426 缺 Upgrade、503 authority/storage/broker 不可用。不得按所有 503 都重试输入；只能显式新开会话。
 
-D1 只存 token hash、管理员授权和七天 lifecycle audit，不存终端 bytes/命令。export/import/backup 不传 terminal credential/authority，不激活 restored terminal。只追加 `terminal_nodes`、`terminal_auth_sessions`、`terminal_audit` 与 `terminal-v1` SQLite DO migration，保留原 `v1` / `MetricsBroadcaster`；本地与部署生成配置均含 `TERMINAL_BROKER`。回滚关闭站点、撤销节点和 Agent 本地 `-terminal=0`，保留 additive tables/immutable migration 历史，监控继续。
+D1 存节点 token hash/加密 ciphertext、registration key hash、管理员授权和七天 lifecycle audit，不存终端 bytes/命令。export/import/backup 不传 terminal credential/authority，不激活 restored terminal。节点凭据保存在历史名 `terminal_nodes`（hash/AES-GCM serverId 绑定 ciphertext，无 plaintext），reporting token_version 与 terminal credential_version 分离；另含 `agent_registration_keys`、`terminal_auth_sessions`、`terminal_audit` 与 `terminal-v1` SQLite DO migration，保留原 `v1` / `MetricsBroadcaster`；本地与部署生成配置均含 `TERMINAL_BROKER`。仅关闭终端（terminal_revoke_node、Agent 本地 `-terminal=0`）保留节点 token、监控继续；reset/delete 则同时撤销上报和终端。关闭站点会撤销管理员终端会话；保留 additive tables/immutable migration 历史。
 
-V1 Linux 是可选 fail-closed capability，不提高现有监控平台要求；root Agent 授予 root Shell，需明确同意。仅 Worker-served 内置同源后台：分离 Vite 默认 `changeOrigin` 改 Host 保留 Origin 会严格拒绝 POST/WS，请 build 后使用本地 Worker，不放松 Origin。真实非生产 Cloudflare/multi-node PTY/hibernation/eviction/billing 门禁仍需独立环境授权；本地模拟不是云证据，物理手机 IME/键盘/panning 细化仍 deferred/unverified。发布顺序：后端默认关闭、更新知情同意的 opt-in 测试 Agent、最后显式站点/节点与本地启用；不得未授权部署生产。
+V1 Linux 是可选 fail-closed capability，不提高现有监控平台要求；root Agent 授予 root Shell，需明确同意。仅 Worker-served 内置同源后台：分离 Vite 默认 `changeOrigin` 改 Host 保留 Origin 会严格拒绝 POST/WS，请 build 后使用本地 Worker，不放松 Origin。真实非生产 Cloudflare/multi-node PTY/hibernation/eviction/billing 门禁仍需独立环境授权；本地模拟不是云证据，物理手机 IME/键盘/panning 细化仍 deferred/unverified。发布/部署须另行授权。当前公开 v1.1.6 不支持 token-file/register-key，下载 fail-closed；Docker 缺少 digest-bound protocol evidence 也不可用。本地合成验收不等于真实发布/PTY/生产证据。
 
 ## 4. 系统维护端点
 
@@ -1964,7 +1963,7 @@ V1 Linux 是可选 fail-closed capability，不提高现有监控平台要求；
 
 ### 5.4 Settings 对象
 
-> ~~`get_settings` 直接返回 `site_options` 的全部字段，包括 `jwt_secret`。~~ **2026-07-26 修订**：返回前会明确删除 `jwt_secret`，但 `cloudflare_token`、密码哈希、Turnstile Secret 等其他敏感字段仍可能返回，请只通过 HTTPS 调用并严格保护管理 JWT。
+> get_settings 不返回 jwt_secret、密码、api_secret、节点 token 或 registration key；其他管理员设置可能包含 Cloudflare/Turnstile/通知秘密，仍须保护管理会话。
 
 ```ts
 {
@@ -2020,7 +2019,7 @@ V1 Linux 是可选 fail-closed capability，不提高现有监控平台要求；
 | `ping`   | C → S | 精确文本 `{"type":"ping"}`                       |
 | `pong`   | S → C | 自动响应的精确文本 `{"type":"pong"}`，不带 `ts`   |
 | `batchUpdate` | S → C | `{ ts: number, updates: Array<{ serverId: string, samples: Array<{ ts: number, data: Partial<Server> }> }> }` |
-| `update` | C → S | `/update` WSS 上报可选包装格式：`{ type:"update", id:string, secret:string, payload:{ metrics?:object, samples?:array, batch?:array } }` |
+| `update` | C → S | `/update` WSS 上报可选包装格式：`{ type:"update", id?:string, payload:{ metrics?:object, samples?:array, batch?:array } }` |
 | `ack` | S → C | `/update` WSS 上报确认：`{ ts:number, persisted?:boolean, nextD1WriteAfterMs?:number, nextWssReportAfterMs?:number, correction?:true, config_schema?:number, config_md5?:string, has_config?:boolean, body?:string, config_body?:string, payload?:object }` |
 | `error` | S → C | `/update` WSS 上报错误：`{ ts:number, error:string, code:number }`；随后服务端通常以 close code `1008` 关闭连接 |
 
@@ -2053,7 +2052,7 @@ DEBUG 模式（`env.DEBUG=1`）下额外提供：
 | code | 名称                    | 触发条件                                        |
 | ---- | --------------------- | ------------------------------------------- |
 | 400  | Bad Request           | 缺参数 / 非法 UUID / 未知 action / 缺 Cloudflare 配置 / `invalidThemeUrl` |
-| 401  | Unauthorized          | JWT 失败 / Basic 失败 / 站点非公开未登录 / 探针 secret 错  |
+| 401  | Unauthorized          | JWT 失败 / Basic 失败 / 站点非公开未登录 / 节点 token 无效  |
 | 403  | Forbidden             | Turnstile 失败                                |
 | 404  | Not Found             | 服务器不存在；~~也表示 WebSocket DO 未绑定。~~ **2026-07-26 修订**：DO 未绑定使用 `503` |
 | 409  | Conflict              | ~~`DATABASE_UPGRADE_REQUIRED`~~ **2026-07-26 修订**：D1 缺字段时响应消息为 `databaseUpgradeRequired` |
@@ -2064,16 +2063,16 @@ DEBUG 模式（`env.DEBUG=1`）下额外提供：
 
 ## 8. 完整 cURL 示例
 
-> 假设部署在 `https://status.example.com`，`API_SECRET=abc123`，服务器 ID 为 `9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f`。
+> 假设部署在 `https://status.example.com`，`NODE_TOKEN=<64-lowercase-hex-node-token>`（不是管理员凭据），服务器 ID 为 `9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f`。
 
 ### 8.1 探针上报
 
 ```bash
 curl -X POST https://status.example.com/update \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $NODE_TOKEN" \
   -d '{
     "id":"9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f",
-    "secret":"abc123",
     "metrics":{
       "cpu":"12.34","ram_total":"8192","ram_used":"3700",
       "swap_total":"2048","swap_used":"100",
@@ -2270,7 +2269,7 @@ curl -X POST https://status.example.com/admin/api \
 - ~~**v1.x**：当前文档对应早期 `src/index.js`、`src/handlers/*`、`src/database/schema.js` 主线实现。~~ **2026-07-26 修订**：文档现以 `2.8.0 Beta` 的 `main` 分支实现为准。
 - **Breaking change**：`/admin/api` 由 `GET?action=...` 改为 `POST {action:...}` 模式，Token 校验与 Turnstile 走 Header 通道。
 - **CORS**：普通 HTTP 响应通过 `CORS_ALLOWED_ORIGINS` 环境变量开启跨域；不配置时浏览器跨域读取会失败。WebSocket 握手的特殊行为见 [§0.6](#06-cors)。
-- **JWT**：~~未配置 `jwt_secret` 时直接回退到 `API_SECRET` 派生值。~~ **2026-07-26 修订**：加载设置时会生成并持久化 32 字节随机密钥；`API_SECRET` 派生值和固定常量只作为数据库加载异常等兜底。
+- **JWT**：仅独立持久化随机 jwt_secret 签名，失效时 fail-closed；无 API_SECRET 派生值/固定常量 fallback。
 - **数据库升级**：升级到新字段（如 `loss_*`、`net_rx_monthly`、`reset_day` 等）后请调用 `POST /updateDatabase`；~~否则历史接口可能返回 `409 DATABASE_UPGRADE_REQUIRED`。~~ **2026-07-26 修订**：当前 409 响应体使用 `{ "message": "databaseUpgradeRequired" }`。
 
 ***

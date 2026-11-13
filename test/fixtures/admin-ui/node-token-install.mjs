@@ -18,9 +18,12 @@ let server, browser, page;
 let holdAction='', held=[], readError='', enableError='', failRecovery=false, lostReset=false, registrationTtl=900000, keyCount=0;
 let siteTerminal=true;
 let registrationFailure=false, discoveryEnabled=true;
+let holdLogout=false, releaseLogout;
 const nameProbe = process.argv.includes('--registration-name-probe');
+const logoutProbe = process.argv.includes('--logout-navigation-probe');
 const check = async (name, fn) => {
   if (nameProbe && !name.startsWith('registration name validation')) return;
+  if (logoutProbe && !name.startsWith('pending read and key replies after logout')) return;
   await fn(); report.checks.push({name,pass:true}); console.log(name);
 };
 try {
@@ -44,6 +47,10 @@ try {
     if (url.origin !== origin) return route.abort();
     if (url.pathname === '/admin/api') {
       const data=req.postDataJSON(); report.actions.push(data);
+      if (data.action === 'logout' && holdLogout) {
+        holdLogout=false;
+        await new Promise(resolve=>{releaseLogout=resolve;});
+      }
       if (['node_read_install','terminal_read_install','terminal_enable_install','node_reset_token'].includes(data.action)) {
         const error=data.action === 'node_read_install' ? readError : data.action === 'terminal_enable_install' ? enableError : '';
         if (data.action === 'terminal_enable_install' && !error) permissions[data.serverId]=siteTerminal=true;
@@ -213,9 +220,20 @@ try {
   });
   await check('pending read and key replies after logout cannot restore credentials',async()=>{
     await page.locator('[data-page=servers]').click();holdAction='node_read_install';await install();while(!held.length)await page.waitForTimeout(10);
-    await page.getByRole('button',{name:en.logout}).evaluate(el=>el.click());held.shift()();await dialog.waitFor({state:'hidden'});await page.waitForTimeout(30);
-    assert.equal(await page.locator('[data-copy-command]').count(),0);await reload();
-    holdAction='node_prepare_registration';await openRegistration();while(!held.length)await page.waitForTimeout(10);await page.getByRole('button',{name:en.logout}).evaluate(el=>el.click());held.shift()();await page.locator('.admin-dialog-edit').waitFor({state:'hidden'});await page.waitForTimeout(30);await reload();
+    holdLogout=true;
+    // Logout clears credentials, loads config, then navigates; reload must not race it.
+    const loggedOut=page.waitForURL(`${origin}/`,{waitUntil:'load'});
+    await page.getByRole('button',{name:en.logout}).evaluate(el=>el.click());held.shift()();while(!releaseLogout)await page.waitForTimeout(10);
+    assert.equal(typeof releaseLogout,'function');releaseLogout();releaseLogout=undefined;
+    await loggedOut;
+    assert.equal(new URL(page.url()).pathname,'/','logout navigation must finish before fixture reload');
+    await dialog.waitFor({state:'hidden'});assert.equal(await page.locator('[data-copy-command]').count(),0);
+    await reload();
+    holdAction='node_prepare_registration';await openRegistration();while(!held.length)await page.waitForTimeout(10);
+    holdLogout=true;const keyLoggedOut=page.waitForURL(`${origin}/`,{waitUntil:'load'});
+    await page.getByRole('button',{name:en.logout}).evaluate(el=>el.click());held.shift()();while(!releaseLogout)await page.waitForTimeout(10);
+    releaseLogout();releaseLogout=undefined;await keyLoggedOut;
+    await page.locator('.admin-dialog-edit').waitFor({state:'hidden'});assert.equal(await page.locator('.admin-dialog-edit pre').count(),0);await reload();
   });
   await check('all native options, proxy/user/version, and unavailable old release/Docker stay truthful',async()=>{
     await install();await ready();
@@ -225,7 +243,7 @@ try {
     await dialog.locator('#download-proxy').selectOption('https://ghfast.top/');assert.match(await command(),/https:\/\/ghfast.top\/https:\/\/raw.githubusercontent.com\/emailtq/);
     await dialog.locator('[data-auto-update]').check();assert.match(await command(),/-auto_update=1/);await close();
   });
-  if (!nameProbe) for(const locale of ['en','zh','zh-TW','es','fr','id','ja']) {
+  if (!nameProbe && !logoutProbe) for(const locale of ['en','zh','zh-TW','es','fr','id','ja']) {
     await page.evaluate(async({url,locale})=>(await import(url)).setLanguage(locale),{url:exports['/src/frontend/utils/i18n.js'],locale});
     for(const width of [320,390,1440]) for(const light of [true,false]) await check(`frozen download geometry ${locale}/${width}/${light?'light':'dark'}`,async()=>{
       await page.setViewportSize({width,height:900});await page.evaluate(light=>document.body.classList.toggle('light',light),light);
@@ -241,6 +259,7 @@ try {
 } catch (error) {
   report.errors.push(error.stack); await page?.screenshot({path:path.join(out,'failure.png')}).catch(()=>{});
 } finally {
+  releaseLogout?.();
   held.splice(0).forEach(resolve=>resolve());
   await browser?.close(); await server?.close();
   fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));

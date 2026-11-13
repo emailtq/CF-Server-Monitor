@@ -2,23 +2,26 @@
 // node --check test/api-check.js
 // node test/api-check.js --help
 
-const DEFAULT_BASE_URL = 'http://localhost:8787';
-const MOCK_PUBLIC_SERVER_ID = '550e8400-e29b-41d4-a716-446655440001';
+const DEFAULT_BASE_URL = 'https://localhost:8787';
+const MOCK_PUBLIC_SERVER_ID = getArgValue('--server-id') || process.env.SERVER_ID || '550e8400-e29b-41d4-a716-446655440001';
 const MOCK_HIDDEN_SERVER_ID = '550e8400-e29b-41d4-a716-446655440002';
 const AGENT_VERSION = '1.3.0';
 
 const args = new Set(process.argv.slice(2));
 const baseUrl = normalizeBaseUrl(getArgValue('--base-url') || process.env.BASE_URL || DEFAULT_BASE_URL);
-const apiSecret = getArgValue('--api-secret') || process.env.API_SECRET || '123456';
+const apiSecret = getArgValue('--api-secret') || process.env.API_SECRET || '';
+const nodeToken = getArgValue('--node-token') || process.env.NODE_TOKEN || '';
+const hiddenNodeToken = getArgValue('--hidden-node-token') || process.env.HIDDEN_NODE_TOKEN || '';
 const adminUsername = getArgValue('--admin-user') || process.env.ADMIN_USER || process.env.API_USER_NAME || 'admin';
-const adminPassword = getArgValue('--admin-password') || process.env.ADMIN_PASSWORD || apiSecret || '123456';
-const includeWrite = !args.has('--skip-write') && process.env.INCLUDE_WRITE !== 'false';
+const adminPassword = getArgValue('--admin-password') || process.env.ADMIN_PASSWORD || apiSecret;
+const includeWrite = !args.has('--skip-write') && (args.has('--include-write') || process.env.INCLUDE_WRITE === 'true');
 const timeoutMs = Number(getArgValue('--timeout') || process.env.TIMEOUT_MS || 10000);
 
 const state = {
   token: '',
   cookieAuth: false,
   createdServerId: '',
+  reportedServerIds: [],
   results: []
 };
 
@@ -129,7 +132,7 @@ function truncate(text, max = 180) {
 }
 
 function printUsage() {
-  console.log(`本地接口测试工具\n\n用法：\n  node test/api-check.js [选项]\n\n选项：\n  --base-url=http://localhost:8787       本地服务地址，默认 ${DEFAULT_BASE_URL}\n  --api-secret=xxx                       API_SECRET，用于登录和可选写入测试\n  --admin-user=admin                     管理员用户名，默认 admin\n  --admin-password=xxx                   管理员密码，默认使用 API_SECRET\n  --server-id=uuid                       指定服务器 ID\n  --timeout=10000                        单个请求超时时间\n\n环境变量同名可用：BASE_URL、API_SECRET、ADMIN_USER、ADMIN_PASSWORD、SERVER_ID、INCLUDE_WRITE、TIMEOUT_MS\n\n说明：\n  默认只执行安全或只读检查；重建数据库、清理历史、删除服务器等破坏性接口不会执行。\n  Cloudflare Turnstile 开启时，只验证未携带 token 会失败，不尝试绕过人机验证。`);
+  console.log(`本地接口测试工具\n\n用法：\n  node test/api-check.js [选项]\n\n选项：\n  --base-url=https://localhost:8787       本地服务地址，默认 ${DEFAULT_BASE_URL}\n  --api-secret=xxx                       API_SECRET，仅用于可选首次管理员登录\n  --admin-user=admin                     管理员用户名，默认 admin\n  --admin-password=xxx                   管理员密码，默认使用 API_SECRET\n  --server-id=uuid                       公开测试节点 ID\n  --node-token=64hex                     该节点上报 token（优先使用环境变量）\n  --hidden-node-token=64hex              隐藏测试节点独立 token\n  --include-write                       显式开启指标写入和临时 add/delete\n  --timeout=10000                        单个请求超时时间\n\n环境变量同名可用：BASE_URL、API_SECRET、ADMIN_USER、ADMIN_PASSWORD、SERVER_ID、NODE_TOKEN、HIDDEN_NODE_TOKEN、INCLUDE_WRITE、TIMEOUT_MS\n\n说明：\n  默认只执行安全或只读检查，不重建数据库、不清理历史、不删除现有服务器。\n  显式上报会覆盖指定测试节点的最新指标和 agent_version（模拟版本），只用于专用测试节点；临时 add/delete 另行创建并删除本工具节点。\n  节点 token 不用于管理员登录，API_SECRET 不用于上报。参数可能进入进程列表/历史，请保护凭据。\n  Cloudflare Turnstile 开启时，只验证未携带 token 会失败，不尝试绕过人机验证。`);
 }
 
 async function bootstrap() {
@@ -140,6 +143,7 @@ async function bootstrap() {
 
   console.log(`接口测试目标：${baseUrl}`);
   console.log(`写入测试：${includeWrite ? '开启' : '关闭'}`);
+  if (includeWrite) console.log('警告：上报测试会覆盖指定测试节点最新指标和模拟 agent_version，只能使用专用测试节点；临时 add/delete 是独立检查。');
   console.log('');
 
   // ============================================================
@@ -157,8 +161,9 @@ async function bootstrap() {
     { name: 'POST /clearHistory', method: 'POST', path: '/clearHistory', expectedStatus: 401 },
     { name: 'GET /__do/health', method: 'GET', path: '/__do/health', expectedStatus: 200 },
     { name: 'POST /update 无效 secret', method: 'POST', path: '/update', expectedStatus: 401, body: { id: MOCK_PUBLIC_SERVER_ID, secret: '__invalid__', metrics: {} } },
-    { name: 'POST /update 公开服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_PUBLIC_SERVER_ID, secret: apiSecret, metrics: buildMockMetrics() }, headers: { 'X-Agent-Version': AGENT_VERSION } },
-    { name: 'POST /update 隐藏服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_HIDDEN_SERVER_ID, secret: apiSecret, metrics: buildMockMetrics() }, headers: { 'X-Agent-Version': AGENT_VERSION } },
+    { name: 'POST /update 旧共享 secret 拒绝', method: 'POST', path: '/update', expectedStatus: 401, body: { id: MOCK_PUBLIC_SERVER_ID, secret: apiSecret, metrics: {} } },
+    { name: 'POST /update 公开服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_PUBLIC_SERVER_ID, metrics: buildMockMetrics() }, headers: { 'X-Agent-Version': AGENT_VERSION, Authorization: `Bearer ${nodeToken}` }, write: true, nodeToken },
+    { name: 'POST /update 隐藏服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_HIDDEN_SERVER_ID, metrics: buildMockMetrics() }, headers: { 'X-Agent-Version': AGENT_VERSION, Authorization: `Bearer ${hiddenNodeToken}` }, write: true, nodeToken: hiddenNodeToken },
     { name: 'GET /api/server 公开服务器（未登录）', method: 'GET', path: `/api/server?id=${encodeURIComponent(MOCK_PUBLIC_SERVER_ID)}`, expectedStatus: 200 },
     { name: 'GET /api/server 隐藏服务器（未登录）', method: 'GET', path: `/api/server?id=${encodeURIComponent(MOCK_HIDDEN_SERVER_ID)}`, expectedStatus: 404 },
     { name: 'GET 不存在路径', method: 'GET', path: '/__api_check_not_found__', expectedStatus: 200, note: 'Worker 未命中 API 路由时会回退前端' }
@@ -188,7 +193,7 @@ async function bootstrap() {
     { name: 'POST /admin/api delete 参数校验', method: 'POST', path: '/admin/api', expectedStatus: 400, body: { action: 'delete', id: 'invalid-id' } },
     { name: 'POST /admin/api batch_delete 参数校验', method: 'POST', path: '/admin/api', expectedStatus: 400, body: { action: 'batch_delete', ids: [] } },
     { name: 'POST /admin/api save_order 参数校验', method: 'POST', path: '/admin/api', expectedStatus: 400, body: { action: 'save_order', orders: [] } },
-    { name: 'POST /admin/api add 成功', method: 'POST', path: '/admin/api', expectedStatus: 200, body: { action: 'add', name: 'test-server-' + Date.now(), secret: 'test-secret-' + Date.now(), group_id: 0, location: 'Test Location', ip: '127.0.0.1', ssh_port: 22, ssh_user: 'root', ssh_password: '', note: 'API test server' }, write: true },
+    { name: 'POST /admin/api add 成功', method: 'POST', path: '/admin/api', expectedStatus: 200, body: { action: 'add', name: 'test-server-' + Date.now(), server_group: 'Default', note: 'API test server' }, write: true },
     { name: 'POST /admin/api delete 成功', method: 'POST', path: '/admin/api', expectedStatus: 200, body: () => ({ action: 'delete', id: state.createdServerId }), write: true, dependsOn: 'POST /admin/api add 成功' }
   ];
 
@@ -199,6 +204,10 @@ async function bootstrap() {
   console.log('\n━━━ [未登录] 测试 ━━━\n');
 
   for (const c of unauthenticatedCases) {
+    if (c.write && (!includeWrite || !/^[a-f0-9]{64}$/.test(c.nodeToken))) {
+      record('skip', c.name, '-', '仅显式写入且提供该节点有效格式 token 时执行');
+      continue;
+    }
     await runCase({
       name: c.name,
       expectedStatus: c.expectedStatus,
@@ -208,10 +217,13 @@ async function bootstrap() {
         headers: { 'Content-Type': 'application/json', ...(c.headers || {}) },
         body: c.body ? jsonBody(c.body) : undefined
       }),
-      after: c.name === 'GET /api/config' ? async result => {
-        const data = result.data && result.data.data ? result.data.data : result.data;
-        state.cookieAuth = data && data.verified === true;
-      } : undefined
+      after: async result => {
+        if (c.name === 'GET /api/config') {
+          const data = result.data && result.data.data ? result.data.data : result.data;
+          state.cookieAuth = data && data.verified === true;
+        }
+        if (c.write && result.ok && result.status === 200) state.reportedServerIds.push(c.body.id);
+      }
     });
   }
 
@@ -270,10 +282,10 @@ async function bootstrap() {
           body: body ? jsonBody(body) : undefined
         }),
         after: async result => {
-          if (c.name === 'POST /admin/api list' && result.ok && result.status === 200) {
+          if (c.name === 'POST /admin/api list' && result.ok && result.status === 200 && state.reportedServerIds.length) {
             const payload = result.data && result.data.data ? result.data.data : result.data;
             const servers = Array.isArray(payload?.servers) ? payload.servers : [];
-            const hasVersion = servers.some(server => server && server.agent_version === AGENT_VERSION);
+            const hasVersion = state.reportedServerIds.every(id => servers.some(server => server?.id === id && server.agent_version === AGENT_VERSION));
             if (hasVersion) {
               record('pass', 'POST /admin/api list agent_version 校验', '-', AGENT_VERSION);
             } else {

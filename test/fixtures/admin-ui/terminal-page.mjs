@@ -39,12 +39,15 @@ try {
   h = await harness();
   await h.db.prepare("UPDATE servers SET history_partition_id=1 WHERE id='node-a'").run();
   const at=Date.now();
-  const observed=await h.fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    id:'node-a',secret:'test-report-secret',terminal_enabled:true,time:{local_ts:at},metrics:{cpu:'1',timestamp:at}
-  })});
+  const body={id:'node-a',terminal_enabled:true,time:{local_ts:at},metrics:{cpu:'1',timestamp:at}};
+  const old=await h.fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,secret:'test-report-secret'})});
+  assert.equal(old.status,401);
+  assert.equal((await (await h.action('terminal_status',{serverId:'node-a'})).json()).localEnabled,null);
+  const observed=await h.fetch('/update',{method:'POST',headers:{'Content-Type':'application/json',...h.agentHeaders()},body:JSON.stringify(body)});
   assert.equal(observed.status,200);
   assert.equal((await (await h.action('terminal_status',{serverId:'node-a'})).json()).localEnabled,true);
   report.authenticatedOrdinaryReport=true;
+  report.oldSecretDenied=true;
   const onControlMessage = async (data, binary) => {
     if (binary) return;
     const frame = JSON.parse(data.toString());
@@ -310,6 +313,7 @@ try {
   report.errors.push(error.stack);
   await page?.screenshot({ path: path.join(out, 'failure.png') }).catch(() => {});
 } finally {
+  await context?.unrouteAll({behavior:'wait'});
   await drainRoutes();
   await browser?.close(); await server?.close(); await h?.dispose();
   fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));

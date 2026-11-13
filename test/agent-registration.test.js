@@ -167,10 +167,15 @@ test('concurrent registrations cannot exceed 100, including competing for the la
   const h = await setup();
   try {
     const {key} = await prepare(h);
-    const responses = await Promise.all(Array.from({length:105}, () => register(h, key)));
+    // Consume each response immediately, not after every concurrent request finishes.
+    const consume = async key => {
+      const response = await register(h, key);
+      return {status:response.status, body:await response.json()};
+    };
+    const responses = await Promise.all(Array.from({length:105}, () => consume(key)));
     assert.equal(responses.filter(response => response.status === 200).length, 100);
     assert.equal(responses.filter(response => response.status === 409).length, 5);
-    const issued = await Promise.all(responses.filter(response => response.status === 200).map(response => response.json()));
+    const issued = responses.filter(response => response.status === 200).map(response => response.body);
     assert.equal(new Set(issued.map(node => node.token)).size, 100);
     assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM servers').first()).count, 102);
     assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM terminal_nodes').first()).count, 102);
@@ -178,7 +183,7 @@ test('concurrent registrations cannot exceed 100, including competing for the la
     assert.equal((await h.db.prepare('SELECT registration_count FROM agent_registration_keys').first()).registration_count, 100);
     const next = await prepare(h);
     await h.db.prepare('UPDATE agent_registration_keys SET registration_count=99').run();
-    const last = await Promise.all(Array.from({length:12}, () => register(h, next.key)));
+    const last = await Promise.all(Array.from({length:12}, () => consume(next.key)));
     assert.equal(last.filter(response => response.status === 200).length, 1);
     assert.equal(last.filter(response => response.status === 409).length, 11);
     assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM servers').first()).count, 103);

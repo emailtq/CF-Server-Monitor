@@ -77,7 +77,13 @@ try {
   page.setDefaultTimeout(10000);
   const entry = () => page.locator('[data-server-id=node-a] .terminal-entry button');
   const idle = () => page.waitForFunction(()=>window.statusPending === 0);
-  const tick = async () => { await page.waitForFunction(()=>window.pollTimers.size === 1); await page.evaluate(()=>window.tickPoll()); await idle(); };
+  const tick = async () => {
+    await page.waitForFunction(()=>window.pollTimers.size === 1);
+    await page.evaluate(()=>window.tickPoll());
+    await idle();
+    // fetch resolving precedes JSON parsing and the component's next poll schedule.
+    await page.waitForFunction(()=>window.pollTimers.size === 1);
+  };
   const show = async () => { await page.evaluate(()=>window.setHidden(false)); await idle(); };
   const hide = async () => { await page.evaluate(()=>window.setHidden(true)); await idle(); };
   const reload = async () => { await page.goto(`${origin}/admin?locale=en#/admin?apiIndex=0`); await page.reload(); await entry().waitFor(); await idle(); };

@@ -40,7 +40,7 @@ test('terminal setup keeps tokens out of browser storage and supplies the instal
 })
 
 test('terminal HTTP errors preserve canonical reason without changing ordinary 401/403 policy', async () => {
-  const vite = await createServer({ configFile: false, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
+  const vite = await createServer({ configFile: false, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, watch: null } })
   const saved = { window: globalThis.window, localStorage: globalThis.localStorage, fetch: globalThis.fetch }
   try {
     const { http } = await vite.ssrLoadModule('/src/frontend/utils/http.js')
@@ -134,7 +134,9 @@ async function fixture(run) {
   assert.ok(await source('src/frontend/composables/useTerminal.js'))
   const vite = await createServer({
     configFile: false, appType: 'custom', logLevel: 'silent',
-    server: { middlewareMode: true },
+    // SSR-only fixtures must not crawl old HTML evidence or contend for its dependency cache.
+    optimizeDeps: { noDiscovery: true },
+    server: { middlewareMode: true, watch: null },
     ssr: { noExternal: ['@xterm/xterm', '@xterm/addon-fit'] },
     plugins: [{
       name: 'test-screen-boundary', enforce: 'pre',
@@ -143,11 +145,16 @@ async function fixture(run) {
         if (id === '\0test:@xterm/xterm') return 'export const Terminal = globalThis.__terminalScreen'
         if (id === '\0test:@xterm/addon-fit') return 'export class FitAddon { proposeDimensions() { return {cols:80,rows:24} } fit() {} }'
         if (id.startsWith('\0test:')) return 'export default {}'
+      },
+      transform(code, id) {
+        if (id.endsWith('/src/frontend/composables/useTerminal.js')) {
+          return 'const {setTimeout, clearTimeout} = globalThis.__terminalClock;\n' + code
+        }
       }
     }]
   })
   const original = {}
-  const overrides = ['window', 'document', 'localStorage', 'WebSocket', 'ResizeObserver', '__terminalScreen', 'fetch', 'setTimeout', 'clearTimeout', 'getComputedStyle', 'BroadcastChannel']
+  const overrides = ['window', 'document', 'localStorage', 'WebSocket', 'ResizeObserver', '__terminalScreen', '__terminalClock', 'fetch', 'getComputedStyle', 'BroadcastChannel']
   for (const key of overrides) original[key] = globalThis[key]
   const calls = []
   const timers = new Map()
@@ -161,6 +168,11 @@ async function fixture(run) {
   const controllers = []
   const logoutMessages = []
   try {
+    // Only the endpoint uses this clock; Vite imports and HTTP timers stay native.
+    globalThis.__terminalClock = {
+      setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay, origin: new Error().stack }); return id },
+      clearTimeout(id) { timers.delete(id) }
+    }
     const { useTerminal } = await vite.ssrLoadModule('/src/frontend/composables/useTerminal.js')
     const api = await vite.ssrLoadModule('/src/frontend/utils/api.js')
     globalThis.window = Object.assign(new EventTarget(), { location: { origin: 'https://monitor.example', protocol: 'https:', host: 'monitor.example', pathname: '/admin', search: '', hash: '#/admin' } })
@@ -171,13 +183,6 @@ async function fixture(run) {
     globalThis.ResizeObserver = class { observe() {} disconnect() {} }
     globalThis.BroadcastChannel = class { constructor(name) { this.name = name } close() {} postMessage(message) { logoutMessages.push({ name: this.name, message }) } }
     globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' })
-    globalThis.setTimeout = (fn, delay) => {
-      const origin = new Error().stack
-      // Vite's module-crawl timer is tooling, not a terminal endpoint timer.
-      if (/node_modules[\\/]vite[\\/]/.test(origin.split('\n')[2] || '')) return original.setTimeout(fn, delay)
-      const id = ++timerId; timers.set(id, { fn, delay, origin }); return id
-    }
-    globalThis.clearTimeout = id => { if (!timers.delete(id)) original.clearTimeout(id) }
     globalThis.fetch = async (url, init) => {
       const data = JSON.parse(init.body)
       calls.push({ url, init, data })
@@ -199,7 +204,8 @@ async function fixture(run) {
       return t
     }
     const open = async t => {
-      await t.open({ addEventListener() {}, removeEventListener() {}, style: {} })
+      const opened = await t.open({ addEventListener() {}, removeEventListener() {}, style: {} })
+      if (enabled && supported && connected) assert.equal(opened, true, `terminal open failed: ${t.errorCode.value}; actions=${calls.map(call => call.data.action).join(',')}`)
       const ws = Socket.instances.at(-1)
       ws?.connect()
       ws?.message({ type: 'start', cols: 80, rows: 24 })
@@ -222,9 +228,10 @@ test('actual broker startup controls satisfy the unchanged strict frontend start
     pair.agent.ws.send('{"type":"ready"}')
     await until(() => controls(pair.browser).some(frame => frame.type === 'ready'))
     const frames = controls(pair.browser)
-    await fixture(async ({ create }) => {
+    await fixture(async ({ create, calls }) => {
       const terminal = create()
-      await terminal.open({ addEventListener() {}, removeEventListener() {}, style: {} })
+      const opened = await terminal.open({ addEventListener() {}, removeEventListener() {}, style: {} })
+      assert.equal(opened, true, `terminal open failed: ${terminal.errorCode.value}; actions=${calls.map(call => call.data.action).join(',')}`)
       const socket = Socket.instances.at(-1)
       socket.connect()
       for (const frame of frames) socket.message(frame)
@@ -233,6 +240,14 @@ test('actual broker startup controls satisfy the unchanged strict frontend start
     })
   } finally { await h.dispose() }
 })
+
+test('synthetic endpoint clocks never own cold Vite module transport timeouts', () => fixture(async ({ create, open, timers }) => {
+  const nativeTimeout = globalThis.setTimeout
+  await open(create())
+  assert.equal(globalThis.setTimeout, nativeTimeout)
+  assert.ok(timers.size > 0, 'endpoint timers remain deterministic')
+  assert.ok([...timers.values()].every(timer => !timer.origin.includes('node_modules/vite/')), 'tooling timers never enter the endpoint clock')
+}))
 
 test('terminal uses selected same-origin API and Cookie only, rejecting invalid/cross-origin indices', () => fixture(async ({ api, calls }) => {
   window.__APP_API_BASES__ = ['https://other.example', 'https://monitor.example']
