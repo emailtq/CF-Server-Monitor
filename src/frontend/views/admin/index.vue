@@ -36,6 +36,7 @@
           :groups="groups"
           :active-tab="activeTab"
           :selected-api-index="selectedApiIndex"
+          :site-generation="siteGeneration"
           :latest-agent-version="latestAgentVersion"
           :cache-refreshing="cacheRefreshing"
           :copied-server-id="copiedServerId"
@@ -49,8 +50,7 @@
           @toggle-select-all="toggleSelectAll"
           @refresh-cache="refreshServersCache"
           @select-all="handleSelectAll"
-          @drag-start="handleDragStart"
-          @drop="handleDrop"
+          @reorder="saveServerOrder"
           @toggle-server="toggleServer"
           @copy-note="copyServerNote"
           @copy-spec="copyServerSpec"
@@ -753,6 +753,7 @@ const requestOwner = computed(() => {
   return () => adminActive && generation === siteGeneration.value
 })
 const adminApiForSite = (data) => adminApi(data, selectedApiIndex.value, requestOwner.value)
+let orderSaving = Promise.resolve(), orderRevision = 0
 
 let terminalStatusTimer = null, terminalStatusRequest = null
 let terminalStatusSequence = 0, terminalStatusGeneration = 0, terminalStatusAgain = false
@@ -1315,7 +1316,8 @@ const resetAdminContext = () => {
   connectionMode.value = 'auto'
   pingMode.value = 'tcp'
   autoUpdate.value = autoDiscoveryAutoUpdate.value = autoDiscoveryCopied.value = uninstallCopied.value = false
-  draggedRow = null
+  orderRevision++
+  orderSaving = Promise.resolve()
 }
 
 const switchAdminSite = async () => {
@@ -1613,9 +1615,10 @@ const saveSettings = async () => {
 
 const loadServers = async (options = {}) => {
   const generation = siteGeneration.value
+  const revision = options.orderRevision ?? orderRevision
   try {
     const result = await adminApiForSite(options.refresh ? { action: 'list', refresh: true } : { action: 'list' })
-    if (generation !== siteGeneration.value) return
+    if (generation !== siteGeneration.value || revision !== orderRevision) return
     if (!result.error) {
       const data = result.data
       servers.value = data.servers || []
@@ -2461,49 +2464,30 @@ const toggleServer = (id) => {
   }
 }
 
-let draggedRow = null
-
-const handleDragStart = (e, serverId = null) => {
-  const row = e?.target?.closest?.('.server-row')
-  draggedRow = String(serverId || row?.dataset?.serverId || '')
-  if (e?.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'move'
-  }
-}
-
-const handleDrop = async (e, targetId) => {
-  const generation = siteGeneration.value
-  e?.preventDefault?.()
-  targetId = String(targetId || '')
-  if (!draggedRow || draggedRow === targetId) {
-    draggedRow = null
-    return
-  }
-
-  const rows = Array.from(document.querySelectorAll('#tab-servers .table-wrapper .terminal-table tbody > .server-row[data-server-id]'))
-  const draggedIndex = rows.findIndex(r => r.dataset.serverId === draggedRow)
-  const targetIndex = rows.findIndex(r => r.dataset.serverId === targetId)
-  if (draggedIndex < 0 || targetIndex < 0) {
-    draggedRow = null
-    return
-  }
-
-  const orders = rows.map(r => r.dataset.serverId)
-  const [dragged] = orders.splice(draggedIndex, 1)
-  orders.splice(targetIndex, 0, dragged)
-
-  try {
-    const result = await adminApiForSite({ action: 'save_order', orders })
-    if (generation !== siteGeneration.value) return
-    if (!result.error) {
-      loadServers()
+const saveServerOrder = (orders) => {
+  const byId = new Map(servers.value.map(server => [String(server.id), server]))
+  if (orders.length !== byId.size || new Set(orders).size !== byId.size || orders.some(id => !byId.has(id))) return
+  const owner = requestOwner.value, apiIndex = selectedApiIndex.value
+  const revision = ++orderRevision
+  servers.value = orders.map(id => byId.get(id))
+  // Capture site ownership now, not when a queued save eventually starts.
+  orderSaving = orderSaving.then(async () => {
+    if (!owner()) return
+    try {
+      const result = await adminApi({ action: 'save_order', orders }, apiIndex, owner)
+      if (!owner()) return
+      if (result.error) throw new Error(getMessage(result.error) || trans.value.operationFailed)
+    } catch (error) {
+      if (!owner()) return
+      saveResult.value = { success: false, error: error.message }
     }
-  } catch (e) {
-    if (generation !== siteGeneration.value) return
-    console.error('[ERROR] Save order failed:', e)
-  }
-
-  draggedRow = null
+    // Earlier replies must not overwrite a newer preview; the last queued save reconciles both.
+    if (!owner() || revision !== orderRevision) return
+    const result = await loadServers({ refresh: true, orderRevision: revision })
+    if (owner() && revision === orderRevision && result?.error) {
+      saveResult.value = { success: false, error: getMessage(result.error) || trans.value.operationFailed }
+    }
+  })
 }
 
 const uploadImageSetting = (e, field) => {

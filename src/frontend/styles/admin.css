@@ -212,8 +212,8 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-ui.admin-ui .theme-card { min-width: 0; box-shadow: none; }
 .admin-ui.admin-ui.admin-ui .settings-section :is(p, label, .form-label, .section-title, .theme-current-value) { overflow-wrap: anywhere; }
 .admin-ui.admin-ui.admin-ui .settings-section .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.admin-ui.admin-ui.admin-ui .admin-node-table .server-name-link { font: inherit; font-weight: 400; color: var(--cf-text); }
-.admin-ui.admin-ui.admin-ui .admin-node-table .admin-copy-value { color: var(--cf-text); font-size: 16px; padding: 1px 0; line-height: normal; }
+.admin-ui.admin-ui.admin-ui .admin-node-table .server-name-link { font: inherit; font-weight: 500; color: var(--cf-text); min-width: 96px; white-space: normal; }
+.admin-ui.admin-ui.admin-ui .admin-node-table .admin-copy-value { color: var(--cf-text); font-size: 14px; padding: 0; line-height: 20px; font-variant-numeric: tabular-nums; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle,
 .admin-ui.admin-ui.admin-ui .admin-node-table .btn-icon { background: none; border-color: transparent; box-shadow: none; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle { color: var(--cf-muted); }
@@ -253,13 +253,17 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-ui.admin-ui .admin-node-table { min-width: 820px; }
 .admin-ui.admin-ui.admin-ui .admin-node-table th { letter-spacing: normal; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .btn-icon { width: 36px; height: 36px; padding: 0; }
-.admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle { width: 20px; min-width: 20px; }
+.admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 24px; padding: 4px; border: 0; border-radius: 4px; letter-spacing: normal; cursor: grab; touch-action: none; user-select: none; }
+.admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle:hover { background: var(--cf-soft); color: var(--cf-text); }
+.admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle:disabled { cursor: default; opacity: .4; background: transparent; }
 .admin-ui .admin-node-name { gap: 8px; }
 .admin-ui .admin-node-name > div { max-width: 240px; }
 .admin-ui .admin-node-table .country-os-icons { gap: 5px; }
 .admin-ui .admin-node-table .flag-img { width: 20px; height: 15px; border-radius: 2px; }
 .admin-ui .admin-node-table .os-icon-img { width: 16px; height: 16px; }
-.admin-ui .admin-traffic-limit { display: inline; white-space: nowrap; }
+.admin-ui .admin-traffic-limit { display: inline; font-size: 14px; white-space: nowrap; }
+.admin-ui .admin-node-table td:nth-child(4) { white-space: normal; font-variant-numeric: tabular-nums; }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn { font-weight: 500; }
 .admin-ui.admin-ui.admin-ui .admin-node-table td:nth-child(4) { white-space: normal; min-width: 100px; }
 .admin-ui .admin-traffic-used { white-space: nowrap; }
 .admin-ui .admin-node-table th:nth-child(3) { width: 12%; }
@@ -290,20 +294,28 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 }
 @media (pointer: coarse) {
   .admin-ui.admin-ui.admin-ui .admin-node-table .btn-icon { width: 44px; height: 44px; }
+  .admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle { width: 32px; height: 32px; padding: 8px; }
   .admin-ui .admin-header-actions .admin-public-link { min-height: 44px; }
   .admin-ui .admin-details summary { min-height: 44px; display: flex; align-items: center; }
 }
 @media (max-width: 360px) { .admin-ui.admin-ui.admin-ui .admin-public-link { display: none; } }
-.admin-ui.admin-ui.admin-ui .admin-node-table { font-size: 16px; line-height: normal; }
-.admin-ui.admin-ui.admin-ui .admin-node-table th { font-size: 16px; }
-.admin-ui.admin-ui.admin-ui .admin-node-table .server-name-link { font-size: 16px; line-height: normal; }
-.admin-ui .server-secondary { line-height: normal; margin-top: 3px; }
+.admin-ui #tab-servers { --cf-font: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; font-family: var(--cf-font); line-height: 20px; }
+.admin-ui.admin-ui.admin-ui .admin-node-table { font-family: var(--cf-font); font-size: 14px; line-height: 20px; }
+.admin-ui.admin-ui.admin-ui .admin-node-table th { font-size: 14px; }
+.admin-ui.admin-ui.admin-ui .admin-node-table .server-name-link { font-size: 14px; line-height: 20px; }
+.admin-ui .server-secondary { line-height: 16px; margin-top: 0; }
 .admin-ui .admin-search { background: var(--cf-panel); }
 .admin-ui.admin-ui.admin-ui .table-wrapper { border-radius: 12px; box-shadow: 0 1px 3px #00000008; }
 .admin-ui .admin-status-stack { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 56px; }
 .admin-ui .admin-private-status { border: 1px solid var(--cf-border); border-radius: 6px; padding: 1px 7px; font-size: 12px; }
+.admin-ui .admin-node-table .server-row { position: relative; z-index: 1; background: var(--cf-panel); transition: opacity 150ms; }
+.admin-ui .admin-node-table .server-row[data-reordering] { z-index: 0; opacity: .4; }
+:root[data-server-reordering] .admin-ui * { cursor: grabbing; }
+:root[data-server-reordering] .admin-ui.admin-ui.admin-ui .admin-node-table .server-row:hover { background: var(--cf-panel); }
+@media (prefers-reduced-motion: reduce) {
+  .admin-ui .admin-node-table .server-row { transition: none; }
+}
 .admin-ui.admin-ui.admin-ui .admin-header-actions .admin-public-link { height: 32px; min-height: 32px; padding: 0 10px; font-size: 14px; font-weight: 400; }
-.admin-ui.admin-ui.admin-ui .admin-node-table td:nth-child(5) .admin-copy-value { font-size: 16px; }
 .admin-ui .admin-near-limit { color: var(--cf-warn); }
 .admin-ui .checkbox-item input[type=checkbox] { appearance: none; width: 32px; height: 18px; border-radius: 20px; border: 1px solid transparent; background: var(--cf-border); position: relative; cursor: pointer; }
 .admin-ui .checkbox-item input[type=checkbox]::after { content: ''; position: absolute; top: 0; left: 0; width: 16px; height: 16px; border-radius: 50%; background: var(--cf-panel); }

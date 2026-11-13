@@ -12,11 +12,11 @@
     <div class="table-wrapper" :aria-label="trans.adminNodes" tabindex="0">
       <table class="terminal-table admin-node-table">
         <thead><tr><th class="admin-col-name">{{ trans.adminNodeName }}</th><th class="admin-col-ip">IP</th><th>{{ trans.status }}</th><th>{{ trans.traffic }}</th><th>{{ trans.price }}<span class="admin-expiry-inline"> / {{ trans.adminExpiry }}</span></th><th class="admin-expiry-column">{{ trans.adminExpiry }}</th><th class="admin-col-actions">{{ trans.actions }}</th></tr></thead>
-        <tbody>
+        <tbody ref="body" @lostpointercapture="cancel">
           <tr v-if="filteredServers.length === 0"><td colspan="7" class="empty-state">{{ trans.noServers }}<button v-if="sortingDisabled" class="btn" @click="search = ''; filterGroup = ''">{{ trans.clear }}</button></td></tr>
-          <tr v-for="server in filteredServers" :key="server.id" class="server-row" :data-server-id="server.id">
+          <tr v-for="server in filteredServers" :key="server.id" class="server-row" :data-server-id="server.id" :data-reordering="dragging === String(server.id) ? '' : undefined">
             <td><div class="admin-node-name">
-              <button type="button" class="drag-handle btn btn-icon" :disabled="sortingDisabled" :aria-label="trans.dragSort" draggable="false" @pointerdown="handlePointerDown($event, server.id)" @pointermove="handlePointerMove" @pointerup="handlePointerUp" @pointercancel="handlePointerCancel"><AdminIcon name="grip-vertical" /></button>
+              <button type="button" class="drag-handle" :disabled="sortingDisabled" :aria-label="trans.dragSort + ': ' + server.name" :title="trans.dragSort" draggable="false" @pointerdown="handlePointerDown($event, server.id)" @keydown="handleKeyDown($event, server.id)"><AdminIcon name="grip-vertical" /></button>
               <div><div class="server-info"><span class="country-os-icons"><img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(server.region || 'xx') + '.svg')" :alt="server.region || 'xx'" class="flag-img"><OsIcon :os="server.os" /></span><button class="server-name-link" :title="server.name" @click="$emit('edit', server)">{{ server.name }}</button></div><div class="server-secondary">{{ server.server_group || trans.default }} · {{ server.os || '-' }}</div></div>
             </div></td>
             <td><div v-if="getServerIpRows(server).length" class="server-ip-list"><button v-for="ip in getServerIpRows(server)" :key="ip.copyField" class="admin-copy-value" :class="{ 'spec-copied': isSpecCopied(server, ip.copyField) }" :aria-label="trans.copy + ': ' + ip.address" @click="emitCopySpec(server, ip.copyField, ip.address)">{{ ip.address }}</button></div><span v-else>-</span></td>
@@ -39,7 +39,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getFlagRegionCode, formatBytes, getTerminalBase } from '../../../utils/api'
 import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
@@ -48,6 +48,7 @@ import { normalizeTimestamp } from '../../../utils/time.js'
 import { getTrafficUsageBytes } from '../../../composables/useServerCardData.js'
 import OsIcon from '../../../components/OsIcon.vue'
 import AdminIcon from './AdminIcon.vue'
+import { useServerReorder } from '../composables/useServerReorder.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -56,6 +57,7 @@ const props = defineProps({
   groups: { type: Array, default: () => ['Default'] },
   activeTab: { type: String, default: 'servers' },
   selectedApiIndex: { type: Number, default: 0 },
+  siteGeneration: { type: Number, default: 0 },
   terminalStatuses: { type: Object, default: () => ({}) },
   latestAgentVersion: { type: String, default: '' },
   cacheRefreshing: { type: Boolean, default: false },
@@ -69,7 +71,7 @@ const newServerGroup = defineModel('newServerGroup', { type: String, default: ''
 
 const emit = defineEmits([
   'groups', 'add-server', 'auto-discovery-cmd', 'batch-edit', 'batch-delete', 'toggle-select-all', 'refresh-cache', 'select-all',
-  'drag-start', 'drop', 'toggle-server', 'copy-note',
+  'reorder', 'toggle-server', 'copy-note',
   'copy-spec', 'copy-cmd', 'edit', 'delete', 'terminal', 'terminal-access', 'renew'
 ])
 
@@ -86,184 +88,15 @@ const terminalReason = server => {
   return state === 'ready' ? props.trans.terminalOpen : props.trans[state.startsWith('terminal_') ? state : 'terminal_' + state] || props.trans.terminal_query_failed
 }
 
-const POINTER_DRAG_THRESHOLD = 6
-let pointerDragState = null
 const search = ref('')
 const filterGroup = ref('')
 const sortingDisabled = computed(() => !!search.value.trim() || !!filterGroup.value)
+const { body, orderedServers, dragging, handlePointerDown, handleKeyDown, cancel } = useServerReorder(props, sortingDisabled, emit)
 const filteredServers = computed(() => {
   const term = search.value.trim().toLocaleLowerCase()
-  return props.servers.filter(server => (!filterGroup.value || (server.server_group || props.trans.default) === filterGroup.value) && (!term || [server.name, server.ip_v4, server.ip_v6, server.region, server.server_group, server.os].some(value => String(value || '').toLocaleLowerCase().includes(term))))
+  return orderedServers.value.filter(server => (!filterGroup.value || (server.server_group || props.trans.default) === filterGroup.value) && (!term || [server.name, server.ip_v4, server.ip_v6, server.region, server.server_group, server.os].some(value => String(value || '').toLocaleLowerCase().includes(term))))
 })
-watch(() => props.selectedApiIndex, () => { search.value = ''; filterGroup.value = ''; cleanupPointerDrag() })
-
-const emitDragStart = (event, serverId) => {
-  emit('drag-start', event, serverId)
-}
-
-const emitDrop = (event, serverId) => {
-  emit('drop', event, serverId)
-}
-
-const getServerRow = (target) => target?.closest?.('.server-row') || null
-const getServerRowAtPoint = (clientX, clientY) => {
-  const element = document.elementFromPoint(clientX, clientY)
-  return getServerRow(element)
-}
-
-const createDragGhost = () => {
-  if (!pointerDragState?.row || pointerDragState.ghost) return
-  const row = pointerDragState.row
-  const rect = row.getBoundingClientRect()
-  const table = row.closest('table')
-  const ghost = document.createElement('div')
-  ghost.className = 'server-row-drag-ghost'
-  ghost.style.width = `${rect.width}px`
-
-  const ghostTable = document.createElement('table')
-  ghostTable.className = table?.className || 'terminal-table'
-  const ghostBody = document.createElement('tbody')
-  const rowClone = row.cloneNode(true)
-  rowClone.classList.remove('dragging', 'drag-over')
-  rowClone.removeAttribute('data-server-id')
-  Array.from(row.children).forEach((cell, index) => {
-    const cloneCell = rowClone.children[index]
-    if (!cloneCell) return
-    const width = cell.getBoundingClientRect().width
-    cloneCell.style.width = `${width}px`
-    cloneCell.style.minWidth = `${width}px`
-  })
-  ghostBody.appendChild(rowClone)
-  ghostTable.appendChild(ghostBody)
-  ghost.appendChild(ghostTable)
-  document.body.appendChild(ghost)
-
-  pointerDragState.ghost = ghost
-  pointerDragState.ghostOffsetX = pointerDragState.startX - rect.left
-  pointerDragState.ghostOffsetY = pointerDragState.startY - rect.top
-}
-
-const updateDragGhost = (event) => {
-  if (!pointerDragState?.ghost) return
-  pointerDragState.ghost.style.left = `${event.clientX - pointerDragState.ghostOffsetX}px`
-  pointerDragState.ghost.style.top = `${event.clientY - pointerDragState.ghostOffsetY}px`
-}
-
-const clearPointerDragClasses = () => {
-  document.querySelectorAll('.server-row.dragging, .server-row.drag-over').forEach(row => {
-    row.classList.remove('dragging', 'drag-over')
-  })
-}
-
-const updatePointerDragTarget = (event) => {
-  if (!pointerDragState?.active) return null
-  const targetRow = getServerRowAtPoint(event.clientX, event.clientY)
-  const targetId = targetRow?.dataset?.serverId || ''
-
-  if (targetId !== pointerDragState.targetId) {
-    if (pointerDragState.targetRow) {
-      pointerDragState.targetRow.classList.remove('drag-over')
-    }
-    pointerDragState.targetRow = targetRow
-    pointerDragState.targetId = targetId
-    if (targetRow && targetId !== pointerDragState.serverId) {
-      targetRow.classList.add('drag-over')
-    }
-  }
-
-  return targetRow
-}
-
-const cleanupPointerDrag = () => {
-  if (pointerDragState?.handle?.releasePointerCapture && pointerDragState.pointerId !== undefined) {
-    try {
-      pointerDragState.handle.releasePointerCapture(pointerDragState.pointerId)
-    } catch (_) {}
-  }
-  clearPointerDragClasses()
-  pointerDragState?.ghost?.remove()
-  document.body.classList.remove('server-row-drag-active')
-  pointerDragState = null
-}
-
-const startPointerDrag = (event) => {
-  if (!pointerDragState || pointerDragState.active) return
-  pointerDragState.active = true
-  pointerDragState.row?.classList.add('dragging')
-  document.body.classList.add('server-row-drag-active')
-  createDragGhost()
-  updateDragGhost(event)
-  emitDragStart(event, pointerDragState.serverId)
-}
-
-const handlePointerDown = (event, serverId) => {
-  if (sortingDisabled.value || event.isPrimary === false) return
-  if (event.pointerType === 'mouse' && event.button !== 0) return
-  const row = getServerRow(event.target)
-  if (!row) return
-  event.preventDefault()
-
-  pointerDragState = {
-    pointerId: event.pointerId,
-    startX: event.clientX,
-    startY: event.clientY,
-    serverId: String(serverId || ''),
-    row,
-    handle: event.currentTarget,
-    active: false,
-    targetId: '',
-    targetRow: null,
-    ghost: null,
-    ghostOffsetX: 0,
-    ghostOffsetY: 0
-  }
-
-  if (event.currentTarget?.setPointerCapture) {
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    } catch (_) {}
-  }
-}
-
-const handlePointerMove = (event) => {
-  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return
-
-  const dx = Math.abs(event.clientX - pointerDragState.startX)
-  const dy = Math.abs(event.clientY - pointerDragState.startY)
-  if (!pointerDragState.active && Math.max(dx, dy) >= POINTER_DRAG_THRESHOLD) {
-    startPointerDrag(event)
-  }
-  if (!pointerDragState.active) return
-
-  event.preventDefault()
-  updateDragGhost(event)
-  updatePointerDragTarget(event)
-}
-
-const handlePointerUp = (event) => {
-  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return
-
-  if (pointerDragState.active) {
-    event.preventDefault()
-    const targetRow = updatePointerDragTarget(event)
-    const targetId = targetRow?.dataset?.serverId || pointerDragState.targetId
-    emitDrop(event, targetId || pointerDragState.serverId)
-  }
-
-  cleanupPointerDrag()
-}
-
-const handlePointerCancel = (event) => {
-  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return
-  if (pointerDragState.active) {
-    emitDrop(event, pointerDragState.serverId)
-  }
-  cleanupPointerDrag()
-}
-
-onBeforeUnmount(() => {
-  cleanupPointerDrag()
-})
+watch(() => props.selectedApiIndex, () => { search.value = ''; filterGroup.value = '' })
 
 const getSpecCopyKey = (server, field) => `${server.id}:${field}`
 const isSpecCopied = (server, field) => props.copiedSpecKey === getSpecCopyKey(server, field)
