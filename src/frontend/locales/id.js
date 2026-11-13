@@ -122,6 +122,8 @@ export default {
   adminNoOptions: "Tidak ada opsi yang cocok",
   terminalRootWarning: "Hak agen: agen root = akses root.",
   terminalSessionDetails: "Detail sesi",
+  terminalMenu: "Menu terminal",
+  terminalScrollBottom: "Kembali ke keluaran terbaru",
   terminalTitle: "Terminal agen",
   terminalAccess: "Akses terminal",
   terminalOpen: "Buka di tab baru",

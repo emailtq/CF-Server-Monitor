@@ -122,6 +122,8 @@ export default {
   adminNoOptions: "一致する項目はありません",
   terminalRootWarning: "Agent 権限：root Agent は root 権限。",
   terminalSessionDetails: "セッションの詳細",
+  terminalMenu: "ターミナルメニュー",
+  terminalScrollBottom: "最新の出力に戻る",
   terminalTitle: "Agent ターミナル",
   terminalAccess: "ターミナル権限",
   terminalOpen: "新しいタブで開く",

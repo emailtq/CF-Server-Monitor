@@ -122,6 +122,8 @@ export default {
   adminNoOptions: "没有匹配的选项",
   terminalRootWarning: "Agent 用户权限；root Agent = root 权限。",
   terminalSessionDetails: "会话详情",
+  terminalMenu: "终端菜单",
+  terminalScrollBottom: "回到最新输出",
   terminalTitle: "Agent 终端",
   terminalAccess: "终端授权",
   terminalOpen: "新标签页打开终端",

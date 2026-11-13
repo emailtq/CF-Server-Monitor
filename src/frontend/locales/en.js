@@ -122,6 +122,8 @@ export default {
   adminNoOptions: "No matching options",
   terminalRootWarning: "Agent privileges; root agent = root access.",
   terminalSessionDetails: "Session details",
+  terminalMenu: "Terminal menu",
+  terminalScrollBottom: "Back to latest output",
   terminalTitle: "Agent terminal",
   terminalAccess: "Terminal access",
   terminalOpen: "Open terminal in new tab",

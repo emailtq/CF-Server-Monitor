@@ -273,7 +273,7 @@ try {
     for (const locale of ['en','zh','zh-TW','es','fr','id','ja']) {
       await page.setViewportSize({width:1440,height:900});
       await page.goto(`${origin}/admin?locale=${locale}#/admin/terminal/node-a`);
-      await page.locator('.terminal-actions button').nth(1).click();
+      await page.locator('[data-terminal-menu]').click(); await page.locator('[data-terminal-revoke]').click();
       await page.setViewportSize({width:320,height:540});
       assert.equal(await dialog.locator('.btn-red').isDisabled(),true);
       await dialog.locator('.terminal-consent input').check();
@@ -293,7 +293,7 @@ try {
     await until(()=>controls(peer).some(frame=>frame.type==='bound'));
     await page.setViewportSize({width:1440,height:900});
     await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`);
-    await page.locator('.terminal-actions button').nth(1).click();
+    await page.locator('[data-terminal-menu]').click(); await page.locator('[data-terminal-revoke]').click();
     await dialog.locator('.terminal-consent input').check();
     await dialog.locator('.btn-red').click();
     await until(()=>controls(peer).some(frame=>frame.type==='disable'));

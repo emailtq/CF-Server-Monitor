@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <div v-if="open" class="admin-ui admin-dialog-overlay" @click.self="requestClose">
-      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || undefined" :aria-busy="busy" tabindex="-1">
+      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" :style="size === 'terminal' ? { height: viewportHeight } : undefined" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || undefined" :aria-busy="busy" tabindex="-1">
         <header class="admin-dialog-head">
           <h2 :id="titleId">{{ title }}</h2>
           <button type="button" class="admin-dialog-close" :disabled="busy" :aria-label="t('close')" @click="requestClose"><AdminIcon name="x" /></button>
@@ -22,7 +22,7 @@ import AdminIcon from './AdminIcon.vue'
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { t } from '../../../utils/i18n.js'
 import '../../../styles/admin.css'
-const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'edit', 'download', 'download-confirm'].includes(value) }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
+const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'edit', 'download', 'download-confirm', 'terminal'].includes(value) }, viewportHeight: { type: String, default: '100dvh' }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
 const emit = defineEmits(['close'])
 const dialog = ref(null)
 const titleId = `admin-dialog-${++nextId}`

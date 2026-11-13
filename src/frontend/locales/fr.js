@@ -122,6 +122,8 @@ export default {
   adminNoOptions: "Aucune option correspondante",
   terminalRootWarning: "Droits de l'agent : agent root = accès root.",
   terminalSessionDetails: "Détails de la session",
+  terminalMenu: "Menu du terminal",
+  terminalScrollBottom: "Revenir à la sortie récente",
   terminalTitle: "Terminal de l’agent",
   terminalAccess: "Accès au terminal",
   terminalOpen: "Ouvrir dans un nouvel onglet",

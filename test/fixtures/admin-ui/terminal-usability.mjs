@@ -12,7 +12,7 @@ const base = path.resolve('docs/superpowers/terminal-usability-2026-11-11');
 const out = process.env.TERMINAL_USABILITY_REPORT_DIR || fs.mkdtempSync(path.join(base,'task-3-browser-'));
 fs.mkdirSync(out,{recursive:true});
 const report = {checks:[],errors:[],actions:[],statusBatches:[],syntheticStatusBoundary:true};
-let server, browser, page;
+let server, browser, page, context;
 const held = [];
 let status = {enabled:false,credentialEnabled:true,localEnabled:false,localObservationFresh:true,connected:false,supported:false,state:'local_disabled'};
 let holdNext = false, failStatus = false, site = 0, holdLogout = false, serverCount = 1;
@@ -24,7 +24,7 @@ try {
   const exports = JSON.parse(fs.readFileSync(path.join(out,bundle,'build-receipt.json'))).exports;
   browser = await chromium.launch({headless:true,executablePath:'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe'});
   report.browserVersion=browser.version();
-  const context = await browser.newContext({viewport:{width:1440,height:900}});
+  context = await browser.newContext({viewport:{width:1440,height:900}});
   await context.addInitScript(() => {
     const later = window.setTimeout.bind(window), cancel = window.clearTimeout.bind(window), fetch = window.fetch.bind(window);
     window.pollTimers = new Map(); window.statusPending = 0; window.maxPending = 0; window.statusAborts = 0;
@@ -86,7 +86,7 @@ try {
   };
   const show = async () => { await page.evaluate(()=>window.setHidden(false)); await idle(); };
   const hide = async () => { await page.evaluate(()=>window.setHidden(true)); await idle(); };
-  const reload = async () => { await page.goto(`${origin}/admin?locale=en#/admin?apiIndex=0`); await page.reload(); await entry().waitFor(); await idle(); };
+  const reload = async () => { await page.goto(`${origin}/admin?locale=en#/admin?apiIndex=0`); await entry().waitFor(); await idle(); await page.reload(); await entry().waitFor(); await idle(); };
   await reload();
   await check('1001 nodes use sequential unique batches without silently omitting the last node',async()=>{
     serverCount=1001; const before=report.statusBatches.length; await reload();
@@ -167,7 +167,7 @@ try {
     await page.evaluate(()=>{location.hash='/admin/terminal/node-a?apiIndex=1';});
     await page.locator('.terminal-page').waitFor(); held.shift()(); await idle();
     assert.equal(await page.evaluate(()=>window.pollTimers.size),0);
-    await page.locator('[data-terminal-back]').click(); await entry().waitFor(); await idle();
+    await page.locator('[data-terminal-menu]').click(); await page.locator('[data-terminal-back]').click(); await entry().waitFor(); await idle();
     assert.equal(await page.evaluate(()=>window.pollTimers.size),1);
   });
   await check('seven locales desktop/mobile footer is Copy and Close only, copied state does not rename Copy',async()=>{
@@ -230,5 +230,5 @@ try {
     assert.equal(await entry().isDisabled(),true); holdLogout=false;
   });
 } catch(error) { report.errors.push(error.stack); await page?.screenshot({path:path.join(out,'failure.png')}).catch(()=>{}); }
-finally { held.splice(0).forEach(resolve=>resolve()); await browser?.close(); await server?.close(); fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2)); }
+finally { held.splice(0).forEach(resolve=>resolve()); await context?.unrouteAll({behavior:'wait'}); await browser?.close(); await server?.close(); fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2)); }
 assert.deepEqual(report.errors,[]);

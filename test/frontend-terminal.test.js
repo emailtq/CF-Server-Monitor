@@ -104,6 +104,7 @@ class Screen {
   static instances = []
   constructor(options) {
     this.options = options; this.cols = 80; this.rows = 24; this.callbacks = []; this.handlers = {}; this.visible = ''
+    this.element = { addEventListener() {}, removeEventListener() {} }
     this.buffer = { active: { viewportY: 0, getNullCell: () => ({}), getLine: row => {
       const line = this.visible.split('\n')[row] || ''
       return { getCell: col => ({ getChars: () => line[col] || '', getWidth: () => 1 }) }
@@ -117,6 +118,8 @@ class Screen {
   onData(fn) { this.handlers.data = fn; return { dispose() {} } }
   onBinary(fn) { this.handlers.binary = fn; return { dispose() {} } }
   onResize(fn) { this.handlers.resize = fn; return { dispose() {} } }
+  onScroll() { return { dispose() {} } }
+  onWriteParsed() { return { dispose() {} } }
   attachCustomKeyEventHandler() {}
   write(data, cb) {
     this.callbacks.push({ data, cb: () => {

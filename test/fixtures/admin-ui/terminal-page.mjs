@@ -20,18 +20,20 @@ const peers = [];
 const pendingRoutes = new Set();
 const drainRoutes = async () => { while (pendingRoutes.size) await Promise.all([...pendingRoutes]); };
 const check = async (name, fn) => { await fn(); report.checks.push({ name, pass: true }); console.log(name); };
+const menu = async () => { if (!await page.locator('.admin-dialog-terminal').count()) await page.locator('[data-terminal-menu]').click(); };
+const closeMenu = async () => { if (await page.locator('.admin-dialog-terminal').count()) await page.keyboard.press('Escape'); };
 const assertNodeTargets = async (width, height) => {
-  const targets = await page.evaluate(() => ['.terminal-language', '.help-tooltip-trigger'].map(selector => {
+  const targets = await page.evaluate(() => ['[data-terminal-menu]'].map(selector => {
     const element = document.querySelector(selector), box = element.getBoundingClientRect();
     const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
-    const layout = ['.terminal-node', '.terminal-node-identity', '.terminal-node-name', '.help-tooltip'].map(selector => { const el = document.querySelector(selector), rect = el.getBoundingClientRect(), css = getComputedStyle(el); return { selector, width: rect.width, minWidth: css.minWidth, display: css.display, flexShrink: css.flexShrink, overflow: css.overflow, whiteSpace: css.whiteSpace }; });
+    const layout = ['.terminal-topbar', '.terminal-node-name'].map(selector => { const el = document.querySelector(selector), rect = el.getBoundingClientRect(), css = getComputedStyle(el); return { selector, width: rect.width, minWidth: css.minWidth, display: css.display, flexShrink: css.flexShrink, overflow: css.overflow, whiteSpace: css.whiteSpace }; });
     return { selector, width: box.width, height: box.height, x: box.x, right: box.right, bottom: box.bottom, visible: box.width > 0 && box.height > 0, reachable: element === hit || element.contains(hit), layout };
   }));
   const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
   for (const target of targets.filter(target => target.visible)) {
     assert.ok(target.x >= 0 && target.right <= width && target.bottom <= height && target.reachable, 'visible node control must remain reachable: ' + JSON.stringify(target));
     if (coarse) assert.ok(target.width >= 44 && target.height >= 44, 'coarse node control requires 44x44 target: ' + JSON.stringify(target));
-    else assert.deepEqual([target.width, target.height], target.selector === '.terminal-language' ? [120, 32] : [17, 17], 'fine pointer geometry must remain unchanged');
+    else assert.deepEqual([target.width, target.height], [44, 44], 'menu keeps one narrow target for either pointer');
   }
   return targets;
 };
@@ -119,6 +121,7 @@ try {
     await page.locator('.terminal-error').waitFor();
     assert.ok((await page.locator('.terminal-error').innerText()).includes('terminal_agent_offline'));
     assert.equal(report.actions.filter(action => action === 'terminal_open').length,0);
+    await menu();
     assert.equal(await page.getByRole('button',{name:en.terminalReopen,exact:true}).isDisabled(),false);
     const control = await h.control();
     control.ws.on('message',onControlMessage);
@@ -132,23 +135,22 @@ try {
     report.input.length = 0;
   });
   await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
-  await check('standalone approved header and one reservation; session details collapsed', async () => {
+  await check('standalone full viewport and one reservation; session details/risk are in overlay', async () => {
     await page.waitForTimeout(300);
-    assert.equal(await page.locator('.admin-header').count(), 1);
+    assert.equal(await page.locator('.admin-header').count(), 0);
     assert.equal(await page.locator('.terminal-dots, .admin-nav, #terminal-secret').count(), 0);
     assert.equal(report.actions.filter(action => action === 'terminal_open').length, 1);
+    await menu();
     assert.equal(await page.locator('.terminal-session').getAttribute('open'), null);
+    assert.equal(await page.locator('.terminal-risk').first().innerText(), en.terminalRisk);
+    await closeMenu();
     assert.ok((await page.locator('.terminal-node-name').innerText()).includes('Hong Kong'));
   });
-  await check('visible coarse language/help controls have 44px targets; fine pointer geometry and long-name help stay unchanged', async () => {
+  await check('visible menu has 44px target; long node name stays bounded', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForFunction(() => document.querySelector('.terminal-page').getBoundingClientRect().height === 844);
     report.nodeTargets = await assertNodeTargets(390, 844);
-    if (await page.evaluate(() => matchMedia('(pointer: coarse)').matches)) await page.locator('.help-tooltip-trigger').click();
-    else await page.locator('.help-tooltip-trigger').focus();
-    await page.getByRole('tooltip').waitFor();
-    await page.locator('.help-tooltip-trigger').press('Escape');
-    await page.getByRole('tooltip').waitFor({ state: 'hidden' });
+    await menu(); assert.equal(await page.locator('.terminal-language').isVisible(), true); await closeMenu();
     await page.screenshot({ path: path.join(out, 'node-touch-targets.png') });
   });
   await check('actual xterm foreground/background change without new socket or reservation', async () => {
@@ -179,6 +181,7 @@ try {
     report.themeColors = colors;
   });
   await check('mobile IME commits whole UTF8; Enter composition does not consume confirmation', async () => {
+    await page.locator('[data-terminal-keys]').click();
     const input = page.locator('.terminal-mobile-input');
     await input.evaluate(el => {
       el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
@@ -205,7 +208,9 @@ try {
       el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
       el.value = '旧会话';
     });
+    await menu();
     await page.getByRole('button', { name: en.terminalDisconnect, exact: true }).click();
+    await menu();
     await page.getByRole('button', { name: en.terminalReopen, exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.terminal-status')?.textContent.includes('Shell ready'));
     const count = report.input.length;
@@ -215,7 +220,8 @@ try {
     assert.equal(report.input.length, count);
     assert.equal(await page.locator('.terminal-mobile-input').inputValue(), '');
   });
-  await check('seven locales desktop/mobile themes and low keyboard viewport retain output/input/disconnect/risk', async () => {
+  await check('seven locales desktop/mobile themes and low keyboard viewport retain output/input/menu', async () => {
+    await page.locator('[data-terminal-keys]').click();
     for (const locale of ['en', 'zh', 'zh-TW', 'es', 'fr', 'id', 'ja']) {
       await page.evaluate(async ({ file, locale }) => (await import(file)).setLanguage(locale), { file: exports['/src/frontend/utils/i18n.js'], locale });
       for (const [width, height] of [[1440, 900], [1024, 768], [768, 620], [390, 844], [320, 540], [640, 320], [320, 280]]) {
@@ -225,14 +231,14 @@ try {
           await page.evaluate(async ({ file, theme }) => (await import(file)).useTheme().setTheme(theme), { file: exports['/src/frontend/composables/useTheme.js'], theme });
           const geometry = await page.evaluate(() => {
             const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { x: r.x, right: r.right, y: r.y, bottom: r.bottom, height: r.height }; };
-            return { screen: rect('.terminal-screen'), input: rect('.terminal-mobile-input'), disconnect: rect('[data-terminal-disconnect]'), risk: rect('.terminal-risk'), page: document.documentElement.scrollHeight, viewport: innerHeight };
+            return { screen: rect('.terminal-screen'), input: rect('.terminal-mobile-input'), menu: rect('[data-terminal-menu]'), page: document.documentElement.scrollHeight, viewport: innerHeight };
           });
           assert.ok(geometry.screen.height >= 48, JSON.stringify({ locale, width, height, geometry }));
-          for (const key of ['input', 'disconnect', 'risk']) assert.ok(geometry[key].height > 0 && geometry[key].bottom <= height + 1, JSON.stringify({ locale, width, height, key, geometry }));
-          assert.ok(geometry.disconnect.x >= 0 && geometry.disconnect.right <= width, 'disconnect must be immediately visible horizontally: ' + JSON.stringify({ locale, width, height, geometry }));
+          for (const key of ['input', 'menu']) assert.ok(geometry[key].height > 0 && geometry[key].bottom <= height + 1, JSON.stringify({ locale, width, height, key, geometry }));
+          assert.ok(geometry.menu.x >= 0 && geometry.menu.right <= width, 'menu must be immediately visible horizontally: ' + JSON.stringify({ locale, width, height, geometry }));
           assert.ok(geometry.page <= height + 1, JSON.stringify({ locale, width, height, geometry }));
           const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
-          if (coarse) assert.ok(geometry.disconnect.height >= 44 && geometry.input.height >= 44);
+          if (coarse) assert.ok(geometry.menu.height >= 44 && geometry.input.height >= 44);
           const nodeTargets = await assertNodeTargets(width, height);
           report.checks.push({ name: `${locale}/${width}x${height}/${theme}/${coarse ? 'coarse' : 'fine'}`, pass: true, geometry, nodeTargets });
           if (locale === 'en' || width === 320) await page.screenshot({ path: path.join(out, `${locale}-${width}-${height}-${theme}.png`) });
@@ -255,7 +261,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.terminal-page').getBoundingClientRect().height === 300);
     assert.ok((await page.locator('.terminal-screen').boundingBox()).height >= 48);
     assert.ok((await page.locator('.terminal-mobile-input').boundingBox()).y < 300);
-    assert.ok((await page.locator('[data-terminal-disconnect]').boundingBox()).y < 300);
+    assert.ok((await page.locator('[data-terminal-menu]').boundingBox()).y < 300);
     assert.equal(report.actions.filter(action => action === 'terminal_open').length, 2);
     await page.screenshot({ path: path.join(out, 'visualViewport-keyboard.png') });
     await page.evaluate(() => { Object.defineProperty(window, 'visualViewport', { configurable: true, value: window.originalViewport }); window.visualViewport.dispatchEvent(new Event('resize')); });
@@ -270,7 +276,7 @@ try {
     peers.at(-1).ws.close();
     await page.locator('.terminal-error').waitFor();
     assert.ok((await page.locator('.xterm-rows').innerText()).includes('FINAL OUTPUT'));
-    assert.equal(await page.locator('[data-terminal-disconnect]').isDisabled(), true);
+    await menu(); assert.equal(await page.locator('[data-terminal-disconnect]').isDisabled(), true); await closeMenu();
     failMetadata = false;
   });
   await check('unauthenticated direct page cannot reserve despite frontend authorization flag', async () => {
@@ -303,7 +309,7 @@ try {
   });
   await check('disconnect retains final output; back preserves apiIndex and disposes', async () => {
     assert.ok((await page.locator('.xterm-rows').innerText()).includes('FINAL OUTPUT'));
-    await page.locator('[data-terminal-back]').click();
+    await menu(); await page.locator('[data-terminal-back]').click();
     assert.ok(page.url().endsWith('#/admin?apiIndex=0'));
     assert.equal(await page.locator('.terminal-screen').count(), 0);
     await page.waitForLoadState('networkidle');

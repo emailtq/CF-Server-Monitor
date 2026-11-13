@@ -122,6 +122,8 @@ export default {
   adminNoOptions: "沒有符合的選項",
   terminalRootWarning: "Agent 使用者權限；root Agent = root 權限。",
   terminalSessionDetails: "工作階段詳情",
+  terminalMenu: "終端選單",
+  terminalScrollBottom: "回到最新輸出",
   terminalTitle: "Agent 終端",
   terminalAccess: "終端授權",
   terminalOpen: "新分頁開啟終端",

@@ -26,6 +26,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
   const errorCode = ref('')
   const sessionId = ref('')
   const finalOutput = ref('')
+  const readingHistory = ref(false)
   let epoch = 0
   let renderEpoch = 0
   let drainUntil = 0
@@ -45,6 +46,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
   let bufferSince = 0
   let lastMessage = 0
   let channel = null
+  let historyDispose = null
   const timers = new Map()
   const subscriptions = []
 
@@ -75,6 +77,9 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     cancelTimer('drain')
     observer?.disconnect()
     observer = null
+    historyDispose?.()
+    historyDispose = null
+    readingHistory.value = false
     host?.removeEventListener('paste', onPaste, true)
     host = null
     screen?.dispose()
@@ -213,6 +218,74 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     screen.options.theme = { background: style.backgroundColor, foreground: style.color, cursor: style.color }
     return true
   }
+  const scrollToBottom = () => screen?.scrollToBottom()
+  const attachHistory = () => {
+    const element = screen.element
+    let gesture = null
+    let pending = 0
+    let frame = 0
+    const canScroll = () => screen?.buffer.active.type === 'normal' && screen.modes.mouseTrackingMode === 'none' && !screen.hasSelection() && !window.getSelection()?.toString()
+    const update = () => {
+      const buffer = screen.buffer.active
+      readingHistory.value = buffer.type === 'normal' && buffer.viewportY < buffer.baseY
+    }
+    const schedule = () => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        if (pending && canScroll()) screen.scrollLines(pending)
+        pending = 0
+        update()
+      })
+    }
+    const cancel = () => { gesture = null; pending = 0 }
+    const start = event => {
+      cancel()
+      if (event.touches.length !== 1 || !canScroll() || event.target.closest('.scrollbar, textarea, input')) return
+      const touch = event.touches[0]
+      gesture = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, remainder: 0, at: performance.now(), scrolling: false }
+    }
+    const move = event => {
+      if (!gesture || event.touches.length !== 1 || !canScroll()) { cancel(); return }
+      const touch = event.touches[0]
+      if (touch.identifier !== gesture.id) { cancel(); return }
+      if (!gesture.scrolling) {
+        // Leave taps, long-press selection and horizontal/multi-touch gestures to the browser.
+        if (performance.now() - gesture.at > 350) { cancel(); return }
+        const dy = Math.abs(touch.clientY - gesture.y)
+        const dx = Math.abs(touch.clientX - gesture.x)
+        if (dy < 10 && dx < 10) return
+        if (dx >= dy || !event.cancelable) { cancel(); return }
+        gesture.scrolling = true
+        gesture.rowHeight = element.querySelector('.xterm-screen')?.getBoundingClientRect().height / screen.rows
+      }
+      if (!event.cancelable) { cancel(); return }
+      event.preventDefault()
+      const height = gesture.rowHeight
+      if (!height) return
+      const delta = gesture.remainder + gesture.lastY - touch.clientY
+      const lines = Math.trunc(delta / height)
+      gesture.remainder = delta - lines * height
+      gesture.lastY = touch.clientY
+      pending += lines
+      schedule()
+    }
+    const end = () => { gesture = null }
+    element.addEventListener('touchstart', start, { passive: true })
+    element.addEventListener('touchmove', move, { passive: false })
+    element.addEventListener('touchend', end, { passive: true })
+    element.addEventListener('touchcancel', cancel, { passive: true })
+    const listeners = [screen.onScroll(schedule), screen.onWriteParsed(schedule)]
+    update()
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      element.removeEventListener('touchstart', start)
+      element.removeEventListener('touchmove', move)
+      element.removeEventListener('touchend', end)
+      element.removeEventListener('touchcancel', cancel)
+      for (const listener of listeners) listener.dispose()
+    }
+  }
   const paste = text => {
     if (status.value !== 'running') return false
     // Reserve the possible bracketed-paste delimiters before xterm transforms the text.
@@ -267,6 +340,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       fit = new FitAddon()
       screen.loadAddon(fit)
       screen.open(container)
+      historyDispose = attachHistory()
       refreshTheme()
       const rendering = renderEpoch
       fitScreen()
@@ -385,7 +459,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     channel.onmessage = event => { if (event.data?.type === 'logout') logoutEvent() }
   }
   return {
-    status, errorCode, sessionId, finalOutput, open, resize, close, dispose, sendInput, paste, refreshTheme,
+    status, errorCode, sessionId, finalOutput, readingHistory, open, resize, close, dispose, sendInput, paste, refreshTheme, scrollToBottom,
     focus: () => screen?.focus(),
     copySelection: () => screen?.hasSelection()
       ? copyTextToClipboard(screen.getSelection())
