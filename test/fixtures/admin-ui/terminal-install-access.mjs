@@ -105,6 +105,7 @@ try {
     await install(); await ready();
     assert.equal(await toggle().isDisabled(), false);
     await toggle().check(); await ready();
+    assert.equal(await page.locator('[data-credential-notice]').count(),0,'permission opt-in is not rotation');
     assert.ok((await command()).includes(token));
     assert.equal(mutations(), before);
     await toggle().uncheck(); await ready();
@@ -176,6 +177,9 @@ try {
     assert.ok((await command()).includes(token));
     assert.equal((await command()).includes(old),false);
     assert.equal(mutations(),before+1);
+    const notice=page.locator('[data-credential-notice]');
+    assert.equal(await notice.count(),1);assert.equal(await notice.locator('[data-credential-notice-text]').innerText(),en.downloadReissued);
+    assert.doesNotMatch(await notice.innerText(),/[a-f0-9]{64}/);
   });
   await check('lost rotation response rereads current Token instead of keeping retired command', async () => {
     const old=await currentCredential(); lostRotation=true;
@@ -186,6 +190,7 @@ try {
     assert.notEqual(token,old);
     assert.ok((await command()).includes(token));
     assert.equal((await command()).includes(old),false);
+    assert.equal(await page.locator('[data-credential-notice]').count(),0,'lost reply recovery must not announce success');
   });
   await check('background read is cancellable; stale response never enters another node', async () => {
     await page.keyboard.press('Escape');

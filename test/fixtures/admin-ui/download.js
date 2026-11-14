@@ -23,7 +23,7 @@ if (new URLSearchParams(location.search).has('controlled')) {
   const owner = computed(() => { const generation = state.generation; return () => generation === state.generation })
   window.downloadFixture = { state, setLanguage }
   document.body.classList.add('admin-ui-surface')
-  createApp({ render: () => h('div', [h('button', { id: 'outside' }, 'Outside'), h(CopyCommandModal, {
+  const app = createApp({ render: () => h('div', [h('button', { id: 'outside' }, 'Outside'), h(CopyCommandModal, {
     ...state, trans: trans.value, requestOwner: owner.value, currentServerName: state.serverId,
     settings: { terminal_enabled: true },
     installCommand: state.available && state.options.token && (!state.options.selected || state.options.enabled) ? `fixture-command ${state.options.token} terminal=${Number(state.options.enabled)}` : '',
@@ -35,7 +35,9 @@ if (new URLSearchParams(location.search).has('controlled')) {
     'onUpdate:install-gh-proxy': value => { state.installGhProxy = value },
     'onUpdate:install-version': value => { state.installVersion = value },
     'onUpdate:auto-update': value => { state.autoUpdate = value }
-  })]) }).mount('#app')
+  })]) })
+  app.mount('#app')
+  window.downloadFixture.unmount = () => app.unmount()
 } else {
   const router = createRouter({ history: createWebHashHistory(), routes: [{ path: '/admin', component: Admin }] })
   const app = createApp({ render: () => h(RouterView) })

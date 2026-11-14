@@ -52,11 +52,21 @@
         </section>
         <div class="download-option-row">
           <div class="download-option-label">{{ trans.downloadReissueTitle }}<small>{{ trans.downloadReissueHint }}</small></div>
-          <button class="btn" data-terminal-reissue :disabled="!credentialAllowed || terminalBusy || credentialLoading || mutationPending" @click="confirmReissue = true">{{ reissueStatus === 'pending' ? trans.downloadReissuing : trans.downloadReissue }}</button>
+          <button ref="reissueButton" class="btn" data-terminal-reissue :disabled="!credentialAllowed || terminalBusy || credentialLoading || mutationPending" @click="confirmReissue = true">{{ reissueStatus === 'pending' ? trans.downloadReissuing : trans.downloadReissue }}</button>
         </div>
         <p v-if="reissueError" data-credential-error role="alert" class="download-error">{{ trans.downloadReissueFailed }}: {{ trans[reissueError] || reissueError }}</p>
-        <p v-else-if="reissueStatus" data-credential-status role="status" class="download-status">{{ reissueStatus === 'pending' ? trans.downloadReissuing : trans.downloadReissued }}</p>
+        <p v-else-if="reissueStatus === 'pending'" data-credential-status role="status" class="download-status">{{ trans.downloadReissuing }}</p>
       </div>
+      <section :key="noticeGeneration" class="download-credential-feedback" aria-label="Notifications alt+T" tabindex="-1" aria-live="polite" aria-relevant="additions text" aria-atomic="false">
+        <ol ref="noticeList" class="download-credential-toaster" dir="ltr" tabindex="-1" @focusin="noticeFocus" @focusout="noticeBlur">
+          <Transition name="download-notice" :duration="{enter:400,leave:200}">
+            <li v-if="credentialNotice" ref="noticeElement" data-credential-notice class="download-credential-notice" :class="{'is-swiping':noticePointer,'is-swipe-out':noticeSwipeOut}" :style="{'--download-swipe':`${noticeSwipe}px`}" tabindex="0" role="status" @mouseenter="expandCredentialNotice" @mousemove="expandCredentialNotice" @mouseleave="!noticePointer && collapseCredentialNotice()" @pointerdown="startNoticeSwipe" @pointermove="moveNoticeSwipe" @pointerup="endNoticeSwipe" @pointercancel="endNoticeSwipe">
+              <div data-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" height="20" width="20" aria-hidden="true"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" /></svg></div>
+              <div data-content><div data-title data-credential-notice-text>{{ trans.downloadReissued }}</div></div>
+            </li>
+          </Transition>
+        </ol>
+      </section>
     </template>
     <template #footer>
       <button class="btn" @click="$emit('close')">{{ trans.close }}</button>
@@ -105,12 +115,86 @@ const terminalBusy = ref(false)
 const confirmReissue = ref(false)
 const reissueError = ref('')
 const reissueStatus = ref('')
+const credentialNotice = ref(false)
+const noticeGeneration = ref(0)
+const reissueButton = ref(null)
+const noticeElement = ref(null)
+const noticeList = ref(null)
+const noticePointer = ref(null)
+const noticeSwipe = ref(0)
+const noticeSwipeOut = ref(false)
 const mutationPending = ref(false)
 const siteEnabled = ref(false)
 const releaseLoading = ref(false)
 const release = ref({available:false, terminal:false})
 let epoch = 0, credentialSequence = 0
 let mutation = null
+let noticeTimer = null
+let noticeRemaining = 4000, noticeStarted = 0, noticeExpanded = false, noticePreviousFocus = null
+const noticeFocus = event => {
+  if (!event.currentTarget.contains(event.relatedTarget)) noticePreviousFocus = event.relatedTarget
+}
+const noticeBlur = event => {
+  if (event.currentTarget.contains(event.relatedTarget)) return
+  const previous = noticePreviousFocus
+  noticePreviousFocus = null
+  if (previous?.isConnected && event.currentTarget.closest('.admin-dialog')?.contains(previous)) previous.focus({preventScroll:true})
+}
+const clearCredentialNotice = () => {
+  clearTimeout(noticeTimer)
+  noticeTimer = null
+  if (noticeElement.value === document.activeElement || noticeList.value === document.activeElement) reissueButton.value?.focus()
+  noticePreviousFocus = null
+  noticeExpanded = false
+  credentialNotice.value = false
+}
+const pauseCredentialNotice = () => {
+  if (noticeTimer) noticeRemaining -= Date.now() - noticeStarted
+  clearTimeout(noticeTimer)
+  noticeTimer = null
+}
+const resumeCredentialNotice = () => {
+  if (!credentialNotice.value || document.hidden || noticeExpanded || noticePointer.value || noticeTimer) return
+  noticeStarted = Date.now()
+  noticeTimer = setTimeout(clearCredentialNotice, noticeRemaining)
+}
+const expandCredentialNotice = () => { noticeExpanded = true; pauseCredentialNotice() }
+const collapseCredentialNotice = () => { noticeExpanded = false; resumeCredentialNotice() }
+const noticeVisibility = () => document.hidden ? pauseCredentialNotice() : resumeCredentialNotice()
+const noticeHotkey = event => {
+  const list = noticeList.value
+  if (!list || confirmReissue.value || !list.closest('.admin-dialog')?.contains(document.activeElement)) return
+  if (event.altKey && event.code === 'KeyT') { expandCredentialNotice(); list.focus({preventScroll:true}) }
+  if (event.code === 'Escape' && list.contains(document.activeElement)) {
+    // Handle the top-layer toast before the owning dialog's document capture handler.
+    event.preventDefault(); event.stopImmediatePropagation(); collapseCredentialNotice()
+  }
+}
+watch(credentialNotice, visible => {
+  if (visible) { document.addEventListener('visibilitychange', noticeVisibility); window.addEventListener('keydown', noticeHotkey, true) }
+  else { document.removeEventListener('visibilitychange', noticeVisibility); window.removeEventListener('keydown', noticeHotkey, true) }
+}, {flush:'sync'})
+const startNoticeSwipe = event => {
+  if (event.button === 2) return
+  event.currentTarget.setPointerCapture(event.pointerId)
+  noticePointer.value = {x:event.clientX,y:event.clientY,time:Date.now(),axis:''}
+  pauseCredentialNotice()
+}
+const moveNoticeSwipe = event => {
+  const start = noticePointer.value
+  if (!start || window.getSelection()?.toString()) return
+  const x = event.clientX - start.x, y = event.clientY - start.y
+  if (!start.axis && (Math.abs(x) > 1 || Math.abs(y) > 1)) start.axis = Math.abs(x) > Math.abs(y) ? 'x' : 'y'
+  noticeSwipe.value = start.axis === 'y' ? y < 0 ? y : y / (1.5 + Math.abs(y) / 20) : 0
+}
+const endNoticeSwipe = () => {
+  const start = noticePointer.value
+  noticePointer.value = null
+  if (start?.axis === 'y' && noticeSwipe.value < 0 && (-noticeSwipe.value >= 45 || -noticeSwipe.value / (Date.now() - start.time) > .11)) {
+    noticeSwipeOut.value = true
+    clearCredentialNotice()
+  } else { noticeSwipe.value = 0; resumeCredentialNotice() }
+}
 const terminalReason = computed(() => {
   try { getTerminalBase(props.apiIndex) } catch (error) { return props.trans[error.message] || props.trans.terminal_request_failed }
   if (props.targetOs !== 'linux') return props.trans.terminalInstallPlatformUnsupported
@@ -152,6 +236,7 @@ const readCredential = async (waitForMutation = true) => {
 const changeCredential = async reissue => {
   if (terminalBusy.value || mutation || credentialLoading.value || (reissue ? !credentialAllowed.value : !terminalSupported.value)) return
   const current = currentRequest()
+  const previousToken = terminalToken.value
   let finish
   mutation = {serverId:props.serverId, done:new Promise(resolve => { finish = resolve })}
   mutationPending.value = true
@@ -159,14 +244,24 @@ const changeCredential = async reissue => {
   credentialLoading.value = false
   terminalBusy.value = true
   terminalError.value = ''
-  if (reissue) { terminalToken.value = ''; reissueError.value = ''; reissueStatus.value = 'pending' }
+  if (reissue) { clearCredentialNotice(); noticeGeneration.value++; terminalToken.value = ''; reissueError.value = ''; reissueStatus.value = 'pending' }
   try {
     const result = await adminApi(reissue ? {action:'node_reset_token',serverId:props.serverId} : {action:'terminal_enable_install',serverId:props.serverId,terminal:true,acceptRisk:true}, props.apiIndex, current)
     if (!current()) return
     if (result.error) throw new Error(result.error)
+    if (reissue && result.data?.token === previousToken) throw new Error('node_token_reset_required')
     applyCredential(result.data)
     if (!reissue) siteEnabled.value = true
-    else reissueStatus.value = 'success'
+    else {
+      reissueStatus.value = ''
+      noticeRemaining = 4000
+      noticeExpanded = false
+      noticePointer.value = null
+      noticeSwipe.value = 0
+      noticeSwipeOut.value = false
+      credentialNotice.value = true
+      resumeCredentialNotice()
+    }
   } catch (error) {
     if (current()) {
       // Rotation may have succeeded with its reply lost; never retain a retired command.
@@ -184,6 +279,11 @@ const changeCredential = async reissue => {
 const reissueTerminal = () => changeCredential(true)
 const clearTerminal = () => {
   epoch++; credentialSequence++
+  clearCredentialNotice()
+  noticeGeneration.value++
+  noticePointer.value = null
+  document.removeEventListener('visibilitychange', noticeVisibility)
+  window.removeEventListener('keydown', noticeHotkey, true)
   terminalSelected.value = terminalBusy.value = credentialLoading.value = confirmReissue.value = needsRotation.value = false
   permissionEnabled.value = false
   terminalToken.value = terminalError.value = ''

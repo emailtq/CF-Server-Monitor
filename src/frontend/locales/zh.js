@@ -762,7 +762,7 @@ export default {
   downloadReissueTitle: "换发凭证",
   downloadReissue: "换发",
   downloadReissuing: "正在换发…",
-  downloadReissued: "凭证已换发，请用新命令重装。",
+  downloadReissued: "凭证已换发，需用新命令重装",
   downloadReissueFailed: "换发未确认，请检查当前命令后重试",
   downloadReissueHint: "旧 Token 立即停止监控与终端；请使用新命令重装 Agent。",
   downloadReissueConfirm: "重置此节点 Token？监控立即停止，现有 Shell 关闭。请用新命令重装，仅在确有需要时操作。",

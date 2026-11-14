@@ -12,6 +12,7 @@ export async function createServer(options) {
   const evidenceRoots = [evidence, path.join(root, 'docs/superpowers/admin-download-repair-2026-11-11'), path.join(root, 'docs/superpowers/terminal-usability-2026-11-11'), path.join(root, '.planning/2026-11-13-admin-ui-polish/task1'), path.join(root, '.planning/2026-11-13-admin-ui-polish/task2'), path.join(root, '.planning/2026-11-13-admin-ui-polish/task3'), path.join(root, '.planning/2026-11-13-admin-ui-refinement/task1'), path.join(root, '.planning/2026-11-13-admin-ui-refinement/task2'), path.join(root, '.planning/2026-11-13-admin-ui-refinement/task3'), path.join(root, '.planning/2026-11-13-admin-ui-refinement/task4')];
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/nodes'));
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/scrollbars'));
+  evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/credential'));
   assert.ok(evidenceRoots.some(base => {
     const relative = path.relative(base, realOut);
     return relative && !relative.startsWith('..') && !path.isAbsolute(relative);

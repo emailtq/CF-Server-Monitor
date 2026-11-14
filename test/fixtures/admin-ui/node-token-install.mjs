@@ -99,6 +99,7 @@ try {
     assert.match(text,/-terminal=1/);
     assert.equal(report.actions.filter(a=>a.action === 'terminal_enable_install').length,1);
     assert.equal(report.actions.some(a=>a.action === 'terminal_prepare_install'),false);
+    assert.equal(await page.locator('[data-credential-notice]').count(),0,'terminal permission opt-in must not announce rotation');
     await dialog.locator('[data-terminal-install]').uncheck(); await ready();
     assert.ok((await command()).includes(tokens['node-a']));
   });
@@ -142,11 +143,16 @@ try {
       const old=tokens['node-a'];assert.equal(await dialog.locator('[data-terminal-reissue]').isDisabled(),false);
       await dialog.locator('[data-terminal-reissue]').click();await page.locator('[data-confirm-reissue]').click();
       await page.locator('.admin-dialog-download-confirm').waitFor({state:'hidden'});
+      const notice=page.locator('[data-credential-notice]');
+      assert.equal(await notice.count(),1);assert.equal(await notice.locator('[data-credential-notice-text]').innerText(),en.downloadReissued);
+      assert.doesNotMatch(await notice.innerText(),/[a-f0-9]{64}/);
       if(os === 'docker') {assert.equal(await dialog.locator('[data-copy-command]').isDisabled(),true);}
       else {await ready();assert.ok((await command()).includes(tokens['node-a']));assert.ok(!(await command()).includes(old));}
     }
     lostReset=true;const old=tokens['node-a'];await dialog.locator('[data-terminal-reissue]').click();await page.locator('[data-confirm-reissue]').click();await page.locator('.admin-dialog-download-confirm').waitFor({state:'hidden'});await ready();
-    assert.ok((await command()).includes(tokens['node-a']));assert.ok(!(await command()).includes(old));await close();
+    assert.ok((await command()).includes(tokens['node-a']));assert.ok(!(await command()).includes(old));
+    assert.equal(await page.locator('[data-credential-notice]').count(),0,'uncertain reply is not a successful rotation');await close();
+    assert.equal(await page.locator('[data-credential-notice]').count(),0);
   });
   await check('changing OS or language during pending enable always matches the checkbox and token',async()=>{
     enableError='';permissions['node-a']=false;siteTerminal=false;await reload();await install();await ready();
