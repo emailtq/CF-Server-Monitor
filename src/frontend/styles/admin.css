@@ -480,3 +480,53 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 @media (pointer:coarse) {
   .admin-ui .admin-routing-preview summary { min-height:44px; }
 }
+
+/* Exact minimal primitives apply only to the explicitly requested node toolbar. */
+.admin-ui #tab-servers .toolbar {
+  --toolbar-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --toolbar-page: light-dark(oklch(1 0 0), oklch(.129 .042 264.695));
+  --toolbar-input: light-dark(oklch(.929 .013 255.508), oklch(1 0 0 / 15%));
+  --toolbar-fill: light-dark(transparent, color-mix(in oklab, oklch(1 0 0 / 15%) 30%, transparent));
+  --toolbar-popover: light-dark(oklch(1 0 0), oklch(.208 .042 265.755));
+  --toolbar-ring: light-dark(oklch(.704 .04 256.788), oklch(.551 .027 264.364));
+  --toolbar-empty-shadow: 0 0 0 0 transparent;
+  --toolbar-shadow-layer: 0 1px 2px 0 rgb(0 0 0 / .05);
+  --toolbar-shadow: var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-shadow-layer);
+  --toolbar-transition: 150ms cubic-bezier(.4, 0, .2, 1);
+  --input-bg: var(--toolbar-fill);
+  font-family: var(--toolbar-font);
+  font-size: 16px;
+  line-height: 24px;
+}
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .admin-search { height: 36px; background: transparent; }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar :is(.toolbar-input, .toolbar-select) { height: 36px; min-height: 36px; border: 1px solid var(--toolbar-input); border-radius: 8px; background: var(--toolbar-fill); color: var(--cf-text); font-family: var(--toolbar-font); font-weight: 400; box-shadow: var(--toolbar-shadow); transition: color var(--toolbar-transition), box-shadow var(--toolbar-transition); }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .toolbar-input { display: flex; flex: initial; padding: 4px 12px 4px 32px; font-size: 16px; line-height: 24px; appearance: auto; }
+.admin-ui #tab-servers .toolbar .toolbar-input::placeholder { color: var(--cf-muted); opacity: 1; }
+.admin-ui #tab-servers .toolbar .toolbar-input::selection { background: var(--cf-brand-fill); color: var(--cf-on-brand); }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .toolbar-select { flex-shrink: 1; padding: 8px 12px; font-size: 14px; line-height: 20px; }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn { flex-shrink: 0; height: 36px; min-height: 36px; padding: 8px 12px; border: 1px solid var(--toolbar-input); border-radius: 8px; background: light-dark(var(--toolbar-page), var(--toolbar-fill)); color: var(--cf-text); font-family: var(--toolbar-font); font-size: 14px; line-height: 20px; font-weight: 500; box-shadow: var(--toolbar-shadow); transition: all var(--toolbar-transition); }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn:hover { background: light-dark(var(--toolbar-page), var(--toolbar-fill)); transform: none; box-shadow: var(--toolbar-shadow); }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn-primary,
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn-primary:hover { border: 0 solid var(--cf-border); background: var(--cf-brand-fill); color: var(--cf-on-brand); box-shadow: none; }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar :is(.btn, .admin-toolbar-group-trigger) { cursor: default; }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar :is(.btn, .admin-toolbar-group-trigger):disabled { cursor: not-allowed; pointer-events: none; }
+.admin-ui #tab-servers .toolbar :is(.btn, .admin-toolbar-group-trigger, [role=option]) svg { pointer-events: none; }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar :is(.toolbar-input, .toolbar-select, .btn):focus-visible { border-color: var(--toolbar-ring); outline: none; box-shadow: var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), 0 0 0 3px color-mix(in oklab, var(--toolbar-ring) 50%, transparent), var(--toolbar-shadow-layer); }
+.admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn-primary:focus-visible { box-shadow: var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), 0 0 0 3px color-mix(in oklab, var(--toolbar-ring) 50%, transparent), var(--toolbar-empty-shadow); }
+@media (hover: hover) {
+  .admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn:hover { background: light-dark(var(--cf-soft), color-mix(in oklab, oklch(1 0 0 / 15%) 50%, transparent)); }
+  .admin-ui.admin-ui.admin-ui #tab-servers .toolbar .btn-primary:hover { background: color-mix(in oklab, var(--cf-brand-fill) 90%, transparent); }
+  .admin-ui.admin-ui.admin-ui #tab-servers .toolbar .toolbar-select:hover { background: light-dark(transparent, color-mix(in oklab, oklch(1 0 0 / 15%) 50%, transparent)); }
+}
+@media (min-width: 768px) {
+  .admin-ui.admin-ui.admin-ui #tab-servers .toolbar .toolbar-input { font-size: 14px; line-height: 20px; }
+}
+@media (min-width: 640px) {
+  .admin-ui #tab-servers .toolbar .admin-search { flex: none; }
+}
+@media (pointer: coarse) {
+  .admin-ui #tab-servers .toolbar :is(.btn, .admin-toolbar-group-trigger) { position: relative; }
+  .admin-ui #tab-servers .toolbar :is(.btn, .admin-toolbar-group-trigger)::before { content: ''; position: absolute; inset: -4px; }
+  .admin-ui #tab-servers .toolbar .admin-search::after { content: ''; position: absolute; inset: -4px; }
+  .admin-ui #tab-servers .toolbar .admin-search input { position: relative; z-index: 1; }
+}

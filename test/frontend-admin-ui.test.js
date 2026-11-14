@@ -24,13 +24,18 @@ test('admin stylesheet cannot target public UI without an admin boundary', () =>
 });
 test('download stylesheet stays isolated from public UI and other accepted dialogs', () => {
   const css = postcss.parse(fs.readFileSync('src/frontend/styles/admin-download.css', 'utf8'));
-  css.walkRules(rule => {
+  const checkRule = rule => {
+    if (rule.parent.type === 'atrule' && /keyframes/.test(rule.parent.name)) return;
     for (const selector of rule.selectors) {
       assert.match(selector, /\.admin-ui\b/);
       assert.match(selector, /download/);
       assert.doesNotMatch(selector, /admin-dialog-(?:add|edit)|body\.light/);
     }
-  });
+  };
+  css.walkRules(checkRule);
+  for (const selector of ['.download-unscoped', '.admin-ui .unrelated', '.admin-ui .admin-dialog-add .download-copy']) {
+    assert.throws(() => postcss.parse(`${selector} { color: red; }`).walkRules(checkRule), { code: 'ERR_ASSERTION' });
+  }
 });
 test('all existing admin dialog consumers compile after container migration', () => {
   for (const name of ['EditServerModal', 'BatchEditServersModal', 'DeleteServerModal', 'CopyCommandModal', 'AutoDiscoveryCommandModal', 'TerminalAccessModal']) {

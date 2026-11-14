@@ -2,8 +2,8 @@
   <div id="tab-servers" class="tab-content" :class="{ active: activeTab === 'servers' }">
     <div class="toolbar">
       <div class="admin-filter-group">
-        <label class="admin-search"><AdminIcon name="search" /><input v-model="search" type="search" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes" @keydown.enter="!$event.isComposing && $event.preventDefault()"></label>
-        <ToolbarGroupSelect v-model="filterGroup" :groups="groups" :all-label="trans.adminAllGroups" :label="trans.adminFilterGroup" :active="activeTab === 'servers'" />
+        <label class="admin-search"><AdminIcon name="search" /><input v-model="search" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes" @keydown.enter="$event.preventDefault()"></label>
+        <ToolbarGroupSelect :key="selectedApiIndex + ':' + siteGeneration" v-model="filterGroup" :groups="groups" :all-label="trans.adminAllGroups" :label="trans.adminFilterGroup" :active="activeTab === 'servers'" />
       </div>
       <button type="button" @click="$emit('groups')" class="btn"><AdminIcon name="layers" />{{ trans.group }}</button>
       <button type="button" @click="$emit('auto-discovery-cmd')" class="btn"><AdminIcon name="server" />{{ trans.adminBulkAdd }}</button>

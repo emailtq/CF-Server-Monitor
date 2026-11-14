@@ -201,8 +201,8 @@ try {
       assert.equal(await second.getAttribute('title'), full || 'Unknown');
       const a = await first.boundingBox(), b = await second.boundingBox(); assert.ok(b.y >= a.y + a.height - 1);
     }
-    await page.locator('input[type="search"]').fill('24.04.3'); assert.deepEqual(await ids(), ['node-0']);
-    await page.locator('input[type="search"]').fill('');
+    await page.locator('#tab-servers .admin-search input').fill('24.04.3'); assert.deepEqual(await ids(), ['node-0']);
+    await page.locator('#tab-servers .admin-search input').fill('');
     await page.locator('[data-server-id="node-0"] .server-name-link').click();
     await page.getByRole('dialog').waitFor();
     assert.equal(await page.getByRole('dialog').locator('[name="edit_name"]').inputValue(), 'Node 1', 'existing name edit action still opens the right node');
@@ -279,7 +279,7 @@ try {
     await page.keyboard.press('r'); await page.keyboard.press('o');
     assert.equal(await page.getByRole('option', { name: 'Production', exact: true }).evaluate(element => element === document.activeElement), true, 'typeahead keeps matching the composed prefix');
     await page.keyboard.press('Enter');
-    assert.equal(await page.getByRole('listbox').count(), 0); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+    await page.getByRole('listbox').waitFor({ state: 'detached' }); assert.equal(await page.getByRole('listbox').count(), 0); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
     assert.equal(await page.locator('.drag-handle:enabled').count(), 0); assert.ok((await ids()).length > 0);
     await trigger.click(); const selected = page.getByRole('option', { name: 'Production', exact: true });
     assert.equal(await selected.getAttribute('aria-selected'), 'true'); assert.equal(await selected.locator('svg').count(), 1);
@@ -288,14 +288,17 @@ try {
     await page.keyboard.press('p'); assert.equal(await selected.evaluate(element => element === document.activeElement), true, 'repeated letters cycle matching options');
     await page.keyboard.press('End'); await page.keyboard.press('Home');
     assert.equal(await page.getByRole('option', { name: 'All groups', exact: true }).evaluate(element => element === document.activeElement), true);
-    await page.keyboard.press('Escape'); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Escape'); await page.getByRole('listbox').waitFor({ state: 'detached' }); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
     assert.ok((await trigger.innerText()).includes('Production'), 'Escape does not commit keyboard preview');
-    await trigger.click(); await page.locator('input[type="search"]').click(); assert.equal(await page.getByRole('listbox').count(), 0);
-    await trigger.click(); await page.keyboard.press('Tab'); assert.equal(await page.getByRole('listbox').count(), 0);
+    await trigger.click(); await page.waitForTimeout(220); const outside = await page.locator('#tab-servers .admin-search input').boundingBox(); await page.mouse.click(outside.x + 8, outside.y + outside.height / 2); await page.getByRole('listbox').waitFor({ state: 'detached' }); assert.equal(await page.getByRole('listbox').count(), 0);
+    await trigger.click(); await page.keyboard.press('Tab'); await page.waitForTimeout(180); assert.equal(await page.getByRole('listbox').count(), 1);
+    assert.equal(await selected.evaluate(element => element === document.activeElement), true, 'actual Tab traps focus on the current option');
+    await page.keyboard.press('Escape'); await page.getByRole('listbox').waitFor({ state: 'detached' });
     await selectGroup('All groups'); assert.equal(await page.locator('.drag-handle:enabled').count(), 8);
-    const search = page.locator('input[type="search"]'); await search.fill('missing-node'); await search.press('Enter');
+    const search = page.locator('#tab-servers .admin-search input'); await search.fill('missing-node'); await search.press('Enter');
+    assert.equal(await search.evaluate(el => el.type), 'text'); assert.equal(await search.getAttribute('type'), null); assert.equal(await search.getAttribute('inputmode'), null);
     assert.equal(await page.getByRole('dialog').count(), 0); assert.equal(await search.inputValue(), 'missing-node');
-    await search.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })));
+    assert.equal(await search.evaluate(element => { const event = new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }); element.dispatchEvent(event); return event.defaultPrevented; }), true, 'actual NodeSearch prevents Enter, including a composing key, without changing its value');
     assert.equal(await search.inputValue(), 'missing-node');
     await page.locator('.empty-state .btn').click(); assert.equal(await page.locator('.drag-handle:enabled').count(), 8);
     await selectGroup('Production'); await page.evaluate(() => { location.hash = '/admin?apiIndex=1'; }); await waitIds(['other-0', 'other-1', 'other-2']);
@@ -309,13 +312,88 @@ try {
     });
     report.geometry.push({ kind: 'search-reference', ...geometry });
     assert.ok(Math.abs(geometry.glyphLeft - 10) < 1); assert.equal(geometry.glyphWidth, 16); assert.equal(geometry.padding, '32px');
-    assert.equal(geometry.height, 36); assert.equal(geometry.radius, '6px'); assert.equal(geometry.size, '14px');
-    await page.keyboard.press('Tab'); await page.locator('input[type="search"]').focus();
-    assert.equal(await page.locator('input[type="search"]').evaluate(element => element.matches(':focus-visible') && getComputedStyle(element).boxShadow !== 'none'), true);
+    assert.equal(geometry.height, 36); assert.equal(geometry.radius, '8px'); assert.equal(geometry.size, '14px');
+    await page.keyboard.press('Tab'); await page.locator('#tab-servers .admin-search input').focus();
+    assert.equal(await page.locator('#tab-servers .admin-search input').evaluate(element => element.matches(':focus-visible') && getComputedStyle(element).boxShadow !== 'none'), true);
+  });
+  await check('actual scalar trigger typeahead stays closed, Space respects the one-second prefix and mouse release selects once', async () => {
+    await load(); const trigger = page.locator('.admin-toolbar-group-trigger'), menu = page.getByRole('listbox');
+    await trigger.focus(); await page.keyboard.press('p');
+    assert.equal(await menu.count(), 0); assert.ok((await trigger.innerText()).includes('Production'));
+    assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
+    await page.keyboard.press('ArrowDown'); await menu.waitFor(); await page.waitForTimeout(220);
+    await page.keyboard.press('Home'); await page.keyboard.press('p'); await page.keyboard.press(' ');
+    assert.equal(await menu.count(), 1, 'Space extends an active typeahead prefix instead of selecting');
+    await page.keyboard.press('Tab'); await page.waitForTimeout(180); assert.equal(await menu.count(), 1);
+    await page.waitForTimeout(1100); await page.keyboard.press(' '); await menu.waitFor({ state: 'detached' });
+    assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+    await selectGroup('All groups'); await menu.waitFor({ state: 'detached' });
+    const rect = await trigger.boundingBox(); await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2); await page.mouse.down();
+    await menu.waitFor(); await page.waitForTimeout(220);
+    const option = page.getByRole('option', { name: 'Production', exact: true }), box = await option.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.up(); await menu.waitFor({ state: 'detached' });
+    assert.ok((await trigger.innerText()).includes('Production')); assert.equal(saves.length, 0, 'group selection never writes order');
+  });
+  await check('actual scroll-button menu retains viewport identity, last-option focus and lifecycle cleanup across site changes', async () => {
+    await load({ count: 50, uniqueGroups: true }); const trigger = page.locator('.admin-toolbar-group-trigger'); await trigger.click(); await page.waitForTimeout(220);
+    const menu = page.getByRole('listbox'), port = menu.locator('.admin-toolbar-group-viewport');
+    await port.evaluate(el => { window.toolbarViewport = el; });
+    await page.keyboard.press('End'); await page.waitForTimeout(60);
+    assert.equal(await menu.getByRole('option', { name: 'Group 49', exact: true }).evaluate(el => el === document.activeElement), true);
+    assert.equal(await port.evaluate(el => el === window.toolbarViewport && el.isConnected), true, 'scroll arrows do not move or replace the focused viewport');
+    await page.keyboard.press('Home'); await page.waitForTimeout(60);
+    const before = await port.evaluate(el => el.scrollTop); await menu.locator('.admin-toolbar-group-scroll').last().hover(); await page.waitForTimeout(120); await page.mouse.move(1, 1);
+    assert.ok(await port.evaluate(el => el.scrollTop) > before, 'the visible down arrow really scrolls options');
+    const geometry = await menu.evaluate(el => ({ width: el.offsetWidth, height: el.offsetHeight })); report.geometry.push({ kind: 'toolbar-actual-scroll-menu', ...geometry });
+    assert.equal(geometry.width, 130); assert.ok(geometry.height > 240, 'available viewport, not an invented 240px cap, bounds a long ordinary menu');
+    await page.evaluate(() => { location.hash = '/admin?apiIndex=1'; }); await waitIds(['other-0', 'other-1', 'other-2']); await menu.waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.drag-handle:enabled').count(), 3); assert.equal(saves.length, 0);
+    assert.equal(await page.evaluate(() => document.body.style.pointerEvents), '', 'site replacement releases the select modal ownership');
+  });
+  await check('listbox root arrow boundaries and conditional mouse-item leave match actual select without clearing keyboard or touch focus', async () => {
+    await load({ count: 50, uniqueGroups: true }); await page.locator('.admin-toolbar-group-trigger').click(); await page.waitForTimeout(220);
+    const menu = page.getByRole('listbox'), first = menu.getByRole('option', { name: 'All groups', exact: true }), last = menu.getByRole('option', { name: 'Group 49', exact: true });
+    await menu.locator('.admin-toolbar-group-scroll').last().hover(); await page.waitForTimeout(65); await page.mouse.move(1, 1);
+    assert.equal(await menu.evaluate(el => el === document.activeElement), true);
+    await page.keyboard.press('ArrowUp'); assert.equal(await last.evaluate(el => el === document.activeElement), true, 'root ArrowUp chooses CF last, not a fabricated reference option');
+    await page.keyboard.press('ArrowDown'); assert.equal(await last.evaluate(el => el === document.activeElement), true, 'last ArrowDown stays last');
+    await page.keyboard.press('Home'); await page.keyboard.press('ArrowUp'); assert.equal(await first.evaluate(el => el === document.activeElement), true, 'first ArrowUp stays first');
+    await menu.evaluate(el => el.focus({ preventScroll: true })); await page.keyboard.press('ArrowDown'); assert.equal(await first.evaluate(el => el === document.activeElement), true, 'root ArrowDown chooses first');
+    const option = menu.getByRole('option', { name: 'Group 03', exact: true }); await option.hover(); const box = await menu.boundingBox();
+    await page.mouse.move(box.x + 2, box.y + 2); assert.equal(await menu.evaluate(el => el === document.activeElement), true, 'mouse leaves hovered item to padding with no stuck highlight');
+    await option.hover(); await page.keyboard.press('Home'); await page.mouse.move(box.x + 2, box.y + 2);
+    assert.equal(await first.evaluate(el => el === document.activeElement), true, 'leaving a non-focused hovered item preserves keyboard first');
+    assert.equal(await first.evaluate(el => { el.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'touch' })); return el === document.activeElement; }), true, 'touch leave behavior is unchanged');
+    await page.keyboard.press('End'); assert.equal(await last.evaluate(el => el === document.activeElement), true); await page.keyboard.press('Escape'); await menu.waitFor({ state: 'detached' });
+    assert.equal(saves.length, 0); assert.equal(await page.evaluate(() => document.body.style.pointerEvents), '');
+  });
+  await check('actual select modal blocks outside wheel/actions through leave, restores ownership and does not fight CF dialog focus', async () => {
+    await load({ count: 50, uniqueGroups: true }); const trigger = page.locator('.admin-toolbar-group-trigger'), menu = page.getByRole('listbox'), group = page.locator('#tab-servers .toolbar > button').first();
+    await trigger.click(); await page.waitForTimeout(220);
+    assert.equal(await page.evaluate(() => document.body.style.pointerEvents), 'none');
+    assert.equal(await page.locator('.table-wrapper').getAttribute('aria-hidden'), 'true', 'background metadata is hidden only from modal accessibility browsing, not removed');
+    const before = await page.evaluate(() => scrollY); await page.mouse.move(2, 850); await page.mouse.wheel(0, 200); await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => scrollY), before); assert.equal(await menu.count(), 1);
+    const box = await group.boundingBox(); await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    assert.equal(await page.getByRole('dialog').count(), 0, 'first outside pointer only dismisses the modal select');
+    assert.equal(await page.evaluate(() => document.body.style.pointerEvents), 'none', 'pointer shielding stays owned through the actual leave');
+    await page.waitForTimeout(50); await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    assert.equal(await page.getByRole('dialog').count(), 0, 'another pointer during leave cannot open a competing dialog');
+    await menu.waitFor({ state: 'detached' }); assert.equal(await page.evaluate(() => document.body.style.pointerEvents), '');
+    assert.equal(await page.locator('.table-wrapper').getAttribute('aria-hidden'), null, 'accepted metadata accessibility is restored when the select closes');
+    assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+    await group.click(); const dialog = page.getByRole('dialog'); await dialog.waitFor();
+    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true); await page.keyboard.press('Tab');
+    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true); await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+    await trigger.click(); await page.waitForTimeout(220); await group.evaluate(el => el.click()); await dialog.waitFor(); await menu.waitFor({ state: 'detached' });
+    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'programmatic CF dialog opening takes focus ownership rather than competing traps');
+    assert.equal(await page.evaluate(() => document.body.style.pointerEvents), ''); await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+    await trigger.click(); await page.waitForTimeout(220); await page.evaluate(() => window.dispatchEvent(new Event('blur'))); await menu.waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => document.body.style.pointerEvents), ''); assert.equal(saves.length, 0);
   });
   await check('renaming or deleting the last node of the selected group resets stale filtering without erasing search', async () => {
     for (const outcome of ['rename', 'delete']) {
-      await load(); const group = makeNodes()[5].server_group, search = page.locator('input[type="search"]');
+      await load(); const group = makeNodes()[5].server_group, search = page.locator('#tab-servers .admin-search input');
       await search.fill('Node 6'); await selectGroup(group); assert.deepEqual(await ids(), ['node-5']);
       const row = page.locator('[data-server-id="node-5"]');
       await row.locator(outcome === 'rename' ? '.action-btns [data-reference-icon="pencil"]' : '.btn-red').click();
@@ -330,7 +408,7 @@ try {
       await page.locator('.admin-toolbar-group-trigger').click();
       assert.equal(await page.getByRole('option', { name: group, exact: true }).count(), 0);
       if (outcome === 'rename') assert.equal(await page.getByRole('option', { name: 'Renamed group', exact: true }).count(), 1);
-      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape'); await page.getByRole('listbox').waitFor({ state: 'detached' });
     }
   });
   await check('real keyed row overlaps before half-short-row threshold, then displaces without boundary jitter in all height/direction pairs', async () => {
@@ -648,8 +726,8 @@ try {
     assert.equal(await handle.evaluate(element => element === document.activeElement), true);
     assert.equal(await page.locator('tbody').evaluate(body => [...body.rows].flatMap(row => row.getAnimations()).length), 0);
     await page.keyboard.press('ArrowUp'); await page.waitForTimeout(100); assert.deepEqual((await ids()).slice(0, 2), ['node-0', 'node-1']); assert.equal(saves.length, 2);
-    await page.locator('input[type="search"]').fill('Node 1'); assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
-    await page.locator('input[type="search"]').fill(''); await selectGroup('Production'); assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
+    await page.locator('#tab-servers .admin-search input').fill('Node 1'); assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
+    await page.locator('#tab-servers .admin-search input').fill(''); await selectGroup('Production'); assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
   });
   await check('nested scroll container edge scrolls without scrolling the whole page and unmount releases capture', async () => {
     await load({ count: 50 });
@@ -664,7 +742,7 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-server-reordering')), false);
   });
   await terminalReturnChecks(false);
-  await check('reference font/row/buttons and 1440/320/360/390 light/dark zh/en/ja table overflow matrix', async () => {
+  await check('preserved table/font/row/buttons with exact toolbar in 1440/320/360/390 light/dark zh/en/ja overflow matrix', async () => {
     for (const width of [1440, 320, 360, 390]) for (const locale of ['zh', 'en', 'ja']) for (const dark of [false, true]) {
       if (width === 320 && locale === 'zh' && !dark) {
         await page.close();
@@ -681,7 +759,8 @@ try {
       report.geometry.push({ width, locale, dark, ...geometry });
       assert.ok(geometry.page <= geometry.viewport, JSON.stringify(geometry));
       assert.equal(geometry.size, '14px'); assert.equal(geometry.priceSize, '14px'); assert.equal(geometry.headSize, '14px'); assert.equal(geometry.line, '20px'); assert.equal(geometry.headWeight, '500'); assert.equal(geometry.nameWeight, '500');
-      assert.equal(geometry.toolbarFont, geometry.font); assert.equal(geometry.toolbarLine, '20px');
+      assert.equal(geometry.font, 'ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"', 'previously accepted table font remains unchanged');
+      assert.equal(geometry.toolbarFont, '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"'); assert.equal(geometry.toolbarLine, '20px');
       assert.ok(geometry.nameWidth >= 96, 'flag/OS assets must not squeeze the name below the reference 6rem slot');
       const metadata = await page.locator('[data-server-id="node-5"] .admin-node-metadata').evaluate(element => ({ width: element.getBoundingClientRect().width, scroll: element.scrollWidth, text: element.innerText, nameSize: getComputedStyle(element.parentElement.querySelector('.server-name-link')).fontSize }));
       assert.ok(metadata.scroll <= metadata.width + 1, 'long group wraps inside node metadata, not by shrinking the name'); assert.equal(metadata.nameSize, '14px'); assert.ok(metadata.text.includes('long-unbroken-group-name'));
@@ -694,11 +773,12 @@ try {
       assert.equal(geometry.coarse, width < 640);
       const toolbar = await page.locator('#tab-servers .toolbar').evaluate(element => {
         const input = element.querySelector('input'), trigger = element.querySelector('.admin-toolbar-group-trigger'), filter = element.querySelector('.admin-filter-group').getBoundingClientRect(), buttons = [...element.querySelectorAll(':scope > .btn')];
-        return { inputSize: getComputedStyle(input).fontSize, inputWidth: input.getBoundingClientRect().width, triggerWidth: trigger.getBoundingClientRect().width, heights: [input, trigger, ...buttons].map(control => control.getBoundingClientRect().height), filterBottom: filter.bottom, actionsTop: buttons[0].getBoundingClientRect().top, right: buttons.at(-1).getBoundingClientRect().right, edge: element.getBoundingClientRect().right };
+        return { inputSize: getComputedStyle(input).fontSize, inputWidth: input.getBoundingClientRect().width, triggerWidth: trigger.getBoundingClientRect().width, heights: [input, trigger, ...buttons].map(control => control.getBoundingClientRect().height), actionRows: new Set(buttons.map(control => Math.round(control.getBoundingClientRect().top))).size, filterBottom: filter.bottom, actionsTop: buttons[0].getBoundingClientRect().top, right: buttons.at(-1).getBoundingClientRect().right, edge: element.getBoundingClientRect().right };
       });
       report.geometry.push({ kind: 'toolbar-matrix', width, locale, dark, ...toolbar });
       assert.equal(toolbar.inputSize, width < 768 ? '16px' : '14px'); assert.ok(toolbar.inputWidth >= 100); assert.equal(toolbar.triggerWidth, 128);
-      assert.ok(toolbar.heights.every(height => height === buttonSize)); assert.ok(Math.abs(toolbar.right - toolbar.edge) < 1);
+      assert.ok(toolbar.heights.every(height => height === 36)); assert.ok(Math.abs(toolbar.right - toolbar.edge) < 1);
+      if (locale === 'zh' && [360, 390].includes(width)) assert.equal(toolbar.actionRows, 1, 'accepted Chinese phone actions remain a single natural row');
       if (width < 640) assert.ok(toolbar.actionsTop >= toolbar.filterBottom + 8, 'small-screen actions follow the full-width filter row');
       await page.locator('.admin-toolbar-group-trigger').click();
       const menu = page.getByRole('listbox'), popup = await menu.evaluate(element => {
@@ -708,7 +788,7 @@ try {
       report.geometry.push({ kind: 'popup-matrix', width, locale, dark, ...popup });
       assert.ok(popup.left >= 8 && popup.right <= width - 8); assert.ok(popup.top >= 8 && popup.bottom <= 892); assert.equal(popup.hit, true);
       const popupScreenshot = path.join(out, `group-${width}-${locale}-${dark ? 'dark' : 'light'}.png`); await page.screenshot({ path: popupScreenshot }); report.screenshots.push(popupScreenshot);
-      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape'); await menu.waitFor({ state: 'detached' });
       if (width < 640) {
         assert.ok(geometry.scroll > geometry.wrapper);
         await page.locator('.table-wrapper').evaluate(element => { element.scrollLeft = element.scrollWidth; });
@@ -761,15 +841,16 @@ try {
   await check('coarse group menu scrolls long options within a 300px keyboard viewport, selects by touch and closes when its trigger scrolls away', async () => {
     await load({ count: 50, width: 320 }); await page.setViewportSize({ width: 320, height: 300 });
     const trigger = page.locator('.admin-toolbar-group-trigger'); await trigger.tap();
-    const menu = page.getByRole('listbox'); await page.keyboard.press('End');
-    const bounds = await menu.evaluate(element => { const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, scroll: element.scrollHeight, height: element.clientHeight, offset: element.scrollTop }; });
+    const menu = page.getByRole('listbox'); await page.waitForTimeout(220); await page.keyboard.press('End');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const bounds = await menu.evaluate(element => { const rect = element.getBoundingClientRect(), port = element.querySelector('.admin-toolbar-group-viewport'); return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, scroll: port.scrollHeight, height: port.clientHeight, offset: port.scrollTop }; });
     report.geometry.push({ kind: 'keyboard-300-group', ...bounds });
-    assert.ok(bounds.top >= 8 && bounds.bottom <= 292); assert.ok(bounds.left >= 8 && bounds.right <= 312); assert.ok(bounds.scroll > bounds.height && bounds.offset > 0);
+    assert.ok(bounds.top >= 6 && bounds.bottom <= 294); assert.ok(bounds.left >= 10 && bounds.right <= 310); assert.ok(bounds.scroll > bounds.height && bounds.offset > 0);
     const long = page.getByRole('option', { name: makeNodes()[5].server_group, exact: true });
     assert.equal(await long.evaluate(element => element === document.activeElement), true);
     assert.equal(await long.evaluate(element => { const a = element.getBoundingClientRect(), b = element.parentElement.getBoundingClientRect(); return a.top >= b.top && a.bottom <= b.bottom; }), true, 'the entire highlighted wrapped label scrolls into the popup');
     const screenshot = path.join(out, 'group-keyboard-300.png'); await page.screenshot({ path: screenshot }); report.screenshots.push(screenshot);
-    await long.tap(); assert.equal(await page.getByRole('listbox').count(), 0); assert.ok((await trigger.innerText()).includes('Production-team'));
+    await long.tap(); await page.getByRole('listbox').waitFor({ state: 'detached' }); assert.equal(await page.getByRole('listbox').count(), 0); assert.ok((await trigger.innerText()).includes('Production-team'));
     assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
     await trigger.tap(); await page.evaluate(() => window.scrollTo(0, 500));
     await page.waitForFunction(() => !document.querySelector('[role=listbox]'));
@@ -830,12 +911,14 @@ try {
     if (await table.evaluate(el => el.scrollWidth > el.clientWidth)) await nativeScrollbar(table, 'x', `table-${name}`);
     await page.evaluate(() => window.scrollTo(0, 0));
     const trigger = page.locator('.admin-toolbar-group-trigger'); await trigger.click();
-    const popup = page.getByRole('listbox'); await nativeScrollbar(popup, 'y', `group-${name}`);
+    const popup = page.getByRole('listbox'), port = popup.locator('.admin-toolbar-group-viewport'); await page.waitForTimeout(220);
+    assert.equal(await port.evaluate(el => getComputedStyle(el, '::-webkit-scrollbar').display), 'none', 'actual SelectViewport hides native paint and uses its visible scroll buttons');
+    assert.ok(await popup.locator('.admin-toolbar-group-scroll').evaluateAll(elements => elements.some(el => el.offsetHeight > 0)), 'overflowing options retain an actual scroll affordance');
     await page.keyboard.press('End');
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await popup.locator('button').last().evaluate(el => el === document.activeElement), true);
-    assert.equal(await popup.evaluate(el => el.offsetWidth), 200, 'accepted popup width is unchanged');
-    const endpoint = await popup.evaluate(el => {
+    assert.equal(await popup.evaluate(el => el.offsetWidth), 130, 'actual ordinary popup is trigger128 plus viewport borders');
+    const endpoint = await port.evaluate(el => {
       const last = el.lastElementChild.getBoundingClientRect(), r = el.getBoundingClientRect();
       return { scrollTop: el.scrollTop, gap: el.scrollHeight - el.clientHeight - el.scrollTop, paddingBottom: parseFloat(getComputedStyle(el).paddingBottom), lastTop: last.top, lastBottom: last.bottom, clientTop: r.top + el.clientTop, clientBottom: r.top + el.clientTop + el.clientHeight };
     });
@@ -843,7 +926,7 @@ try {
     // scrollIntoView reaches the last option, not the trailing menu padding.
     assert.ok(endpoint.lastTop >= endpoint.clientTop - 1 && endpoint.lastBottom <= endpoint.clientBottom + 1, `complete last option is visible: ${JSON.stringify(endpoint)}`);
     assert.ok(endpoint.gap - endpoint.paddingBottom <= 1 && endpoint.lastBottom >= endpoint.clientBottom - endpoint.paddingBottom - 1, `End reaches the content endpoint: ${JSON.stringify(endpoint)}`);
-    await page.keyboard.press('Escape'); assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+    await page.keyboard.press('Escape'); await popup.waitFor({ state: 'detached' }); assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
     assert.equal(saves.length, 0, 'scrolling never writes node order');
     const shot = path.join(out, `scrollbars-page-${name}.png`); await page.screenshot({ path: shot }); report.screenshots.push(shot);
   });
