@@ -2,21 +2,21 @@
   <div id="tab-servers" class="tab-content" :class="{ active: activeTab === 'servers' }">
     <div class="toolbar">
       <div class="admin-filter-group">
-        <label class="admin-search"><input v-model="search" type="search" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes"><AdminIcon name="search" /></label>
-        <select v-model="filterGroup" class="toolbar-select" :aria-label="trans.adminFilterGroup"><option value="">{{ trans.adminAllGroups }}</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select>
+        <label class="admin-search"><AdminIcon name="search" /><input v-model="search" type="search" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes" @keydown.enter="!$event.isComposing && $event.preventDefault()"></label>
+        <ToolbarGroupSelect v-model="filterGroup" :groups="groups" :all-label="trans.adminAllGroups" :label="trans.adminFilterGroup" :active="activeTab === 'servers'" />
       </div>
-      <button @click="$emit('groups')" class="btn"><AdminIcon name="layers" />{{ trans.group }}</button>
-      <button @click="$emit('auto-discovery-cmd')" class="btn"><AdminIcon name="server" />{{ trans.adminBulkAdd }}</button>
-      <button @click="$emit('add-server')" class="btn btn-primary"><AdminIcon name="plus" />{{ trans.adminAddNode }}</button>
+      <button type="button" @click="$emit('groups')" class="btn"><AdminIcon name="layers" />{{ trans.group }}</button>
+      <button type="button" @click="$emit('auto-discovery-cmd')" class="btn"><AdminIcon name="server" />{{ trans.adminBulkAdd }}</button>
+      <button type="button" @click="$emit('add-server')" class="btn btn-primary"><AdminIcon name="plus" />{{ trans.adminAddNode }}</button>
     </div>
     <div class="table-wrapper" :aria-label="trans.adminNodes" tabindex="0">
       <table class="terminal-table admin-node-table">
         <thead><tr><th class="admin-col-name">{{ trans.adminNodeName }}</th><th class="admin-col-ip">IP</th><th>{{ trans.status }}</th><th>{{ trans.traffic }}</th><th>{{ trans.price }}<span class="admin-expiry-inline"> / {{ trans.adminExpiry }}</span></th><th class="admin-expiry-column">{{ trans.adminExpiry }}</th><th class="admin-col-actions">{{ trans.actions }}</th></tr></thead>
         <tbody ref="body" @lostpointercapture="cancel">
           <tr v-if="filteredServers.length === 0"><td colspan="7" class="empty-state">{{ trans.noServers }}<button v-if="sortingDisabled" class="btn" @click="search = ''; filterGroup = ''">{{ trans.clear }}</button></td></tr>
-          <tr v-for="server in filteredServers" :key="server.id" class="server-row" :data-server-id="server.id" :data-reordering="dragging === String(server.id) ? '' : undefined">
+          <tr v-for="server in filteredServers" :key="server.id" class="server-row" :data-server-id="server.id" :data-lifted="lifted === String(server.id) ? '' : undefined" :data-reordering="dragging === String(server.id) ? '' : undefined">
             <td><div class="admin-node-name">
-              <button type="button" class="drag-handle" :disabled="sortingDisabled" :aria-label="trans.dragSort + ': ' + server.name" :title="trans.dragSort" draggable="false" @pointerdown="handlePointerDown($event, server.id)" @keydown="handleKeyDown($event, server.id)"><AdminIcon name="grip-vertical" /></button>
+              <button type="button" class="drag-handle" :disabled="sortingDisabled" :aria-label="trans.dragSort + ': ' + server.name" :title="trans.dragSort" draggable="false" @pointerdown="handlePointerDown($event, server.id)" @keydown="handleKeyDown($event, server.id)" @blur="$event.currentTarget.removeAttribute('data-pointer-focus')"><AdminIcon name="grip-vertical" /></button>
               <div><div class="server-info"><img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(String(server.region || 'xx').trim().replace(/^UK$/i, 'GB')) + '.svg')" :alt="server.region || 'xx'" class="flag-img"><button class="server-name-link" :title="server.name" @click="$emit('edit', server)">{{ server.name }}<template v-if="getAdminCountryCode(server.region)">&#8199;<span class="admin-country-code">{{ getAdminCountryCode(server.region) }}</span></template></button></div><div class="server-secondary admin-node-metadata" :title="server.os || getOSName(server.os)"><span class="admin-node-os"><OsIcon :os="server.os" /><span>{{ formatAdminOS(server.os) }}</span></span><span class="admin-node-group">{{ server.server_group || trans.default }}</span></div></div>
             </div></td>
             <td><div v-if="getServerIpRows(server).length" class="server-ip-list"><button v-for="ip in getServerIpRows(server)" :key="ip.copyField" class="admin-copy-value" :class="{ 'spec-copied': isSpecCopied(server, ip.copyField) }" :aria-label="trans.copy + ': ' + ip.address" @click="emitCopySpec(server, ip.copyField, ip.address)">{{ ip.address }}</button></div><span v-else>-</span></td>
@@ -50,6 +50,7 @@ import OsIcon from '../../../components/OsIcon.vue'
 import { getOSName } from '../../../utils/osIcon.js'
 import { formatAdminOS, getAdminCountryCode } from './serverMetadata.js'
 import AdminIcon from './AdminIcon.vue'
+import ToolbarGroupSelect from './ToolbarGroupSelect.vue'
 import { useServerReorder } from '../composables/useServerReorder.js'
 
 const props = defineProps({
@@ -93,12 +94,13 @@ const terminalReason = server => {
 const search = ref('')
 const filterGroup = ref('')
 const sortingDisabled = computed(() => !!search.value.trim() || !!filterGroup.value)
-const { body, orderedServers, dragging, handlePointerDown, handleKeyDown, cancel } = useServerReorder(props, sortingDisabled, emit)
+const { body, orderedServers, dragging, lifted, handlePointerDown, handleKeyDown, cancel } = useServerReorder(props, sortingDisabled, emit)
 const filteredServers = computed(() => {
   const term = search.value.trim().toLocaleLowerCase()
   return orderedServers.value.filter(server => (!filterGroup.value || (server.server_group || props.trans.default) === filterGroup.value) && (!term || [server.name, server.ip_v4, server.ip_v6, server.region, server.server_group, server.os].some(value => String(value || '').toLocaleLowerCase().includes(term))))
 })
-watch(() => props.selectedApiIndex, () => { search.value = ''; filterGroup.value = '' })
+watch([() => props.selectedApiIndex, () => props.siteGeneration], () => { search.value = ''; filterGroup.value = '' })
+watch(() => props.groups, groups => { if (filterGroup.value && !groups.includes(filterGroup.value)) filterGroup.value = '' })
 
 const getSpecCopyKey = (server, field) => `${server.id}:${field}`
 const isSpecCopied = (server, field) => props.copiedSpecKey === getSpecCopyKey(server, field)

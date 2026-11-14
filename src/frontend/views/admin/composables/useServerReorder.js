@@ -4,6 +4,7 @@ export function useServerReorder(props, sortingDisabled, emit) {
   const body = ref(null)
   const manualOrder = ref([])
   const dragging = ref(null)
+  const lifted = ref(null)
   const orderedServers = computed(() => {
     const byId = new Map(props.servers.map(server => [String(server.id), server]))
     const chosen = new Set(manualOrder.value)
@@ -11,6 +12,14 @@ export function useServerReorder(props, sortingDisabled, emit) {
   })
   const ids = () => orderedServers.value.map(server => String(server.id))
   let pointer = null, frame = 0, moving = false, slideRevision = 0, alive = true
+  const settling = new Map()
+  const clearSettling = row => {
+    for (const candidate of row ? [row] : settling.keys()) {
+      candidate.removeAttribute('data-settling')
+      settling.delete(candidate)
+    }
+  }
+  const cancelSlides = () => body.value?.querySelectorAll('tr').forEach(row => row.getAnimations().forEach(animation => { if (animation.id === 'server-slide') animation.cancel() }))
 
   const positions = () => new Map([...(body.value?.rows || [])].map(row => [row, row.getBoundingClientRect().top]))
   const track = () => {
@@ -19,21 +28,31 @@ export function useServerReorder(props, sortingDisabled, emit) {
     const top = row.offsetParent.getBoundingClientRect().top + row.offsetTop
     row.style.transform = `translateY(${pointer.y - pointer.grab - top}px)`
   }
-  const slide = (next, before = positions()) => {
-    const rows = [...(body.value?.rows || [])]
-    rows.forEach(row => row.getAnimations().forEach(animation => { if (animation.id === 'server-slide') animation.cancel() }))
+  const slide = (next, before = positions(), landingRow) => {
     const revision = ++slideRevision
+    for (const row of settling.keys()) settling.set(row, revision)
+    if (landingRow) {
+      settling.set(landingRow, revision)
+      landingRow.setAttribute('data-settling', '')
+    }
+    cancelSlides()
     manualOrder.value = next
     moving = true
     nextTick(() => {
       if (!alive || revision !== slideRevision) return
       moving = false
       track()
-      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) { clearSettling(); return }
       for (const [row, top] of before) {
         if (row === pointer?.row) continue
         const dy = top - row.getBoundingClientRect().top
         if (dy && row.isConnected) row.animate({ transform: [`translateY(${dy}px)`, 'none'] }, { id: 'server-slide', duration: 150, easing: 'ease-out' })
+      }
+      // Capture release/save is immediate; only the real landing's paint waits for its animations.
+      for (const [row, owner] of settling) {
+        Promise.allSettled(row.getAnimations().map(animation => animation.finished)).then(() => {
+          if (settling.get(row) === owner) clearSettling(row)
+        })
       }
     })
   }
@@ -77,6 +96,7 @@ export function useServerReorder(props, sortingDisabled, emit) {
     pointer = null
     if (previous) previous.row.style.transform = ''
     dragging.value = null
+    lifted.value = null
     cancelAnimationFrame(frame)
     document.documentElement.removeAttribute('data-server-reordering')
     document.removeEventListener('pointermove', onPointer)
@@ -89,16 +109,16 @@ export function useServerReorder(props, sortingDisabled, emit) {
     }
   }
   const cancel = () => {
-    const before = pointer?.before, refreshed = pointer?.refreshed
+    const before = pointer?.before, refreshed = pointer?.refreshed, row = pointer?.row
     const drawn = positions()
     cleanup()
-    if (before) slide(refreshed ? [] : before, drawn)
+    if (before) slide(refreshed ? [] : before, drawn, row)
   }
   const finish = () => {
-    const before = pointer.before, refreshed = pointer.refreshed, next = ids()
+    const before = pointer.before, refreshed = pointer.refreshed, next = ids(), row = pointer.row
     const drawn = positions()
     cleanup()
-    slide(refreshed && next.join() === before.join() ? [] : next, drawn)
+    slide(refreshed && next.join() === before.join() ? [] : next, drawn, row)
     if (next.join() !== before.join()) emit('reorder', next)
   }
   const onKey = event => { if (event.key === 'Escape') cancel() }
@@ -142,6 +162,8 @@ export function useServerReorder(props, sortingDisabled, emit) {
     const rows = event.currentTarget.closest('tbody')
     if (!rows) return
     event.preventDefault()
+    // Programmatic pointer focus can inherit keyboard focus-visible; keep focus without its local frame.
+    event.currentTarget.setAttribute('data-pointer-focus', '')
     event.currentTarget.focus({ preventScroll: true })
     body.value = rows
     let scroller = rows.parentElement
@@ -151,8 +173,10 @@ export function useServerReorder(props, sortingDisabled, emit) {
     const before = ids()
     manualOrder.value = before
     const row = event.currentTarget.closest('tr')
+    clearSettling(row)
     row.getAnimations().forEach(animation => { if (animation.id === 'server-slide') animation.cancel() })
     pointer = { pointerId: event.pointerId, id: String(serverId), row, grab: event.clientY - row.getBoundingClientRect().top, x: event.clientX, y: event.clientY, x0: event.clientX, y0: event.clientY, active: false, before, refreshed: false, scroller, last: 0, swap: null }
+    lifted.value = pointer.id
     document.addEventListener('pointermove', onPointer, { passive: false })
     document.addEventListener('pointerup', onPointer)
     document.addEventListener('pointercancel', onPointer)
@@ -160,6 +184,7 @@ export function useServerReorder(props, sortingDisabled, emit) {
     window.addEventListener('blur', cancel)
   }
   const handleKeyDown = (event, serverId) => {
+    event.currentTarget.removeAttribute('data-pointer-focus')
     const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
     if (!delta || sortingDisabled.value || pointer) return
     event.preventDefault()
@@ -171,6 +196,14 @@ export function useServerReorder(props, sortingDisabled, emit) {
       nextTick(() => { if (alive) handle.focus({ preventScroll: true }) })
     }
   }
+  const reset = () => {
+    cleanup()
+    clearSettling()
+    ++slideRevision
+    moving = false
+    cancelSlides()
+    manualOrder.value = []
+  }
   watch(() => props.servers, () => {
     const currentIds = new Set(props.servers.map(server => String(server.id)))
     if (pointer && currentIds.size === pointer.before.length && pointer.before.every(id => currentIds.has(id))) {
@@ -178,17 +211,15 @@ export function useServerReorder(props, sortingDisabled, emit) {
       pointer.refreshed = true
       return
     }
-    cancel()
-    manualOrder.value = []
+    if (!pointer && [...settling.keys()].every(row => currentIds.has(row.dataset.serverId))) manualOrder.value = []
+    else reset()
   })
-  watch([() => props.selectedApiIndex, () => props.siteGeneration, () => props.activeTab, sortingDisabled], () => {
-    cancel()
-    manualOrder.value = []
-  }, { flush: 'sync' })
+  watch([() => props.selectedApiIndex, () => props.siteGeneration, () => props.activeTab, sortingDisabled], reset, { flush: 'sync' })
   onBeforeUnmount(() => {
     alive = false
     cleanup()
-    body.value?.querySelectorAll('tr').forEach(row => row.getAnimations().forEach(animation => { if (animation.id === 'server-slide') animation.cancel() }))
+    clearSettling()
+    cancelSlides()
   })
-  return { body, orderedServers, dragging, handlePointerDown, handleKeyDown, cancel }
+  return { body, orderedServers, dragging, lifted, handlePointerDown, handleKeyDown, cancel }
 }

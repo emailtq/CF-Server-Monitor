@@ -7,6 +7,7 @@ import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const { PNG } = createRequire(import.meta.url)(process.env.ADMIN_UI_PNGJS || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/pngjs');
 const out = path.resolve(process.env.ADMIN_REORDER_REPORT_DIR || `.planning/2026-11-13-admin-ui-refinement/task1/run-${Date.now()}`);
 fs.mkdirSync(out, { recursive: true });
 const report = { node: process.version, checks: [], errors: [], screenshots: [], saves: [], geometry: [], timeline: [] };
@@ -21,6 +22,10 @@ let nodes = makeNodes(), otherNodes = makeNodes(3, 'other'), saves = [], actions
 let server, browser, context, page, origin, httpOrigin, intercept, dragStart;
 const ids = () => page.locator('#tab-servers tbody > .server-row[data-server-id]').evaluateAll(rows => rows.map(row => row.dataset.serverId));
 const waitIds = expected => page.waitForFunction(expected => JSON.stringify([...document.querySelectorAll('tbody .server-row')].map(row => row.dataset.serverId)) === JSON.stringify(expected), expected);
+const selectGroup = async label => {
+  await page.locator('.admin-toolbar-group-trigger').click();
+  await page.getByRole('option', { name: label, exact: true }).click();
+};
 const trace = (phase, details = {}) => report.timeline.push({ time: Date.now(), phase, ...details });
 const waitForTransport = async predicate => {
   const deadline = Date.now() + 7000;
@@ -157,6 +162,17 @@ try {
         return reconcileError && data.refresh ? route.fulfill({ status: 503, json: { error: reconcileError } }) : route.fulfill({ json }).catch(() => {});
       }
       if (data.action === 'get_settings') return route.fulfill({ json: { settings: { site_title: 'CF Monitor', username: 'fixture', terminal_enabled: true } } });
+      if (data.action === 'edit') {
+        const rows = site === 'a' ? nodes : otherNodes, index = rows.findIndex(row => row.id === data.id);
+        assert.ok(index >= 0, 'fixture edit must refer to an existing real node');
+        rows[index] = { ...rows[index], ...data };
+        return route.fulfill({ json: { success: true } });
+      }
+      if (data.action === 'delete') {
+        if (site === 'a') nodes = nodes.filter(row => row.id !== data.id);
+        else otherNodes = otherNodes.filter(row => row.id !== data.id);
+        return route.fulfill({ json: { success: true } });
+      }
       if (data.action === 'terminal_status') return route.fulfill({ json: { nodes: Object.fromEntries((data.serverIds || []).map(id => [id, id === 'node-2' ? { enabled: false, localEnabled: false, state: 'local_disabled' } : { enabled: true, localEnabled: true, state: 'ready' }])) } });
       return route.fulfill({ json: {} });
     }
@@ -217,6 +233,103 @@ try {
     await load(); const geometry = await page.evaluate(() => { const table = document.querySelector('.admin-node-table'), name = document.querySelector('[data-server-id="node-1"] .server-name-link'), slot = name.closest('.admin-node-name').lastElementChild; return { name: name.getBoundingClientRect().width, slot: slot.getBoundingClientRect().width, page: document.documentElement.scrollWidth, viewport: innerWidth, cell: table.querySelector('td').getBoundingClientRect().width, other: [...table.querySelectorAll('tbody tr:first-child td')].slice(1).map(cell => cell.getBoundingClientRect().width) }; });
     report.geometry.push({ kind: 'name-width', ...geometry }); assert.ok(geometry.slot >= 185 && geometry.slot <= 198, JSON.stringify(geometry)); assert.ok(geometry.name > 155); assert.ok(geometry.page <= geometry.viewport); assert.ok(geometry.other[0] >= 170); assert.ok(geometry.other.at(-1) >= 180);
   });
+  await check('held grip lifts the opaque original row without activating, editing or saving; tap and cancel leave no ghost', async () => {
+    for (const reducedMotion of ['no-preference', 'reduce']) for (const outcome of ['tap', 'cancel']) {
+      await load({ reducedMotion }); const before = await ids(); await start();
+      await page.waitForTimeout(180);
+      const held = await page.locator('[data-server-id="node-0"]').evaluate(row => ({ lifted: row.hasAttribute('data-lifted'), active: row.hasAttribute('data-reordering'), opacity: getComputedStyle(row).opacity, shadow: getComputedStyle(row).boxShadow }));
+      const screenshot = path.join(out, `held-${reducedMotion}-${outcome}.png`); await page.screenshot({ path: screenshot }); report.screenshots.push(screenshot);
+      assert.equal(held.lifted, true); assert.equal(held.active, false); assert.equal(held.opacity, '1'); assert.notEqual(held.shadow, 'none');
+      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-server-reordering')), false);
+      assert.deepEqual(await ids(), before); assert.equal(saves.length, 0); assert.equal(await page.getByRole('dialog').count(), 0);
+      if (outcome === 'cancel') await page.keyboard.press('Escape');
+      await page.mouse.up(); await page.waitForTimeout(180);
+      assert.equal(await page.locator('[data-lifted], [data-reordering]').count(), 0);
+      assert.equal(await page.locator('[data-server-id="node-0"]').evaluate(row => getComputedStyle(row).boxShadow), 'none');
+      assert.equal(saves.length, 0); assert.equal(await page.getByRole('dialog').count(), 0);
+    }
+  });
+  await check('fine pointer grip hover, hold and click have no local frame even after keyboard focus, while keyboard sorting keeps its visible focus', async () => {
+    await load(); const before = await ids(), handle = page.locator('[data-server-id="node-0"] .drag-handle');
+    await page.keyboard.press('Tab'); await handle.focus();
+    assert.equal(await handle.evaluate(element => element.matches(':focus-visible') && getComputedStyle(element).outlineStyle === 'solid'), true);
+    await start(); await page.waitForTimeout(180);
+    const appearance = async () => handle.evaluate(element => { const style = getComputedStyle(element); return { background: style.backgroundColor, border: style.borderTopStyle, outline: style.outlineStyle, shadow: style.boxShadow, focused: element === document.activeElement }; });
+    const held = await appearance(); report.geometry.push({ kind: 'fine-grip-held', ...held });
+    const screenshot = path.join(out, 'grip-fine-held.png'); await page.screenshot({ path: screenshot }); report.screenshots.push(screenshot);
+    assert.equal(held.background, 'rgba(0, 0, 0, 0)'); assert.equal(held.border, 'none'); assert.equal(held.outline, 'none'); assert.equal(held.shadow, 'none'); assert.equal(held.focused, true, 'pointer focus is retained, not forcibly blurred');
+    await page.mouse.up(); const clicked = await appearance(); report.geometry.push({ kind: 'fine-grip-clicked', ...clicked });
+    assert.equal(clicked.outline, 'none'); assert.equal(clicked.background, 'rgba(0, 0, 0, 0)'); assert.equal(clicked.border, 'none');
+    assert.deepEqual(await ids(), before); assert.equal(saves.length, 0); assert.equal(await page.getByRole('dialog').count(), 0);
+    await page.keyboard.press('ArrowDown'); await waitForTransport(() => saves.length === 1 && inFlight === 0);
+    assert.equal(await handle.evaluate(element => element === document.activeElement && element.matches(':focus-visible') && getComputedStyle(element).outlineStyle === 'solid'), true);
+    await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
+    assert.equal(await handle.evaluate(element => element.matches(':focus-visible') && getComputedStyle(element).outlineStyle === 'solid'), true);
+  });
+  await check('toolbar group single select supports keyboard, typeahead, selected check, Escape, outside and focus return', async () => {
+    await load(); const trigger = page.locator('.admin-toolbar-group-trigger');
+    await trigger.focus(); await page.keyboard.press('ArrowDown');
+    await page.getByRole('listbox').waitFor();
+    assert.equal(await page.getByRole('option', { name: 'All groups', exact: true }).evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('p');
+    assert.equal(await page.getByRole('option', { name: 'Production', exact: true }).evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('r'); await page.keyboard.press('o');
+    assert.equal(await page.getByRole('option', { name: 'Production', exact: true }).evaluate(element => element === document.activeElement), true, 'typeahead keeps matching the composed prefix');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.getByRole('listbox').count(), 0); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.locator('.drag-handle:enabled').count(), 0); assert.ok((await ids()).length > 0);
+    await trigger.click(); const selected = page.getByRole('option', { name: 'Production', exact: true });
+    assert.equal(await selected.getAttribute('aria-selected'), 'true'); assert.equal(await selected.locator('svg').count(), 1);
+    await page.keyboard.press('p');
+    assert.equal(await page.getByRole('option', { name: makeNodes()[5].server_group, exact: true }).evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('p'); assert.equal(await selected.evaluate(element => element === document.activeElement), true, 'repeated letters cycle matching options');
+    await page.keyboard.press('End'); await page.keyboard.press('Home');
+    assert.equal(await page.getByRole('option', { name: 'All groups', exact: true }).evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Escape'); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+    assert.ok((await trigger.innerText()).includes('Production'), 'Escape does not commit keyboard preview');
+    await trigger.click(); await page.locator('input[type="search"]').click(); assert.equal(await page.getByRole('listbox').count(), 0);
+    await trigger.click(); await page.keyboard.press('Tab'); assert.equal(await page.getByRole('listbox').count(), 0);
+    await selectGroup('All groups'); assert.equal(await page.locator('.drag-handle:enabled').count(), 8);
+    const search = page.locator('input[type="search"]'); await search.fill('missing-node'); await search.press('Enter');
+    assert.equal(await page.getByRole('dialog').count(), 0); assert.equal(await search.inputValue(), 'missing-node');
+    await search.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })));
+    assert.equal(await search.inputValue(), 'missing-node');
+    await page.locator('.empty-state .btn').click(); assert.equal(await page.locator('.drag-handle:enabled').count(), 8);
+    await selectGroup('Production'); await page.evaluate(() => { location.hash = '/admin?apiIndex=1'; }); await waitIds(['other-0', 'other-1', 'other-2']);
+    assert.ok((await trigger.innerText()).includes('All groups')); assert.equal(await page.locator('.drag-handle:enabled').count(), 3);
+  });
+  await check('node toolbar has a left search glyph, matching input/trigger/button geometry and visible focus ring', async () => {
+    await load();
+    const geometry = await page.locator('.admin-search').evaluate(root => {
+      const input = root.querySelector('input'), glyph = root.querySelector('svg'), a = root.getBoundingClientRect(), b = glyph.getBoundingClientRect(), style = getComputedStyle(input);
+      return { glyphLeft: b.left - a.left, glyphWidth: b.width, padding: style.paddingLeft, height: input.offsetHeight, radius: style.borderRadius, size: style.fontSize };
+    });
+    report.geometry.push({ kind: 'search-reference', ...geometry });
+    assert.ok(Math.abs(geometry.glyphLeft - 10) < 1); assert.equal(geometry.glyphWidth, 16); assert.equal(geometry.padding, '32px');
+    assert.equal(geometry.height, 36); assert.equal(geometry.radius, '6px'); assert.equal(geometry.size, '14px');
+    await page.keyboard.press('Tab'); await page.locator('input[type="search"]').focus();
+    assert.equal(await page.locator('input[type="search"]').evaluate(element => element.matches(':focus-visible') && getComputedStyle(element).boxShadow !== 'none'), true);
+  });
+  await check('renaming or deleting the last node of the selected group resets stale filtering without erasing search', async () => {
+    for (const outcome of ['rename', 'delete']) {
+      await load(); const group = makeNodes()[5].server_group, search = page.locator('input[type="search"]');
+      await search.fill('Node 6'); await selectGroup(group); assert.deepEqual(await ids(), ['node-5']);
+      const row = page.locator('[data-server-id="node-5"]');
+      await row.locator(outcome === 'rename' ? '.action-btns [data-reference-icon="pencil"]' : '.btn-red').click();
+      const dialog = page.getByRole('dialog');
+      const titleId = await dialog.getAttribute('aria-labelledby');
+      if (outcome === 'rename') await dialog.locator('[name="edit_server_group"]').fill('Renamed group');
+      await dialog.locator(outcome === 'rename' ? 'footer .btn-primary' : 'footer .btn-red').click(); await page.locator(`[aria-labelledby="${titleId}"]`).waitFor({ state: 'detached' });
+      await page.waitForFunction(() => document.querySelector('.admin-toolbar-group-trigger')?.textContent.includes('All groups'));
+      await page.keyboard.press('Escape');
+      assert.equal(await search.inputValue(), 'Node 6', 'group refresh does not clear a separate search');
+      await search.fill(''); assert.equal(await page.locator('.drag-handle:enabled').count(), outcome === 'rename' ? 8 : 7);
+      await page.locator('.admin-toolbar-group-trigger').click();
+      assert.equal(await page.getByRole('option', { name: group, exact: true }).count(), 0);
+      if (outcome === 'rename') assert.equal(await page.getByRole('option', { name: 'Renamed group', exact: true }).count(), 1);
+      await page.keyboard.press('Escape');
+    }
+  });
   await check('real keyed row overlaps before half-short-row threshold, then displaces without boundary jitter in all height/direction pairs', async () => {
     for (const tallId of ['node-0', 'node-1']) for (const direction of ['down', 'up']) {
       await load(); await page.addStyleTag({ content: `.server-row[data-server-id="${tallId}"] .admin-node-name { min-height: 180px; }` });
@@ -234,6 +347,22 @@ try {
       assert.ok(Math.abs(visual.y - (a.y + beforeY - p.y)) < 2, 'real row tracks pointer before displacement');
       assert.deepEqual(await ids(), before); assert.equal(saves.length, 0);
       const screenshot = path.join(out, `overlap-${tallId}-${direction}.png`); await page.screenshot({ path: screenshot }); report.screenshots.push(screenshot);
+      // A loud adjacent-cell background reveals alpha blending/paint-order failures in every column, including actions.
+      await target.locator('td').evaluateAll(cells => cells.forEach(cell => { cell.style.backgroundColor = 'rgb(230, 0, 126)'; }));
+      const occlusion = await dragged.evaluate((row, targetId) => {
+        const a = row.getBoundingClientRect(), b = document.querySelector(`[data-server-id="${targetId}"]`).getBoundingClientRect();
+        const y = (Math.max(a.top, b.top) + Math.min(a.bottom, b.bottom)) / 2;
+        const cleanY = a.top < b.top ? a.top + 16 : a.bottom - 16;
+        return [...row.cells].filter(cell => cell.getBoundingClientRect().width > 0).map(cell => {
+          const x = cell.getBoundingClientRect().right - 4;
+          return { x, y, cleanY, hit: document.elementFromPoint(x, y)?.closest('.server-row')?.dataset.serverId, expected: row.dataset.serverId };
+        });
+      }, targetId);
+      const paintPath = path.join(out, `occlusion-${tallId}-${direction}.png`), image = PNG.sync.read(await page.screenshot({ path: paintPath })); report.screenshots.push(paintPath);
+      const pixel = (x, y) => [...image.data.subarray((Math.floor(y) * image.width + Math.floor(x)) * 4, (Math.floor(y) * image.width + Math.floor(x)) * 4 + 3)];
+      const samples = occlusion.map(sample => ({ ...sample, paint: pixel(sample.x, sample.y), cleanPaint: pixel(sample.x, sample.cleanY) }));
+      report.geometry.push({ kind: 'actual-occlusion', direction, tallId, samples });
+      for (const sample of samples) { assert.equal(sample.hit, draggedId, 'active real row must own the actual intersection in every cell'); assert.deepEqual(sample.paint, sample.cleanPaint, 'opaque active cell must hide the neighboring marker, not blend through it'); }
       await page.mouse.move(p.x, afterY); const next = ['node-1', 'node-0', ...before.slice(2)]; await waitIds(next);
       for (let i = 0; i < 8; i++) await page.mouse.move(p.x, afterY + (i % 2 ? 1 : -1));
       assert.deepEqual(await ids(), next); assert.equal(saves.length, 0);
@@ -262,6 +391,91 @@ try {
     await page.waitForTimeout(150);
     assert.equal(saves.length, 1); assert.deepEqual(saves[0].orders, next); assert.equal(saves[0].orders.length, 8);
     await waitIds(next);
+  });
+  for (const outcome of ['release', 'cancel']) for (const direction of ['down', 'up']) {
+    await check(`${outcome}/${direction} below threshold keeps all seven cells opaque above neighbors throughout the real landing animation`, async () => {
+      await load(); const from = direction === 'down' ? 0 : 1, id = `node-${from}`, targetId = `node-${1 - from}`, before = await ids();
+      const row = page.locator(`[data-server-id="${id}"]`), target = page.locator(`[data-server-id="${targetId}"]`), a = await row.boundingBox(), b = await target.boundingBox();
+      const p = await start(from), distance = Math.min(a.height, b.height) * .3;
+      await page.mouse.move(p.x, p.y + (direction === 'down' ? distance : -distance)); await page.waitForTimeout(170);
+      assert.deepEqual(await ids(), before); assert.equal(saves.length, 0);
+      await target.locator('td').evaluateAll(cells => cells.forEach(cell => { cell.style.backgroundColor = 'rgb(230, 0, 126)'; }));
+      await page.evaluate(({ id, targetId, outcome }) => {
+        const row = document.querySelector(`[data-server-id="${id}"]`), target = document.querySelector(`[data-server-id="${targetId}"]`);
+        window.landingSamples = []; window.landingDone = false; window.landingPixelReady = false;
+        const sample = () => {
+          const a = row.getBoundingClientRect(), b = target.getBoundingClientRect(), overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top), y = (Math.max(a.top, b.top) + Math.min(a.bottom, b.bottom)) / 2;
+          window.landingSamples.push({ at: performance.now(), overlap, lifted: row.hasAttribute('data-lifted'), settling: row.hasAttribute('data-settling'), z: getComputedStyle(row).zIndex, capture: row.parentElement.hasPointerCapture(window.dragPointerId), animation: row.getAnimations().map(animation => ({ id: animation.id, time: animation.currentTime, state: animation.playState })), cells: [...row.cells].filter(cell => cell.offsetWidth).map(cell => ({ x: cell.getBoundingClientRect().right - 16, y, hit: overlap > 0 ? document.elementFromPoint(cell.getBoundingClientRect().right - 16, y)?.closest('.server-row')?.dataset.serverId : null })) });
+          const slide = row.getAnimations().find(animation => animation.id === 'server-slide');
+          if (!window.landingPixelReady && slide?.currentTime >= 50 && overlap > 2) {
+            window.landingPixelReady = true;
+            const animations = row.getAnimations(); animations.forEach(animation => animation.pause());
+            window.resumeLanding = () => { animations.forEach(animation => animation.play()); requestAnimationFrame(sample); };
+          } else if (window.landingSamples.length < 16) requestAnimationFrame(sample); else window.landingDone = true;
+        };
+        document.addEventListener(outcome === 'release' ? 'pointerup' : 'keydown', () => requestAnimationFrame(sample), { once: true });
+      }, { id, targetId, outcome });
+      if (outcome === 'release') await page.mouse.up(); else { await page.keyboard.press('Escape'); await page.mouse.up(); }
+      await page.waitForFunction(() => window.landingPixelReady);
+      const pixelSample = await page.evaluate(() => window.landingSamples.at(-1)), screenshot = path.join(out, `landing-${outcome}-${direction}.png`);
+      // Freeze only the sampled timeline for PNG evidence; never replace the real row or its paint styles.
+      const image = PNG.sync.read(await page.screenshot({ path: screenshot, animations: 'allow' })); report.screenshots.push(screenshot);
+      const paint = pixelSample.cells.map(cell => { const at = (Math.floor(cell.y) * image.width + Math.floor(cell.x)) * 4; return { ...cell, rgb: [...image.data.subarray(at, at + 3)] }; });
+      await page.evaluate(() => window.resumeLanding());
+      await page.waitForFunction(() => window.landingDone);
+      const samples = await page.evaluate(() => window.landingSamples);
+      report.geometry.push({ kind: 'landing-occlusion', outcome, direction, id, samples, paint, imageSize: { width: image.width, height: image.height } });
+      const intersecting = samples.filter(sample => sample.overlap > .5);
+      assert.ok(intersecting.length >= 3, 'several real frames must intersect before the row lands');
+      assert.ok(intersecting.some(sample => sample.animation.some(animation => animation.id === 'server-slide' && animation.time >= 30)), 'test must observe mid-animation, not only release');
+      for (const sample of intersecting) {
+        assert.equal(sample.cells.length, 7); assert.equal(sample.capture, false, 'paint settling cannot retain pointer capture'); assert.equal(sample.lifted, false);
+        for (const cell of sample.cells) assert.equal(cell.hit, id, `${outcome}/${direction}: every intersecting cell must paint above its neighbor until landing finishes`);
+      }
+      for (const cell of paint) assert.deepEqual(cell.rgb, [255, 255, 255], 'mid-landing opaque cells hide the neighbor marker instead of blending through it');
+      await page.waitForFunction(id => { const row = document.querySelector(`[data-server-id="${id}"]`); return !row.hasAttribute('data-settling') && !row.getAnimations().length; }, id);
+      assert.equal(await row.evaluate(row => row.hasAttribute('data-settling') || row.hasAttribute('data-lifted')), false);
+      assert.equal(await row.evaluate(row => getComputedStyle(row).zIndex), '1'); assert.equal(await row.evaluate(row => getComputedStyle(row).boxShadow), 'none');
+      assert.deepEqual(await ids(), before); assert.equal(saves.length, 0);
+    });
+  }
+  await check('settling paint belongs to its animation and cannot outlive cancellation, a new drag, changed site, removed rows or reduced motion', async () => {
+    for (const outcome of ['animation-cancel', 'second-drag', 'site', 'removed-row', 'unmount', 'reduced']) {
+      await load({ reducedMotion: outcome === 'reduced' ? 'reduce' : 'no-preference' });
+      const p = await start(), row = page.locator('[data-server-id="node-0"]'), a = await row.boundingBox();
+      await page.mouse.move(p.x, p.y + a.height * .3); await page.waitForTimeout(170); await page.mouse.up();
+      if (outcome === 'reduced') {
+        assert.equal(await page.locator('[data-settling], [data-lifted]').count(), 0);
+        assert.equal(await row.evaluate(row => row.getAnimations().length), 0);
+      } else {
+        await page.waitForFunction(() => document.querySelector('[data-server-id="node-0"]').getAnimations().some(animation => animation.id === 'server-slide'));
+        if (outcome === 'animation-cancel') {
+          await row.evaluate(row => row.getAnimations().forEach(animation => animation.cancel()));
+        } else if (outcome === 'second-drag') {
+          const box = await row.locator('.drag-handle').boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
+          await page.mouse.move(x, y); await page.mouse.down();
+          assert.equal(await row.evaluate(row => row.hasAttribute('data-lifted') && row.parentElement.hasPointerCapture(window.dragPointerId)), true, 'new drag is accepted while the previous row settles');
+          await page.mouse.move(x + 8, y); await page.waitForTimeout(180);
+          assert.equal(await row.evaluate(row => row.hasAttribute('data-lifted') && !row.hasAttribute('data-settling')), true, 'old animation completion cannot clear new lift');
+          await page.keyboard.press('Escape'); await page.mouse.up();
+        } else if (outcome === 'site') {
+          await page.evaluate(() => { location.hash = '/admin?apiIndex=1'; }); await waitIds(['other-0', 'other-1', 'other-2']);
+        } else if (outcome === 'removed-row') {
+          await row.evaluate(row => { window.oldLandingRow = row; row.getAnimations().forEach(animation => animation.pause()); });
+          nodes = nodes.slice(1);
+          await page.locator('#tab-servers .toolbar > .btn').first().click(); await page.getByRole('dialog').locator('summary').click();
+          await page.getByRole('dialog').getByRole('button', { name: 'Refresh cache', exact: true }).click(); await row.waitFor({ state: 'detached' });
+          assert.equal(await page.evaluate(() => window.oldLandingRow.hasAttribute('data-settling')), false);
+        } else {
+          await page.evaluate(() => { window.oldLandingRow = document.querySelector('[data-server-id="node-0"]'); location.hash = '/fixture'; });
+          await page.waitForFunction(() => !document.querySelector('.server-row'));
+          assert.equal(await page.evaluate(() => window.oldLandingRow.hasAttribute('data-settling')), false);
+        }
+        await page.waitForFunction(() => !document.querySelector('[data-settling], [data-lifted]'));
+      }
+      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-server-reordering')), false);
+      assert.equal(saves.length, 0);
+    }
   });
   await check('Escape, pointercancel, outside release and missed release restore the original order without saving', async () => {
     for (const cancel of ['Escape', 'pointercancel', 'outside', 'buttons-zero', 'blur', 'lostcapture']) {
@@ -432,7 +646,7 @@ try {
     assert.equal(await page.locator('tbody').evaluate(body => [...body.rows].flatMap(row => row.getAnimations()).length), 0);
     await page.keyboard.press('ArrowUp'); await page.waitForTimeout(100); assert.deepEqual((await ids()).slice(0, 2), ['node-0', 'node-1']); assert.equal(saves.length, 2);
     await page.locator('input[type="search"]').fill('Node 1'); assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
-    await page.locator('input[type="search"]').fill(''); await page.locator('.toolbar-select').selectOption('Production'); assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
+    await page.locator('input[type="search"]').fill(''); await selectGroup('Production'); assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
   });
   await check('nested scroll container edge scrolls without scrolling the whole page and unmount releases capture', async () => {
     await load({ count: 50 });
@@ -475,6 +689,23 @@ try {
       const buttonSize = geometry.coarse ? 44 : 36;
       assert.deepEqual(geometry.button, { width: buttonSize, height: buttonSize }); assert.equal(geometry.padding, '8px');
       assert.equal(geometry.coarse, width < 640);
+      const toolbar = await page.locator('#tab-servers .toolbar').evaluate(element => {
+        const input = element.querySelector('input'), trigger = element.querySelector('.admin-toolbar-group-trigger'), filter = element.querySelector('.admin-filter-group').getBoundingClientRect(), buttons = [...element.querySelectorAll(':scope > .btn')];
+        return { inputSize: getComputedStyle(input).fontSize, inputWidth: input.getBoundingClientRect().width, triggerWidth: trigger.getBoundingClientRect().width, heights: [input, trigger, ...buttons].map(control => control.getBoundingClientRect().height), filterBottom: filter.bottom, actionsTop: buttons[0].getBoundingClientRect().top, right: buttons.at(-1).getBoundingClientRect().right, edge: element.getBoundingClientRect().right };
+      });
+      report.geometry.push({ kind: 'toolbar-matrix', width, locale, dark, ...toolbar });
+      assert.equal(toolbar.inputSize, width < 768 ? '16px' : '14px'); assert.ok(toolbar.inputWidth >= 100); assert.equal(toolbar.triggerWidth, 128);
+      assert.ok(toolbar.heights.every(height => height === buttonSize)); assert.ok(Math.abs(toolbar.right - toolbar.edge) < 1);
+      if (width < 640) assert.ok(toolbar.actionsTop >= toolbar.filterBottom + 8, 'small-screen actions follow the full-width filter row');
+      await page.locator('.admin-toolbar-group-trigger').click();
+      const menu = page.getByRole('listbox'), popup = await menu.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, scroll: element.scrollHeight, height: element.clientHeight, hit: element.contains(document.elementFromPoint(rect.left + 12, rect.top + 12)) };
+      });
+      report.geometry.push({ kind: 'popup-matrix', width, locale, dark, ...popup });
+      assert.ok(popup.left >= 8 && popup.right <= width - 8); assert.ok(popup.top >= 8 && popup.bottom <= 892); assert.equal(popup.hit, true);
+      const popupScreenshot = path.join(out, `group-${width}-${locale}-${dark ? 'dark' : 'light'}.png`); await page.screenshot({ path: popupScreenshot }); report.screenshots.push(popupScreenshot);
+      await page.keyboard.press('Escape');
       if (width < 640) {
         assert.ok(geometry.scroll > geometry.wrapper);
         await page.locator('.table-wrapper').evaluate(element => { element.scrollLeft = element.scrollWidth; });
@@ -494,6 +725,53 @@ try {
   });
   await terminalReturnChecks(true);
   await terminalReturnChecks(true, 320);
+  await check('native coarse grip touch hold and tap have no local frame or edit/save, and keyboard focus remains available afterwards', async () => {
+    await load({ width: 390 }); const handle = page.locator('[data-server-id="node-0"] .drag-handle'), before = await ids(), cdp = await context.newCDPSession(page), p = await point(0);
+    await page.keyboard.press('Tab'); await handle.focus();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] }); await page.waitForTimeout(180);
+    const held = await handle.evaluate(element => { const style = getComputedStyle(element); return { background: style.backgroundColor, border: style.borderTopStyle, outline: style.outlineStyle, shadow: style.boxShadow }; });
+    report.geometry.push({ kind: 'coarse-grip-held', ...held });
+    const screenshot = path.join(out, 'grip-coarse-held.png'); await page.screenshot({ path: screenshot }); report.screenshots.push(screenshot);
+    assert.equal(held.background, 'rgba(0, 0, 0, 0)'); assert.equal(held.border, 'none'); assert.equal(held.outline, 'none'); assert.equal(held.shadow, 'none');
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.equal(await handle.evaluate(element => getComputedStyle(element).outlineStyle), 'none'); assert.equal(saves.length, 0); assert.deepEqual(await ids(), before); assert.equal(await page.getByRole('dialog').count(), 0);
+    await page.keyboard.press('ArrowDown'); await waitForTransport(() => saves.length === 1 && inFlight === 0);
+    assert.equal(await handle.evaluate(element => element.matches(':focus-visible') && getComputedStyle(element).outlineStyle === 'solid'), true); await cdp.detach();
+  });
+  await check('native coarse held row occludes its neighbor before displacement and touch cancel restores lift without a save', async () => {
+    await load({ width: 390 }); const before = await ids(), cdp = await context.newCDPSession(page), p = await point(0);
+    const dragged = page.locator('[data-server-id="node-0"]'), target = page.locator('[data-server-id="node-1"]'), a = await dragged.boundingBox();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: p.x, y: p.y + a.height * .3 }] });
+    await target.locator('td').evaluateAll(cells => cells.forEach(cell => { cell.style.backgroundColor = 'rgb(230, 0, 126)'; }));
+    const sample = await dragged.evaluate(row => {
+      const a = row.getBoundingClientRect(), b = document.querySelector('[data-server-id="node-1"]').getBoundingClientRect(), x = a.left + 4, y = (Math.max(a.top, b.top) + Math.min(a.bottom, b.bottom)) / 2;
+      return { x, y, overlap: Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top), hit: document.elementFromPoint(x, y)?.closest('.server-row')?.dataset.serverId };
+    });
+    const screenshot = path.join(out, 'occlusion-native-coarse.png'), image = PNG.sync.read(await page.screenshot({ path: screenshot })); report.screenshots.push(screenshot);
+    const at = (Math.floor(sample.y) * image.width + Math.floor(sample.x)) * 4, paint = [...image.data.subarray(at, at + 3)];
+    report.geometry.push({ kind: 'native-coarse-occlusion', ...sample, paint });
+    assert.ok(sample.overlap > 0); assert.equal(sample.hit, 'node-0'); assert.deepEqual(paint, [255, 255, 255]); assert.deepEqual(await ids(), before); assert.equal(saves.length, 0);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] }); await page.waitForTimeout(180);
+    assert.equal(await page.locator('[data-lifted], [data-reordering]').count(), 0); assert.equal(saves.length, 0); assert.deepEqual(await ids(), before); await cdp.detach();
+  });
+  await check('coarse group menu scrolls long options within a 300px keyboard viewport, selects by touch and closes when its trigger scrolls away', async () => {
+    await load({ count: 50, width: 320 }); await page.setViewportSize({ width: 320, height: 300 });
+    const trigger = page.locator('.admin-toolbar-group-trigger'); await trigger.tap();
+    const menu = page.getByRole('listbox'); await page.keyboard.press('End');
+    const bounds = await menu.evaluate(element => { const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, scroll: element.scrollHeight, height: element.clientHeight, offset: element.scrollTop }; });
+    report.geometry.push({ kind: 'keyboard-300-group', ...bounds });
+    assert.ok(bounds.top >= 8 && bounds.bottom <= 292); assert.ok(bounds.left >= 8 && bounds.right <= 312); assert.ok(bounds.scroll > bounds.height && bounds.offset > 0);
+    const long = page.getByRole('option', { name: makeNodes()[5].server_group, exact: true });
+    assert.equal(await long.evaluate(element => element === document.activeElement), true);
+    assert.equal(await long.evaluate(element => { const a = element.getBoundingClientRect(), b = element.parentElement.getBoundingClientRect(); return a.top >= b.top && a.bottom <= b.bottom; }), true, 'the entire highlighted wrapped label scrolls into the popup');
+    const screenshot = path.join(out, 'group-keyboard-300.png'); await page.screenshot({ path: screenshot }); report.screenshots.push(screenshot);
+    await long.tap(); assert.equal(await page.getByRole('listbox').count(), 0); assert.ok((await trigger.innerText()).includes('Production-team'));
+    assert.equal(await page.locator('.drag-handle:enabled').count(), 0);
+    await trigger.tap(); await page.evaluate(() => window.scrollTo(0, 500));
+    await page.waitForFunction(() => !document.querySelector('[role=listbox]'));
+    await page.evaluate(() => window.scrollTo(0, 0)); await selectGroup('All groups'); assert.equal(await page.locator('.drag-handle:enabled').count(), 50);
+  });
   await check('native coarse touch pointer reorders the real mounted Vue rows and saves once on touch end', async () => {
     await load({ width: 390 });
     const cdp = await context.newCDPSession(page), p = await point(0), before = await ids();

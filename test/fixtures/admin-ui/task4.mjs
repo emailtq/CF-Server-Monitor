@@ -187,7 +187,8 @@ try {
     await check('frozen node presentation has only grouping/bulk-add/add toolbar and no permanent selection', async () => {
       assert.equal(await page.locator('#tab-servers .batch-actions').count(), 0);
       assert.equal(await page.locator('.server-checkbox').count(), 0);
-      assert.equal(await page.locator('.toolbar button').count(), 3);
+      assert.equal(await page.locator('.toolbar > button').count(), 3);
+      assert.equal(await page.locator('.admin-filter-group button[aria-haspopup="listbox"]').count(), 1);
       assert.equal(await page.locator('.admin-header select').count(), 0);
       assert.equal(await page.locator('.admin-header [data-reference-icon=moon]').count(), 1);
       await page.locator('.server-name-link').first().click();
@@ -286,7 +287,10 @@ try {
         assert.ok(Math.abs(actual.workspace.width - expected.workspace.width) <= 2);
         assert.equal(actual.name.fontSize, expected.name.fontSize); assert.equal(actual.name.font, expected.name.font);
         for (const key of ['site', 'public', 'name', 'ip', 'status', 'private']) for (const field of ['fontSize', 'fontWeight', 'lineHeight', 'color']) assert.equal(actual[key][field], expected[key][field], `${key}.${field}`);
-        assert.equal(actual.group.appearance, expected.group.appearance, 'native group selector arrow');
+        const group = page.locator('.admin-toolbar-group-trigger');
+        assert.equal(await group.locator('[data-reference-icon="chevron-down"]').count(), 1, 'approved single select keeps the reference chevron');
+        await group.click(); assert.ok(await page.getByRole('option').count()); await page.keyboard.press('Escape');
+        assert.equal(await group.evaluate(element => element === document.activeElement), true, 'single select restores focus without committing a preview');
         assert.equal(actual.headerLabel.width, expected.headerLabel.width, 'reference admin label remains visible on mobile');
         assert.equal(actual.header.gap, expected.header.gap, 'reference header spacing');
         assert.equal(actual.headerActions.gap, expected.headerActions.gap, 'reference header action spacing');
@@ -458,9 +462,11 @@ try {
     await page.keyboard.press('Escape');
     await page.getByRole('searchbox').fill('');
     assert.deepEqual(await nodeIds(), initial); await page.getByRole('button', { name: en.group, exact: true }).click(); assert.equal(await page.locator('.server-checkbox').first().isChecked(), true); await page.keyboard.press('Escape');
-    await page.getByRole('combobox', { name: en.adminFilterGroup }).selectOption(initialServers[0].server_group);
+    await page.locator('.admin-toolbar-group-trigger').click();
+    await page.getByRole('option', { name: initialServers[0].server_group, exact: true }).click();
     assert.equal(await page.locator('.server-row').count(), 3);
-    await page.getByRole('combobox', { name: en.adminFilterGroup }).selectOption('');
+    await page.locator('.admin-toolbar-group-trigger').click();
+    await page.getByRole('option', { name: en.adminAllGroups, exact: true }).click();
     assert.deepEqual(await nodeIds(), initial);
     const before = report.actions.length;
     const a = await page.locator('.drag-handle').first().boundingBox(), b = await page.locator('.drag-handle').nth(1).boundingBox();
