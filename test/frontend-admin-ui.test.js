@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc';
 import postcss from 'postcss';
+import { spawnSync } from 'node:child_process';
+
+test('collection settings remain editable on small and short screens in the complete admin', () => {
+  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/latency.mjs'], {
+    encoding: 'utf8', timeout: 360000, windowsHide: true, env: process.env
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
 
 const base = 'src/frontend/views/admin/components/';
 for (const name of ['AdminHeader', 'AdminLayout', 'AdminDialog', 'AdminMultiSelect']) {

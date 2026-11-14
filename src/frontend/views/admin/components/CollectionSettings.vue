@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-grid">
+  <div class="settings-grid collection-settings">
 <div class="settings-section"><h3 class="section-title">{{ trans.adminCollection }}</h3><div class="form-row"><label class="form-group flex-1 checkbox-item">
             <input type="checkbox" id="cfg_wss_report_enabled" :aria-label="trans.wssReportEnabled" data-setting-field="wss_report_enabled" v-model="settings.wss_report_enabled">
             <span><b>{{ trans.wssReportEnabled }}</b></span>
@@ -165,3 +165,83 @@ const formatWssHourRange = hour => {
 }
 
 </script>
+
+<style scoped>
+.collection-settings .checkbox-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.collection-settings .checkbox-item > span {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.collection-settings .checkbox-item > input {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.collection-settings .checkbox-item > .admin-field-hint {
+  grid-column: 1 / -1;
+}
+
+.collection-settings .form-label {
+  display: block;
+}
+
+.collection-settings .form-input,
+.collection-settings .form-select,
+.collection-settings .wss-hour-option input,
+.collection-settings .checkbox-item {
+  scroll-margin-block: 80px;
+}
+
+.collection-settings .wss-schedule-header {
+  flex-wrap: wrap;
+}
+
+.collection-settings .wss-schedule-header > :first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.collection-settings .wss-schedule-meta {
+  overflow-wrap: anywhere;
+}
+
+.collection-settings .wss-schedule-actions {
+  flex-wrap: wrap;
+}
+
+.collection-settings .ping-node-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+}
+
+.collection-settings .ping-node-fields .ping-node-name {
+  width: 96px;
+  flex: 0 0 96px;
+}
+
+.collection-settings .ping-node-fields .form-input:not(.ping-node-name) {
+  width: 0;
+  flex: 1;
+}
+
+@media (max-width: 639px) {
+  .collection-settings .ping-node-fields {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .collection-settings .ping-node-fields .ping-node-name,
+  .collection-settings .ping-node-fields .form-input:not(.ping-node-name) {
+    width: 100%;
+    flex: none;
+  }
+
+  .collection-settings .wss-schedule-header > :first-child {
+    flex-basis: auto;
+  }
+}
+</style>
