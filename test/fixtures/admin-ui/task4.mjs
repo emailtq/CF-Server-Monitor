@@ -454,19 +454,20 @@ try {
     await page.getByRole('button', { name: en.group, exact: true }).click();
     await page.locator('.server-checkbox').first().check();
     await page.keyboard.press('Escape');
-    await page.getByRole('searchbox').fill(initialServers[1].ip_v4);
+    await page.locator('#tab-servers .admin-search input').fill(initialServers[1].ip_v4);
     assert.equal(await page.locator('.server-row').count(), 1);
     assert.equal(await page.locator('.drag-handle').first().isDisabled(), true);
     await page.getByRole('button', { name: en.group, exact: true }).click();
     assert.match(await page.getByRole('dialog').innerText(), /1\/6/);
     await page.keyboard.press('Escape');
-    await page.getByRole('searchbox').fill('');
+    await page.locator('#tab-servers .admin-search input').fill('');
     assert.deepEqual(await nodeIds(), initial); await page.getByRole('button', { name: en.group, exact: true }).click(); assert.equal(await page.locator('.server-checkbox').first().isChecked(), true); await page.keyboard.press('Escape');
     await page.locator('.admin-toolbar-group-trigger').click();
     await page.getByRole('option', { name: initialServers[0].server_group, exact: true }).click();
     assert.equal(await page.locator('.server-row').count(), 3);
     await page.locator('.admin-toolbar-group-trigger').click();
     await page.getByRole('option', { name: en.adminAllGroups, exact: true }).click();
+    await page.locator('.admin-toolbar-group-menu').waitFor({ state: 'detached' });
     assert.deepEqual(await nodeIds(), initial);
     const before = report.actions.length;
     const a = await page.locator('.drag-handle').first().boundingBox(), b = await page.locator('.drag-handle').nth(1).boundingBox();
@@ -636,9 +637,41 @@ try {
     }
     for (const locale of ['en', 'es', 'fr', 'id', 'ja', 'zh', 'zh-TW']) {
       await page.setViewportSize({ width: 320, height: 540 }); await goto(`&locale=${locale}`);
-      await check(`locale ${locale} coarse new targets and long names no document overflow`, async () => {
+      await check(`locale ${locale} native 36px targets and long names no document overflow`, async () => {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-        for (const selector of ['.toolbar-input', '.toolbar-select', '.toolbar .btn-primary']) assert.ok((await page.locator(selector).boundingBox()).height >= 44);
+        assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), true);
+        const targets = [];
+        for (const selector of ['.toolbar-input', '.toolbar-select', '.btn-primary']) {
+          const target = await page.locator(`#tab-servers .toolbar ${selector}`).evaluate((element, selector) => {
+            const rect = element.getBoundingClientRect();
+            const points = [rect.top + 0.5, rect.top + rect.height / 2, rect.bottom - 0.5].map(y => ({ x: rect.x + rect.width / 2, y, hit: element.contains(document.elementFromPoint(rect.x + rect.width / 2, y)) }));
+            return { selector, tag: element.tagName, height: rect.height, points };
+          }, selector);
+          targets.push(target);
+        }
+        (report.toolbarTouch ||= []).push({ locale, targets });
+        const search = page.locator('#tab-servers .admin-search input');
+        const before = await search.inputValue(), ids = await nodeIds();
+        for (const target of targets) {
+          assert.equal(target.tag, target.selector === '.toolbar-input' ? 'INPUT' : 'BUTTON');
+          assert.equal(target.height, 36, `${locale} ${target.selector} native height`);
+          assert.ok(target.points.every(point => point.hit), `${locale} ${target.selector} inside top/center/bottom hit testing`);
+          for (const point of target.points) {
+            if (target.selector === '.toolbar-input') await search.evaluate(element => element.blur());
+            await page.touchscreen.tap(point.x, point.y);
+            if (target.selector === '.toolbar-input') {
+              assert.equal(await search.evaluate(element => document.activeElement === element), true, `${locale} inside search tap focuses the native input`);
+              assert.equal(await search.inputValue(), before);
+            } else {
+              const popup = page.getByRole(target.selector === '.toolbar-select' ? 'listbox' : 'dialog');
+              await popup.waitFor();
+              await page.keyboard.press('Escape');
+              await popup.waitFor({ state: 'detached' });
+              assert.equal(await page.locator(`#tab-servers .toolbar ${target.selector}`).evaluate(element => document.activeElement === element), true);
+            }
+          }
+        }
+        assert.deepEqual(await nodeIds(), ids);
       });
       await page.screenshot({ path: path.join(out, `locale-${locale}-320.png`), fullPage: true });
       await page.locator('.toolbar .btn-primary').click(); await page.screenshot({ path: path.join(out, `add-${locale}-320.png`) }); await page.keyboard.press('Escape');

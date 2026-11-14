@@ -524,9 +524,3 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 @media (min-width: 640px) {
   .admin-ui #tab-servers .toolbar .admin-search { flex: none; }
 }
-@media (pointer: coarse) {
-  .admin-ui #tab-servers .toolbar :is(.btn, .admin-toolbar-group-trigger) { position: relative; }
-  .admin-ui #tab-servers .toolbar :is(.btn, .admin-toolbar-group-trigger)::before { content: ''; position: absolute; inset: -4px; }
-  .admin-ui #tab-servers .toolbar .admin-search::after { content: ''; position: absolute; inset: -4px; }
-  .admin-ui #tab-servers .toolbar .admin-search input { position: relative; z-index: 1; }
-}
