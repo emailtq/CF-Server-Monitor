@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
+import { nativeScrollbar as assertNativeScrollbar } from './scrollbar-assertions.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const { PNG } = createRequire(import.meta.url)(process.env.ADMIN_UI_PNGJS || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/pngjs');
@@ -27,15 +28,17 @@ const selectGroup = async label => {
   await page.getByRole('option', { name: label, exact: true }).click();
 };
 const trace = (phase, details = {}) => report.timeline.push({ time: Date.now(), phase, ...details });
+const nativeScrollbar = (...args) => assertNativeScrollbar({ page, out, report, PNG }, ...args);
 const waitForTransport = async predicate => {
   const deadline = Date.now() + 7000;
   while (!predicate() && Date.now() < deadline) await delay(5);
   assert.ok(predicate(), 'fixture transport must reach the expected request/hold state');
 };
 const release = () => { trace('release-held', { count: held.length }); for (const resolve of held.splice(0)) resolve(); };
-const load = async ({ count = 8, locale = 'en', width = 1440, dark = false, reducedMotion = 'no-preference', terminalSite = false } = {}) => {
+const load = async ({ count = 8, locale = 'en', width = 1440, dark = false, reducedMotion = 'no-preference', terminalSite = false, uniqueGroups = false } = {}) => {
   await page.mouse.up(); hold = holdList = false; release(); await page.waitForTimeout(30); await page.goto('about:blank');
   failure = reconcileError = ''; saves = []; actions = []; inFlight = maxInFlight = 0; nodes = makeNodes(count); otherNodes = makeNodes(3, 'other');
+  if (uniqueGroups) nodes.forEach((node, i) => { node.server_group = `Group ${i.toString().padStart(2, '0')}`; });
   await page.setViewportSize({ width, height: 900 });
   await page.emulateMedia({ reducedMotion, colorScheme: dark ? 'dark' : 'light' });
   await page.goto(`${origin}/${terminalSite ? 'admin' : 'test/fixtures/admin-ui/index.html'}?mode=admin&${terminalSite ? '' : 'sites=1&'}locale=${locale}#/admin?apiIndex=0`);
@@ -121,7 +124,7 @@ try {
   server = await createServer({ cacheDir: path.join(out, '.cache'), plugins: [vue()], publicDir: path.resolve('public') });
   httpOrigin = `http://127.0.0.1:${server.httpServer.address().port}`;
   origin = httpOrigin.replace('http:', 'https:');
-  browser = await chromium.launch({ headless: true, executablePath: process.env.ADMIN_UI_CHROMIUM || 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
+  browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], executablePath: process.env.ADMIN_UI_CHROMIUM || 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
   report.chromium = browser.version();
   context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.addInitScript(() => {
@@ -801,6 +804,55 @@ try {
     assert.notEqual(danger, await name.evaluate(element => getComputedStyle(element).color));
     const focusScreenshot = path.join(out, 'keyboard-focus.png'); await page.screenshot({ path: focusScreenshot }); report.screenshots.push(focusScreenshot);
     await cdp.detach();
+  });
+  // The preceding real-touch matrix owns a mobile context with overlay viewport scrollbars.
+  await context.close(); context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.route('**/*', intercept); page = await context.newPage(); page.setDefaultTimeout(7000);
+  page.on('pageerror', error => report.errors.push(error.stack));
+  for (const dark of [false, true]) for (const width of [320, 360, 390, 1440]) await check(`page, navigation, table and group scrollbar paint/hit edges ${width} ${dark ? 'dark' : 'light'}`, async () => {
+    await load({ count: 50, width, dark, uniqueGroups: true });
+    const name = `${width}-${dark ? 'dark' : 'light'}`;
+    await nativeScrollbar(page.locator('html'), 'y', `body-${name}`);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    if (width < 768) {
+      const nav = page.locator('.admin-nav'); await nativeScrollbar(nav, 'x', `nav-${name}`);
+      for (const end of [false, true]) {
+        await page.keyboard.press('Tab'); await nav.locator('button').nth(end ? 8 : 0).focus();
+        const edge = await nav.locator('button').nth(end ? 8 : 0).evaluate(el => {
+          el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const a = el.getBoundingClientRect(), port = el.parentElement, b = port.getBoundingClientRect(), css = getComputedStyle(el), ring = parseFloat(css.outlineWidth) + parseFloat(css.outlineOffset);
+          return { left: a.left - ring, right: a.right + ring, top: a.top - ring, bottom: a.bottom + ring, portLeft: b.left + port.clientLeft, portRight: b.left + port.clientLeft + port.clientWidth, portTop: b.top + port.clientTop, portBottom: b.top + port.clientTop + port.clientHeight };
+        });
+        report.geometry.push({ kind: 'navigation-focus-edge', name, end, ...edge });
+        assert.ok(edge.left >= edge.portLeft - .75 && edge.right <= edge.portRight + .75 && edge.top >= edge.portTop - .75 && edge.bottom <= edge.portBottom + .75, JSON.stringify(edge));
+      }
+    }
+    const table = page.locator('.table-wrapper').first(); await table.evaluate(el => el.scrollIntoView({ block: 'end' }));
+    if (await table.evaluate(el => el.scrollWidth > el.clientWidth)) await nativeScrollbar(table, 'x', `table-${name}`);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const trigger = page.locator('.admin-toolbar-group-trigger'); await trigger.click();
+    const popup = page.getByRole('listbox'); await nativeScrollbar(popup, 'y', `group-${name}`);
+    await page.keyboard.press('End');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await popup.locator('button').last().evaluate(el => el === document.activeElement), true);
+    assert.equal(await popup.evaluate(el => el.offsetWidth), 200, 'accepted popup width is unchanged');
+    const endpoint = await popup.evaluate(el => {
+      const last = el.lastElementChild.getBoundingClientRect(), r = el.getBoundingClientRect();
+      return { scrollTop: el.scrollTop, gap: el.scrollHeight - el.clientHeight - el.scrollTop, paddingBottom: parseFloat(getComputedStyle(el).paddingBottom), lastTop: last.top, lastBottom: last.bottom, clientTop: r.top + el.clientTop, clientBottom: r.top + el.clientTop + el.clientHeight };
+    });
+    report.geometry.push({ kind: 'group-End-content-endpoint', name, ...endpoint });
+    // scrollIntoView reaches the last option, not the trailing menu padding.
+    assert.ok(endpoint.lastTop >= endpoint.clientTop - 1 && endpoint.lastBottom <= endpoint.clientBottom + 1, `complete last option is visible: ${JSON.stringify(endpoint)}`);
+    assert.ok(endpoint.gap - endpoint.paddingBottom <= 1 && endpoint.lastBottom >= endpoint.clientBottom - endpoint.paddingBottom - 1, `End reaches the content endpoint: ${JSON.stringify(endpoint)}`);
+    await page.keyboard.press('Escape'); assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+    assert.equal(saves.length, 0, 'scrolling never writes node order');
+    const shot = path.join(out, `scrollbars-page-${name}.png`); await page.screenshot({ path: shot }); report.screenshots.push(shot);
+  });
+  await check('shared scrollbar paint never reaches the mounted public control or body', async () => {
+    await page.goto(`${origin}/test/fixtures/admin-ui/index.html?mode=public#/`);
+    await page.locator('#public-control').waitFor();
+    const css = await page.locator('#public-control input').evaluate(el => ({ admin: document.body.classList.contains('admin-ui-surface'), thumb: getComputedStyle(el, '::-webkit-scrollbar-thumb').backgroundImage, border: getComputedStyle(el, '::-webkit-scrollbar-thumb').borderLeftWidth, token: getComputedStyle(el).getPropertyValue('--admin-scrollbar-paint') }));
+    assert.deepEqual(css, { admin: false, thumb: 'none', border: '0px', token: '' });
+    const shot = path.join(out, 'public-scope-unchanged.png'); await page.screenshot({ path: shot }); report.screenshots.push(shot);
   });
   assert.deepEqual(report.errors, [], 'no Vue/browser exceptions');
 } catch (error) { report.errors.push(error.stack); }

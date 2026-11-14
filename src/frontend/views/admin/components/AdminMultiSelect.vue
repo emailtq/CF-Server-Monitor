@@ -6,7 +6,7 @@
     <div v-if="open" :id="menuId" ref="menu" class="admin-picker-menu" :style="menuStyle" @keydown="keydown">
       <div class="admin-picker-search"><input ref="search" v-model="query" type="search" :aria-label="t('adminSearchOptions')" :placeholder="t('adminSearchOptions')" /></div>
       <div class="admin-picker-count" role="status">{{ modelValue.length }} / {{ options.length }} {{ t('adminSelected') }}</div>
-      <div ref="list" class="admin-picker-options" :style="{ maxHeight: `${listHeight}px` }">
+      <div ref="list" class="admin-picker-options" tabindex="-1" :style="{ maxHeight: `${listHeight}px` }">
         <slot name="before-options" />
         <label v-for="option in filtered" :key="option.value" class="admin-picker-option" :class="{ 'is-disabled': unavailable(option) }">
           <input type="checkbox" :value="option.value" :checked="modelValue.includes(option.value)" :disabled="unavailable(option)" :aria-label="option.label" @change="select(option, $event)" />

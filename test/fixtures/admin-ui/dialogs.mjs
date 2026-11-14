@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
+import { nativeScrollbar } from './scrollbar-assertions.mjs';
 
 const playwrightPath = createRequire(import.meta.url).resolve(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const runtimeRequire = createRequire(playwrightPath);
@@ -14,7 +15,7 @@ const out = path.resolve(process.env.ADMIN_DIALOG_REPORT_DIR || `.planning/2026-
 const viewportScrollbarOnly = process.argv.includes('--viewport-scrollbar');
 fs.mkdirSync(out, { recursive: true });
 const report = { node: process.version, args: process.argv.slice(2), checks: [], geometry: [], screenshots: [], errors: [], actions: [], boundary: 'Mounted production Vue components and styles; synthetic HTTP responses only. Private Vue refs select existing inline dialogs; no substituted dialog markup.' };
-const hashFiles = ['src/frontend/styles/admin.css', 'src/frontend/styles/admin-download.css', 'src/frontend/views/admin/components/AdminDialog.vue', 'src/frontend/views/admin/components/AdminMultiSelect.vue', 'src/frontend/views/admin/Terminal.vue', 'test/fixtures/admin-ui/dialogs.js', 'test/fixtures/admin-ui/dialogs.mjs'];
+const hashFiles = ['src/frontend/styles/admin.css', 'src/frontend/styles/admin-download.css', 'src/frontend/views/admin/components/AdminDialog.vue', 'src/frontend/views/admin/components/AdminMultiSelect.vue', 'src/frontend/views/admin/Terminal.vue', 'test/fixtures/admin-ui/dialogs.js', 'test/fixtures/admin-ui/dialogs.mjs', 'test/fixtures/admin-ui/scrollbar-assertions.mjs'];
 report.hashes = Object.fromEntries(hashFiles.map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
 let server, browser, context, page, httpOrigin, origin;
 const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -111,7 +112,7 @@ try {
   browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], executablePath: process.env.ADMIN_UI_CHROMIUM || 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
   report.chromium = browser.version();
   context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await context.route('**/*', async route => {
+  const serveFixture = async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === 'https://api.github.com') {
       if (url.pathname.includes('/contents/')) return route.fulfill({ json: { encoding: 'base64', content: Buffer.from('fs.StringVar(&nodeTokenFile,"token-file","","")\nfs.StringVar(&registerKey,"register-key","","")\nfs.StringVar(&terminal,"terminal","","")\nfunc (a *Agent) startTerminal(ctx context.Context) {}').toString('base64') } });
@@ -129,7 +130,8 @@ try {
     if (url.pathname === '/api/config' || url.pathname === '/theme') return route.fulfill({ json: {} });
     const response = await route.fetch({ url: httpOrigin + (url.pathname === '/admin' ? '/test/fixtures/admin-ui/dialogs.html' : url.pathname) + url.search });
     return route.fulfill({ response });
-  });
+  };
+  await context.route('**/*', serveFixture);
   page = await context.newPage(); page.setDefaultTimeout(5000); page.on('pageerror', error => report.errors.push(error.stack));
   const kinds = ['add', 'group', 'delete', 'edit', 'batch', 'renew', 'download', 'downloadConfirm', 'autoDiscovery', 'notificationCreate', 'notificationSmtp', 'notificationWebhook', 'notificationTemplate', 'alert', 'revoke', 'terminal', 'database', 'notificationRemoval', 'autoUpdateWarning', 'databaseClear', 'databaseUpgrade', 'd1Usage', 'validation', 'saveResult', 'message'];
   const matrix = viewportScrollbarOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 320, height: 480, locale: 'zh', dark: true }, { width: 360, height: 360, locale: 'ja', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
@@ -215,9 +217,31 @@ try {
     }
     report.geometry.push({ kind: 'scrollbar-drag', consumer: kind, ...geometry, paintedWidth: visibleColumns.length, background, drags });
     assert.equal(geometry.gutter, 8, 'keep the established drag region and separately reserved layout gutter');
-    assert.equal(visibleColumns.length, 6, 'the screenshot must actually paint a six-pixel thumb, not merely declare a thin width');
+    assert.equal(visibleColumns.length, 3, 'the screenshot must actually paint the approved three-pixel thumb, not merely declare a thin width');
     assert.ok(drags.every(drag => drag.scrollTop > 0), 'native mouse drag must work at both the unpainted edge and thumb center');
     await screenshot(`scrollbar-${kind}-after-drag`);
+  });
+  await check('native modal, picker and textarea paint/drag remain usable in both themes and fractional DPR', async () => {
+    const originalPage = page;
+    for (const dark of [false, true]) for (const dpr of [1.25, 1, 2]) {
+      const dpiContext = await browser.newContext({ viewport: { width: 390, height: 700 }, deviceScaleFactor: dpr });
+      await dpiContext.route('**/*', serveFixture); page = await dpiContext.newPage();
+      try {
+        await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture);
+        await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
+        await open('edit');
+        await nativeScrollbar({ page, report, out, PNG }, page.locator('.admin-dialog-body').last(), 'y', `modal-${dark}-${dpr}`);
+        await open('notificationTemplate');
+        const textarea = page.locator('.admin-dialog textarea').last();
+        await textarea.fill(Array.from({ length: 60 }, (_, i) => `preview ${i}`).join('\n')); await textarea.scrollIntoViewIfNeeded();
+        await nativeScrollbar({ page, report, out, PNG }, textarea, 'y', `modal-textarea-${dark}-${dpr}`);
+        await open('alert'); await page.locator('.admin-picker-summary').first().click();
+        await nativeScrollbar({ page, report, out, PNG }, page.locator('.admin-picker-options'), 'y', `picker-${dark}-${dpr}`);
+        await page.keyboard.press('End'); await page.keyboard.press('Escape');
+        assert.equal(await page.locator('.admin-picker-summary').first().evaluate(el => el === document.activeElement), true);
+        await screenshot(`native-modal-${dark}-${dpr}`);
+      } finally { await dpiContext.close(); page = originalPage; }
+    }
   });
   await check('stack, busy, keyboard trap and focus restore stay on the real dialogs', async () => {
     await page.setViewportSize({ width: 390, height: 480 });

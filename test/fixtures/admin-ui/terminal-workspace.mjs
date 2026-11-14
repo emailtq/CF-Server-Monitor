@@ -10,12 +10,13 @@ import { connectionChecks, refinementChecks } from './terminal-refinement-checks
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const { PNG } = require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/pngjs');
 const base = path.resolve('.planning/2026-11-13-admin-ui-polish/task3');
 fs.mkdirSync(base, { recursive: true });
 const out = process.env.TERMINAL_WORKSPACE_REPORT_DIR || fs.mkdtempSync(path.join(base, 'workspace-'));
 fs.mkdirSync(out, { recursive: true });
 const report = { checks: [], errors: [], actions: [], inputs: [], resizes: [], sockets: 0, ack: 0, outputBytes: 0, realXterm: true, syntheticPeer: true, physicalDevice: false };
-report.sourceSHA256 = Object.fromEntries(['src/frontend/views/admin/Terminal.vue', 'src/frontend/views/admin/components/AdminDialog.vue', 'src/frontend/composables/useTerminal.js', 'test/fixtures/admin-ui/terminal-workspace.mjs', 'test/fixtures/admin-ui/terminal-refinement-checks.mjs'].map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
+report.sourceSHA256 = Object.fromEntries(['src/frontend/styles/admin.css', 'src/frontend/views/admin/Terminal.vue', 'src/frontend/views/admin/components/AdminDialog.vue', 'src/frontend/composables/useTerminal.js', 'test/fixtures/admin-ui/terminal-workspace.mjs', 'test/fixtures/admin-ui/terminal-refinement-checks.mjs', 'test/fixtures/admin-ui/scrollbar-assertions.mjs'].map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
 let server, browser, page, context, socket, session = 0;
 const refinement = process.env.TERMINAL_REFINEMENT === '1';
 let releaseCreating, releaseStarting;
@@ -41,10 +42,12 @@ try {
   const httpOrigin = `http://127.0.0.1:${server.httpServer.address().port}`, origin = httpOrigin.replace('http:', 'https:');
   const bundle = fs.readdirSync(out).find(name => name.startsWith('compiled-fixture-'));
   const exports = JSON.parse(fs.readFileSync(path.join(out, bundle, 'build-receipt.json'))).exports;
-  browser = await chromium.launch({ headless: true, executablePath: 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
+  browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], executablePath: 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
   report.browserVersion = browser.version();
   const touch = process.env.TERMINAL_WORKSPACE_POINTER !== 'fine';
-  context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: touch, isMobile: touch });
+  const dpr = Number(process.env.TERMINAL_WORKSPACE_DPR || 1);
+  assert.ok([1, 1.25, 2].includes(dpr)); report.dpr = dpr;
+  context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: touch, isMobile: touch, deviceScaleFactor: dpr });
   report.pointer = touch ? 'coarse' : 'fine';
   await context.addInitScript(() => {
     window.fixtureAck = 0;
@@ -87,7 +90,7 @@ try {
   if (refinement) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report });
   await page.waitForFunction(() => window.fixtureScreen && !window.fixtureScreen.options.disableStdin);
   if (refinement) {
-    await refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, socket: () => socket });
+    await refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, PNG, socket: () => socket });
   } else {
   const cdp = await context.newCDPSession(page);
   const swipe = async (delta = 180, options = {}) => {

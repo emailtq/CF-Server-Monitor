@@ -11,6 +11,10 @@
   --cf-warn: light-dark(oklch(.575 .12 55), oklch(.8 .1 65));
   --cf-font: ui-sans-serif, sans-serif;
   --terminal-font: var(--cf-font);
+  --admin-scrollbar-hit: 8px;
+  --admin-scrollbar-paint: 3px;
+  --admin-scrollbar-inset: 2px;
+  --admin-scrollbar-thumb: light-dark(oklch(.65 0 0), oklch(.6 0 0));
   --bg-primary: var(--cf-panel);
   --bg-secondary: var(--cf-panel);
   --bg-card: var(--cf-panel);
@@ -106,12 +110,30 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui .admin-dialog-body :is(label, p) { overflow-wrap: anywhere; }
 .admin-ui .admin-dialog-body .admin-node-picker { max-height: none; overflow: visible; }
 .admin-ui .admin-dialog-body .admin-routing-preview .admin-message-preview { max-height: none; overflow: visible; }
-/* Paint a 6px thumb without reducing its 8px native drag region or layout gutter. */
-.admin-ui.admin-dialog-overlay ::-webkit-scrollbar { width: 8px; height: 8px; }
-.admin-ui.admin-dialog-overlay ::-webkit-scrollbar-thumb { border: 1px solid var(--cf-panel); background-color: color-mix(in srgb, var(--cf-muted) 60%, var(--cf-panel)); background-clip: padding-box; }
-.admin-ui.admin-dialog-overlay ::-webkit-scrollbar-thumb:hover { background-color: var(--cf-muted); }
+/* Keep the hit area; fixed-size paint avoids fractional-DPR border rounding. */
+body.admin-ui-surface::-webkit-scrollbar,
+.admin-ui::-webkit-scrollbar,
+.admin-ui ::-webkit-scrollbar { width: var(--admin-scrollbar-hit); height: var(--admin-scrollbar-hit); }
+body.admin-ui-surface::-webkit-scrollbar-track,
+.admin-ui::-webkit-scrollbar-track,
+.admin-ui ::-webkit-scrollbar-track { background: var(--cf-panel); }
+body.admin-ui-surface::-webkit-scrollbar-thumb,
+.admin-ui::-webkit-scrollbar-thumb,
+.admin-ui ::-webkit-scrollbar-thumb,
+.admin-ui .terminal-screen .xterm .scrollbar.vertical .slider { background: linear-gradient(var(--admin-scrollbar-thumb), var(--admin-scrollbar-thumb)) center / var(--admin-scrollbar-paint) 100% no-repeat; background-clip: padding-box; }
+body.admin-ui-surface::-webkit-scrollbar-thumb,
+.admin-ui::-webkit-scrollbar-thumb,
+.admin-ui ::-webkit-scrollbar-thumb { border: solid transparent; border-width: 0 calc(var(--admin-scrollbar-hit) - var(--admin-scrollbar-paint) - var(--admin-scrollbar-inset)) 0 var(--admin-scrollbar-inset); }
+body.admin-ui-surface::-webkit-scrollbar-thumb:horizontal,
+.admin-ui::-webkit-scrollbar-thumb:horizontal,
+.admin-ui ::-webkit-scrollbar-thumb:horizontal { border-width: var(--admin-scrollbar-inset) 0 calc(var(--admin-scrollbar-hit) - var(--admin-scrollbar-paint) - var(--admin-scrollbar-inset)); background-size: 100% var(--admin-scrollbar-paint); }
+body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
+.admin-ui::-webkit-scrollbar-thumb:hover,
+.admin-ui ::-webkit-scrollbar-thumb:hover { background-color: transparent; }
 @supports not selector(::-webkit-scrollbar) {
-  .admin-ui.admin-dialog-overlay * { scrollbar-width: thin; scrollbar-color: var(--cf-muted) var(--cf-panel); }
+  /* shortcut: Firefox thin is platform-sized, revisit if pixel-sized standard scrollbars land. */
+  body.admin-ui-surface, .admin-ui, .admin-ui * { scrollbar-width: thin; scrollbar-color: var(--admin-scrollbar-thumb) var(--cf-panel); }
+  html:has(> body.admin-ui-surface) { scrollbar-width: thin; scrollbar-color: #999 transparent; }
 }
 .admin-ui .admin-dialog-footer { margin-top: 20px; display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
 .admin-ui .admin-dialog-footer > div:empty { display: none; }
@@ -147,6 +169,10 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 @media (min-width: 768px) {
   .admin-ui .admin-workspace { flex-direction: row; }
   .admin-ui .admin-nav { width: 176px; flex-direction: column; overflow: visible; }
+}
+@media (max-width: 767px) {
+  .admin-ui .admin-nav { padding: 4px; margin: -4px; scroll-padding: 4px; }
+  .admin-ui .admin-nav-item { scroll-margin: 4px; }
 }
 @media (max-width: 639px) {
   .admin-ui .admin-header-inner { flex-wrap: wrap; gap: 12px; }

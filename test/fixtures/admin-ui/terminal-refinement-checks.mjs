@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import en from '../../../src/frontend/locales/en.js';
+import { nativeScrollbar } from './scrollbar-assertions.mjs';
 
 export async function connectionChecks({ page, check, releaseCreating, releaseStarting, out, report }) {
   await check('actual creating transcript occupies the terminal content, not an overlay card', async () => {
@@ -35,7 +36,7 @@ export async function connectionChecks({ page, check, releaseCreating, releaseSt
   });
 }
 
-export async function refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, socket }) {
+export async function refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, socket, PNG }) {
   await check('leaving and reversed real menu reclaim outside focus and block remote keyboard input', async () => {
     const inputs = report.inputs.length;
     await menu();
@@ -63,6 +64,43 @@ export async function refinementChecks({ page, context, report, check, state, ou
     assert.deepEqual([geometry.width, geometry.height, geometry.dx, geometry.dy], [44, 44, 0, 0]); assert.equal(geometry.background, 'rgba(0, 0, 0, 0)');
     await page.keyboard.press('Tab'); await button.focus();
     assert.notEqual(await button.evaluate(el => getComputedStyle(el).outlineStyle), 'none');
+  });
+  await check('terminal X keeps its centered 44px hit target, neutral pointer fill and keyboard ring', async () => {
+    const inputs = report.inputs.length, sockets = report.sockets, resizes = report.resizes.length;
+    const button = page.locator('.admin-dialog-terminal .admin-dialog-close');
+    const samples = [];
+    const sample = async phase => samples.push(await button.evaluate((el, phase) => {
+      const b = el.getBoundingClientRect(), svg = el.querySelector('svg').getBoundingClientRect(), css = getComputedStyle(el);
+      return { phase, light: document.body.classList.contains('light'), width: b.width, height: b.height, dx: svg.x + svg.width / 2 - b.x - b.width / 2, dy: svg.y + svg.height / 2 - b.y - b.height / 2, background: css.backgroundColor, active: el.matches(':active'), hit: el.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)), ring: css.outlineStyle, focusVisible: el.matches(':focus-visible') };
+    }, phase));
+    for (const dark of [false, true]) {
+      await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark); await menu();
+      await button.hover(); await sample('hover');
+      await page.mouse.down(); await sample('mouse-held');
+      await page.screenshot({ path: path.join(out, `terminal-x-mouse-held-${dark}.png`) });
+      await page.mouse.up(); await page.locator('.admin-dialog-terminal').waitFor({ state: 'hidden' });
+      assert.equal(await page.locator('[data-terminal-menu]').evaluate(el => el === document.activeElement), true);
+      await menu();
+      const cdp = await context.newCDPSession(page), b = await button.boundingBox();
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: b.x + b.width / 2, y: b.y + b.height / 2 }] });
+      await page.waitForTimeout(40);
+      await sample('touch-held');
+      await page.screenshot({ path: path.join(out, `terminal-x-touch-held-${dark}.png`) });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      if (await button.count()) { await sample('touch-release-leaving'); await page.screenshot({ path: path.join(out, `terminal-x-touch-release-${dark}.png`) }); }
+      await page.locator('.admin-dialog-terminal').waitFor({ state: 'hidden' });
+      assert.equal(await page.locator('[data-terminal-menu]').evaluate(el => el === document.activeElement), true);
+      assert.equal(await page.evaluate(() => document.body.classList.contains('admin-dialog-open')), false);
+      await menu(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab'); await sample('keyboard');
+      await page.screenshot({ path: path.join(out, `terminal-x-keyboard-${dark}.png`) });
+      await closeMenu(); await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: report.pointer !== 'fine' }); await cdp.detach();
+    }
+    await page.evaluate(() => document.body.classList.add('light')); report.closeGlyph = samples;
+    assert.ok(samples.every(s => s.width === 44 && s.height === 44 && s.dx === 0 && s.dy === 0 && (s.phase === 'touch-release-leaving' || s.hit)), JSON.stringify(samples));
+    assert.ok(samples.every(s => s.background === 'rgba(0, 0, 0, 0)'), JSON.stringify(samples));
+    assert.ok(samples.at(-1).focusVisible && samples.at(-1).ring === 'solid');
+    assert.equal(report.inputs.length, inputs); assert.equal(report.sockets, sockets); assert.equal(report.resizes.length, resizes);
   });
   await check('right-to-left menu enters, leaves mounted to right, reverses and hands off revoke focus', async () => {
     const host = await page.locator('.terminal-screen').boundingBox(), sockets = report.sockets, resizes = report.resizes.length;
@@ -144,7 +182,8 @@ export async function refinementChecks({ page, context, report, check, state, ou
       });
       assert.ok(geometry.screen.height >= 40 && geometry.send.bottom <= 300 && geometry.send.height >= 44, JSON.stringify({ locale, geometry }));
       assert.ok(geometry.width <= 320 && geometry.scrollWidth <= geometry.clientWidth);
-      assert.deepEqual(geometry.scrollbar, { width: '8px', border: '1px' });
+      assert.equal(geometry.scrollbar.width, '8px');
+      assert.ok(parseFloat(geometry.scrollbar.border) >= 1.5 && parseFloat(geometry.scrollbar.border) <= 2);
       report.checks.push({ name: `draft-${locale}-320x300`, pass: true, geometry });
       await page.screenshot({ path: path.join(out, `draft-${locale}-320x300.png`) });
       await page.locator('[data-terminal-paste-cancel]').click();
@@ -183,19 +222,20 @@ export async function refinementChecks({ page, context, report, check, state, ou
     assert.equal(await page.locator('[data-terminal-menu]').evaluate(el => el === document.activeElement), true);
   });
   await output(Array.from({ length: 300 }, (_, i) => `thumb-history-${i}\r\n`).join(''));
-  await check('actual scrollbar has 6px painted thumb with full pointer hit area', async () => {
+  await check('actual scrollbar has 3px painted thumb with full pointer hit area', async () => {
     await page.locator('.xterm').hover();
     const slider = page.locator('.xterm .scrollbar.vertical .slider');
     report.sliderStyle = await slider.evaluate(el => { const b = el.getBoundingClientRect(), css = getComputedStyle(el); return { width: b.width, borderLeft: parseFloat(css.borderLeftWidth), borderRight: parseFloat(css.borderRightWidth), clip: css.backgroundClip }; });
-    assert.ok(report.sliderStyle.width >= 10);
-    assert.equal(report.sliderStyle.width - report.sliderStyle.borderLeft - report.sliderStyle.borderRight, 6);
+    assert.equal(report.sliderStyle.width, 14);
+    const paintBox = report.sliderStyle.width - report.sliderStyle.borderLeft - report.sliderStyle.borderRight;
+    assert.ok(paintBox >= 3 && paintBox < 4, 'fractional-DPR border rounding must not clip the separate 3px paint');
     assert.equal(report.sliderStyle.clip, 'padding-box');
   });
-  const drag = async continuous => {
+  const drag = async (continuous, offset) => {
     await page.evaluate(() => window.fixtureScreen.scrollToBottom());
     await page.waitForTimeout(40); await page.locator('.xterm').hover();
     const slider = await page.locator('.xterm .scrollbar.vertical .slider').boundingBox(), track = await page.locator('.xterm .scrollbar.vertical').boundingBox();
-    const x = slider.x + slider.width / 2, start = slider.y + slider.height / 2;
+    const x = slider.x + (offset ?? slider.width / 2), start = slider.y + slider.height / 2;
     await page.evaluate(() => {
       window.thumbFrames = []; window.thumbCounters = { render: 0, scroll: 0, parsed: 0 }; let previous = performance.now();
       const tick = now => { window.thumbFrames.push(now - previous); previous = now; window.thumbFrameId = requestAnimationFrame(tick); }; window.thumbFrameId = requestAnimationFrame(tick);
@@ -211,7 +251,8 @@ export async function refinementChecks({ page, context, report, check, state, ou
       samples.push({ y, at: await page.evaluate(() => performance.now()), ...await state(), domScrollTop: await page.locator('.xterm-scrollable-element').evaluate(el => el.scrollTop), thumbTop: await page.locator('.scrollbar.vertical .slider').evaluate(el => parseFloat(el.style.top)) });
     }
     await page.mouse.up();
-    report[continuous ? 'continuousThumb' : 'staticThumb'] = samples;
+    if (offset) (report.edgeThumbs ||= []).push({ offset, samples });
+    else report[continuous ? 'continuousThumb' : 'staticThumb'] = samples;
     (report.thumbTiming || (report.thumbTiming = [])).push({ continuous, ...await page.evaluate(() => { cancelAnimationFrame(window.thumbFrameId); for (const sub of window.thumbSubscriptions) sub.dispose(); return { frames: window.thumbFrames, counters: window.thumbCounters, smoothScrollDuration: window.fixtureScreen.options.smoothScrollDuration, screenReaderMode: window.fixtureScreen.options.screenReaderMode }; }) });
     assert.equal(samples.at(-1).viewportY, 0);
     assert.ok(samples.every((sample, i) => !i || sample.viewportY <= samples[i - 1].viewportY), JSON.stringify(samples));
@@ -226,6 +267,11 @@ export async function refinementChecks({ page, context, report, check, state, ou
   };
   await check('static real pointer thumb tracks monotonically and reaches history endpoints', () => drag(false));
   await check('continuous-output real pointer thumb tracks monotonically and preserves history/ACK', async () => { await drag(true); assert.equal(report.ack, report.outputBytes); });
+  await check('both unpainted edges of the full 14px real thumb retain drag and history endpoints', async () => {
+    const inputs = report.inputs.length;
+    for (const offset of [1, 13]) await drag(false, offset);
+    assert.equal(report.inputs.length, inputs); assert.equal(report.ack, report.outputBytes);
+  });
   await check('captured real thumb drag does not reset history when pointer drifts laterally', async () => {
     await page.evaluate(() => window.fixtureScreen.scrollToBottom()); await page.waitForTimeout(40); await page.locator('.xterm').hover();
     const slider = await page.locator('.xterm .scrollbar.vertical .slider').boundingBox();
@@ -292,6 +338,42 @@ export async function refinementChecks({ page, context, report, check, state, ou
     const anchor = await state(); await output(Array.from({ length: 40 }, (_, i) => `trim-tail-${i}\r\n`).join(''));
     const after = await state(); report.trim = { anchor, after };
     assert.equal(after.first, anchor.first); assert.ok(after.viewportY < after.baseY); assert.equal(report.ack, report.outputBytes);
+  });
+  if (report.pointer === 'fine') await check('Terminal native draft, toolbar and key-row actual paint/drag retain complete control edges', async () => {
+    const count = report.inputs.length, sockets = report.sockets;
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+    for (const dark of [false, true]) {
+      await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
+      await page.setViewportSize({ width: 320, height: 300 });
+      await pasteButton.click(); await draft.fill(Array.from({ length: 100 }, (_, i) => `preview ${i}`).join('\n'));
+      await nativeScrollbar({ page, report, out, PNG }, draft, 'y', `terminal-draft-${dark}`);
+      const toolbar = page.locator('.terminal-toolbar');
+      await nativeScrollbar({ page, report, out, PNG }, toolbar, 'y', `terminal-toolbar-${dark}`);
+      const keys = page.locator('.terminal-key-controls'); await keys.scrollIntoViewIfNeeded();
+      await nativeScrollbar({ page, report, out, PNG }, keys, 'x', `terminal-keys-${dark}`);
+      await page.locator('[data-terminal-paste-cancel]').click();
+    }
+    await page.setViewportSize({ width: 390, height: 844 }); await page.evaluate(() => document.body.classList.add('light'));
+    assert.equal(report.inputs.length, count); assert.equal(report.sockets, sockets); assert.equal(report.ack, report.outputBytes);
+  });
+  await check(`real custom thumb paint stays approximately 3px in both themes at context DPR ${report.dpr}`, async () => {
+    const samples = [], dpr = report.dpr;
+    for (const dark of [false, true]) {
+      // Sample mid-track, away from the existing return-to-bottom button's border.
+      await page.evaluate(dark => { document.body.classList.toggle('light', !dark); window.fixtureScreen.scrollToLine(400); }, dark);
+      await page.locator('.xterm').hover(); await page.waitForTimeout(120);
+      const slider = page.locator('.scrollbar.vertical .slider'), b = await slider.boundingBox();
+      const png = PNG.sync.read(await page.screenshot({ path: path.join(out, `custom-paint-${dark}-${dpr}.png`), clip: { x: b.x, y: b.y + b.height / 2, width: b.width, height: 1 } }));
+      const background = [...png.data.subarray(0, 3)];
+      const contrast = Array.from({ length: png.width }, (_, i) => Math.max(...background.map((value, c) => Math.abs(value - png.data[i * 4 + c]))));
+      const painted = Array.from({ length: png.width }, (_, i) => i).filter(i => background.some((value, c) => Math.abs(value - png.data[i * 4 + c]) > 3));
+      const middle = Math.floor(png.width / 2) * 4, rgb = [...png.data.subarray(middle, middle + 3)];
+      samples.push({ dark, dpr, width: b.width, paintedPhysical: painted.length, supportCss: painted.length / dpr, paintedCss: contrast.reduce((sum, value) => sum + value / Math.max(...contrast), 0) / dpr, rgb });
+      await page.screenshot({ path: path.join(out, `terminal-scrollbar-${dark}-${dpr}.png`) });
+    }
+    await page.evaluate(() => document.body.classList.add('light'));
+    report.customPaint = samples;
+    assert.ok(samples.every(s => s.width === 14 && Math.abs(s.paintedCss - 3) <= .55 && (s.dpr !== 1 || s.paintedPhysical === 3) && Math.max(...s.rgb) - Math.min(...s.rgb) <= 2), JSON.stringify(samples));
   });
   await check('exit retains remote screen; compact dismissible notice never covers output', async () => {
     const bufferText = () => page.evaluate(() => { const b = window.fixtureScreen.buffer.active; return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true) || '').join('\n').trimEnd(); });
