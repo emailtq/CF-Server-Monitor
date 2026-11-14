@@ -3,6 +3,52 @@ import path from 'node:path';
 import en from '../../../src/frontend/locales/en.js';
 import { nativeScrollbar } from './scrollbar-assertions.mjs';
 
+export async function actualThumbChecks({ page, context, report, check, state, output, out, PNG }) {
+  const coarse = report.pointer === 'coarse', cdp = await context.newCDPSession(page);
+  await output(Array.from({ length: 300 }, (_, n) => `real-touch-history-${n}\r\n`).join(''));
+  for (const continuous of [false, true]) await check(`${coarse ? 'CDP touch' : 'desktop mouse'} thumb: wider hit, diagonal capture and ${continuous ? 'continuous output' : 'static history'}`, async () => {
+    await page.evaluate(() => window.fixtureScreen.scrollToBottom());
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    const slider = page.locator('.scrollbar.vertical .slider'), r = await slider.boundingBox(), track = await page.locator('.scrollbar.vertical').boundingBox();
+    const x = coarse ? track.x + track.width - 18 : r.x + r.width / 2, y = r.y + r.height / 2;
+    const beforeInputs = report.inputs.length, beforeSockets = report.sockets, samples = [];
+    if (coarse) await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    else { await page.mouse.move(x, y); await page.mouse.down(); }
+    for (let n = 1; n <= 18; n++) {
+      const point = { x: x - n * 2, y: y + (track.y + r.height / 2 - y) * n / 18 };
+      if (coarse) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
+      else await page.mouse.move(point.x, point.y);
+      if (continuous) await output(`ongoing-${n}\r\n`);
+      await page.evaluate(() => new Promise(requestAnimationFrame)); samples.push(await state());
+    }
+    if (coarse) await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    else await page.mouse.up();
+    report.actualThumb ||= []; report.actualThumb.push({ coarse, continuous, x, y, slider: r, track, samples, ack: report.ack, outputBytes: report.outputBytes });
+    assert.equal(samples.at(-1).viewportY, 0, 'real thumb must reach the old-history endpoint');
+    assert.ok(samples.every((value, n) => n === 0 || value.viewportY <= samples[n - 1].viewportY), 'diagonal drift must not reset capture');
+    assert.equal(report.inputs.length, beforeInputs); assert.equal(report.sockets, beforeSockets); assert.equal(report.ack, report.outputBytes);
+    assert.equal(await page.locator('[data-terminal-bottom]').count(), 1);
+    const paint = await slider.boundingBox();
+    const png = PNG.sync.read(await page.screenshot({ path: path.join(out, `thumb-paint-${continuous}.png`), clip: { x: paint.x, y: paint.y + paint.height / 2, width: paint.width, height: 1 } }));
+    const background = [...png.data.subarray(0, 3)], contrast = Array.from({ length: png.width }, (_, n) => Math.max(...background.map((value, c) => Math.abs(value - png.data[n * 4 + c]))));
+    const paintedCss = contrast.reduce((sum, value) => sum + value / Math.max(...contrast), 0);
+    report.actualThumb.at(-1).paintedCss = paintedCss;
+    assert.equal(paint.width, coarse ? 20 : 14); assert.ok(Math.abs(paintedCss - 3) < .55, String(paintedCss));
+    await page.screenshot({ path: path.join(out, `${coarse ? 'touch' : 'mouse'}-${continuous ? 'continuous' : 'static'}.png`) });
+    const top = await slider.boundingBox();
+    if (coarse) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: track.x + track.width - 3, y: top.y + top.height / 2 }] });
+      for (let n = 1; n <= 12; n++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: track.x + track.width - 3 + n, y: top.y + top.height / 2 + (track.height - top.height) * n / 12 }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    } else {
+      await page.mouse.move(track.x + track.width - 3, top.y + top.height / 2); await page.mouse.down();
+      await page.mouse.move(track.x + track.width - 3, track.y + track.height - top.height / 2, { steps: 12 }); await page.mouse.up();
+    }
+    const bottom = await state(); assert.equal(bottom.viewportY, bottom.baseY);
+    assert.equal(await slider.evaluate(el => el.classList.contains('active')), false);
+  });
+}
+
 export async function connectionChecks({ page, check, releaseCreating, releaseStarting, out, report }) {
   await check('actual creating transcript occupies the terminal content, not an overlay card', async () => {
     await page.waitForTimeout(80);
@@ -94,7 +140,9 @@ export async function refinementChecks({ page, context, report, check, state, ou
       assert.equal(await page.evaluate(() => document.body.classList.contains('admin-dialog-open')), false);
       await menu(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab'); await sample('keyboard');
       await page.screenshot({ path: path.join(out, `terminal-x-keyboard-${dark}.png`) });
-      await closeMenu(); await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: report.pointer !== 'fine' }); await cdp.detach();
+      await closeMenu(); await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: report.pointer !== 'fine' });
+      // Detaching resets Chromium's touch override to fine; the owning context closes this session.
+      assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), report.pointer !== 'fine');
     }
     await page.evaluate(() => document.body.classList.add('light')); report.closeGlyph = samples;
     assert.ok(samples.every(s => s.width === 44 && s.height === 44 && s.dx === 0 && s.dy === 0 && (s.phase === 'touch-release-leaving' || s.hit)), JSON.stringify(samples));
@@ -182,7 +230,7 @@ export async function refinementChecks({ page, context, report, check, state, ou
       });
       assert.ok(geometry.screen.height >= 40 && geometry.send.bottom <= 300 && geometry.send.height >= 44, JSON.stringify({ locale, geometry }));
       assert.ok(geometry.width <= 320 && geometry.scrollWidth <= geometry.clientWidth);
-      assert.equal(geometry.scrollbar.width, '8px');
+      assert.equal(geometry.scrollbar.width, report.pointer === 'coarse' ? '20px' : '8px');
       assert.ok(parseFloat(geometry.scrollbar.border) >= 1.5 && parseFloat(geometry.scrollbar.border) <= 2);
       report.checks.push({ name: `draft-${locale}-320x300`, pass: true, geometry });
       await page.screenshot({ path: path.join(out, `draft-${locale}-320x300.png`) });
@@ -226,7 +274,7 @@ export async function refinementChecks({ page, context, report, check, state, ou
     await page.locator('.xterm').hover();
     const slider = page.locator('.xterm .scrollbar.vertical .slider');
     report.sliderStyle = await slider.evaluate(el => { const b = el.getBoundingClientRect(), css = getComputedStyle(el); return { width: b.width, borderLeft: parseFloat(css.borderLeftWidth), borderRight: parseFloat(css.borderRightWidth), clip: css.backgroundClip }; });
-    assert.equal(report.sliderStyle.width, 14);
+    assert.equal(report.sliderStyle.width, report.pointer === 'coarse' ? 20 : 14);
     const paintBox = report.sliderStyle.width - report.sliderStyle.borderLeft - report.sliderStyle.borderRight;
     assert.ok(paintBox >= 3 && paintBox < 4, 'fractional-DPR border rounding must not clip the separate 3px paint');
     assert.equal(report.sliderStyle.clip, 'padding-box');
@@ -267,9 +315,9 @@ export async function refinementChecks({ page, context, report, check, state, ou
   };
   await check('static real pointer thumb tracks monotonically and reaches history endpoints', () => drag(false));
   await check('continuous-output real pointer thumb tracks monotonically and preserves history/ACK', async () => { await drag(true); assert.equal(report.ack, report.outputBytes); });
-  await check('both unpainted edges of the full 14px real thumb retain drag and history endpoints', async () => {
+  await check('both unpainted edges of the full real thumb retain drag and history endpoints', async () => {
     const inputs = report.inputs.length;
-    for (const offset of [1, 13]) await drag(false, offset);
+    for (const offset of [1, report.pointer === 'coarse' ? 19 : 13]) await drag(false, offset);
     assert.equal(report.inputs.length, inputs); assert.equal(report.ack, report.outputBytes);
   });
   await check('captured real thumb drag does not reset history when pointer drifts laterally', async () => {
@@ -373,7 +421,7 @@ export async function refinementChecks({ page, context, report, check, state, ou
     }
     await page.evaluate(() => document.body.classList.add('light'));
     report.customPaint = samples;
-    assert.ok(samples.every(s => s.width === 14 && Math.abs(s.paintedCss - 3) <= .55 && (s.dpr !== 1 || s.paintedPhysical === 3) && Math.max(...s.rgb) - Math.min(...s.rgb) <= 2), JSON.stringify(samples));
+    assert.ok(samples.every(s => s.width === (report.pointer === 'coarse' ? 20 : 14) && Math.abs(s.paintedCss - 3) <= .55 && (s.dpr !== 1 || s.paintedPhysical === 3) && Math.max(...s.rgb) - Math.min(...s.rgb) <= 2), JSON.stringify(samples));
   });
   await check('exit retains remote screen; compact dismissible notice never covers output', async () => {
     const bufferText = () => page.evaluate(() => { const b = window.fixtureScreen.buffer.active; return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true) || '').join('\n').trimEnd(); });

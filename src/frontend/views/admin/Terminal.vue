@@ -229,7 +229,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.terminal-page { height: var(--terminal-viewport, 100dvh); display: flex; flex-direction: column; overflow: hidden; }
+.terminal-page { --terminal-scrollbar-hit: 14px; height: var(--terminal-viewport, 100dvh); display: flex; flex-direction: column; overflow: hidden; }
+@media (pointer: coarse) { .terminal-page { --terminal-scrollbar-hit: 20px; } }
 .terminal-panel { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .terminal-topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 12px; min-height: 44px; flex-shrink: 0; border-bottom: 1px solid var(--cf-border); }
 .terminal-node-name { min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -273,7 +274,7 @@ onBeforeUnmount(() => {
 .terminal-menu-enter-from, .terminal-menu-leave-to { background-color: transparent !important; }
 .terminal-menu-enter-from .admin-dialog-terminal, .terminal-menu-leave-to .admin-dialog-terminal { transform: translateX(100%); }
 @media (prefers-reduced-motion: reduce) { .terminal-menu-enter-active, .terminal-menu-leave-active, .terminal-menu-enter-active .admin-dialog-terminal, .terminal-menu-leave-active .admin-dialog-terminal { transition: none; } }
-.terminal-page .terminal-screen .xterm .scrollbar.vertical .slider { box-sizing: border-box; border-left: calc((14px - var(--admin-scrollbar-paint) - 1px) / 2) solid transparent; border-right: calc((14px - var(--admin-scrollbar-paint) + 1px) / 2) solid transparent; touch-action: none; }
+.terminal-page .terminal-screen .xterm .scrollbar.vertical .slider { box-sizing: border-box; border-left: calc((var(--terminal-scrollbar-hit) - var(--admin-scrollbar-paint) - 1px) / 2) solid transparent; border-right: calc((var(--terminal-scrollbar-hit) - var(--admin-scrollbar-paint) + 1px) / 2) solid transparent; touch-action: none; }
 .admin-ui .admin-dialog-terminal { position: fixed; top: 0; right: 0; margin: 0; width: min(340px, 100vw); max-width: 100vw; max-height: 100dvh; padding: 16px; border-radius: 0; }
 .admin-ui .admin-dialog-terminal .admin-dialog-head { text-align: left; min-height: 44px; display: flex; align-items: center; }
 .admin-ui .admin-dialog-terminal .admin-dialog-close { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }

@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import en from '../../../src/frontend/locales/en.js';
-import { connectionChecks, refinementChecks } from './terminal-refinement-checks.mjs';
+import { connectionChecks, refinementChecks, actualThumbChecks } from './terminal-refinement-checks.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
@@ -16,9 +15,9 @@ fs.mkdirSync(base, { recursive: true });
 const out = process.env.TERMINAL_WORKSPACE_REPORT_DIR || fs.mkdtempSync(path.join(base, 'workspace-'));
 fs.mkdirSync(out, { recursive: true });
 const report = { checks: [], errors: [], actions: [], inputs: [], resizes: [], sockets: 0, ack: 0, outputBytes: 0, realXterm: true, syntheticPeer: true, physicalDevice: false };
-report.sourceSHA256 = Object.fromEntries(['src/frontend/styles/admin.css', 'src/frontend/views/admin/Terminal.vue', 'src/frontend/views/admin/components/AdminDialog.vue', 'src/frontend/composables/useTerminal.js', 'test/fixtures/admin-ui/terminal-workspace.mjs', 'test/fixtures/admin-ui/terminal-refinement-checks.mjs', 'test/fixtures/admin-ui/scrollbar-assertions.mjs'].map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
 let server, browser, page, context, socket, session = 0;
 const refinement = process.env.TERMINAL_REFINEMENT === '1';
+const thumbOnly = process.env.TERMINAL_THUMB_ONLY === '1';
 let releaseCreating, releaseStarting;
 const creatingGate = refinement ? new Promise(resolve => { releaseCreating = resolve; }) : Promise.resolve();
 const startingGate = refinement ? new Promise(resolve => { releaseStarting = resolve; }) : Promise.resolve();
@@ -47,7 +46,7 @@ try {
   const touch = process.env.TERMINAL_WORKSPACE_POINTER !== 'fine';
   const dpr = Number(process.env.TERMINAL_WORKSPACE_DPR || 1);
   assert.ok([1, 1.25, 2].includes(dpr)); report.dpr = dpr;
-  context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: touch, isMobile: touch, deviceScaleFactor: dpr });
+  context = await browser.newContext({ viewport: { width: thumbOnly && !touch ? 1440 : 390, height: thumbOnly && !touch ? 900 : 844 }, hasTouch: touch, isMobile: touch, deviceScaleFactor: dpr });
   report.pointer = touch ? 'coarse' : 'fine';
   await context.addInitScript(() => {
     window.fixtureAck = 0;
@@ -89,7 +88,9 @@ try {
   await page.goto(`${origin}/admin#/admin/terminal/node-a?apiIndex=0`);
   if (refinement) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report });
   await page.waitForFunction(() => window.fixtureScreen && !window.fixtureScreen.options.disableStdin);
-  if (refinement) {
+  if (thumbOnly) {
+    await actualThumbChecks({ page, context, report, check, state, output, out, PNG });
+  } else if (refinement) {
     await refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, PNG, socket: () => socket });
   } else {
   const cdp = await context.newCDPSession(page);

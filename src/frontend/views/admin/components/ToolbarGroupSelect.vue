@@ -1,6 +1,6 @@
 <template>
   <div ref="root" class="admin-toolbar-group" @focusout="blur">
-    <button ref="trigger" type="button" role="combobox" aria-autocomplete="none" class="toolbar-select admin-toolbar-group-trigger" :title="summary" :aria-label="label" aria-haspopup="listbox" :aria-expanded="open" :aria-controls="open ? menuId : undefined" @pointerdown="triggerPointer" @click="triggerClick" @keydown="triggerKey">
+    <button ref="trigger" type="button" role="combobox" aria-autocomplete="none" class="toolbar-select admin-toolbar-group-trigger" :disabled="disabled" :title="summary" :aria-label="label" aria-haspopup="listbox" :aria-expanded="open" :aria-controls="open ? menuId : undefined" @pointerdown="triggerPointer" @click="triggerClick" @keydown="triggerKey">
       <span>{{ summary }}</span><AdminIcon name="chevron-down" />
     </button>
     <Transition name="admin-select" @after-leave="finishClose"><div v-if="open" :id="menuId" ref="menu" class="admin-toolbar-group-menu" :data-side="side" role="listbox" tabindex="-1" :aria-label="label" :style="menuStyle" @contextmenu.prevent @focusin="recordFocus" @keydown="menuKey">
@@ -19,7 +19,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AdminIcon from './AdminIcon.vue'
 
-const props = defineProps({ modelValue: String, groups: Array, choices: Array, allLabel: String, label: String, active: Boolean })
+const props = defineProps({ modelValue: String, groups: Array, choices: Array, allLabel: String, label: String, active: Boolean, disabled: Boolean })
 const emit = defineEmits(['update:modelValue'])
 const root = ref(null), trigger = ref(null), menu = ref(null), viewport = ref(null), open = ref(false), menuStyle = ref({}), side = ref('bottom'), canUp = ref(false), canDown = ref(false)
 const menuId = `admin-toolbar-group-${crypto.randomUUID()}`
@@ -58,7 +58,8 @@ const releaseModal = () => {
 const finishClose = () => {
   if (open.value) return
   releaseModal()
-  if (restoreFocus && trigger.value?.isConnected && !document.activeElement?.closest('[role=dialog]')) trigger.value.focus({ preventScroll: true })
+  const activeDialog = document.activeElement?.closest('[role=dialog]')
+  if (restoreFocus && trigger.value?.isConnected && (!activeDialog || activeDialog === root.value.closest('[role=dialog]'))) trigger.value.focus({ preventScroll: true })
   restoreFocus = false
 }
 const recordFocus = event => { lastFocused = event.target }
@@ -115,7 +116,7 @@ const focus = index => {
   nextTick(scrolledOptions)
 }
 const show = async () => {
-  if (open.value) return
+  if (open.value || props.disabled) return
   window.dispatchEvent(new CustomEvent('admin-picker-open', { detail: menuId }))
   query = ''; typedAt = 0
   if (!modalActive) {
@@ -186,7 +187,7 @@ const blur = event => {
 const scrolled = event => { if (!menu.value?.contains(event.target)) position() }
 const otherOpened = event => { if (event.detail !== menuId) { close(); releaseModal() } }
 const windowClosed = () => { if (open.value) close(true) }
-watch([() => props.groups, () => props.active], () => { close(); releaseModal() })
+watch([() => props.groups, () => props.active, () => props.disabled], () => { close(); releaseModal() })
 watch([canUp, canDown], () => {
   const focused = document.activeElement
   if (open.value && focused?.matches('[role=option]') && menu.value?.contains(focused)) focused.scrollIntoView({ block: 'nearest' })
@@ -218,7 +219,22 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.admin-toolbar-group { width: 128px; flex-shrink: 0; }
+.admin-toolbar-group {
+  width: 128px; flex-shrink: 0;
+  --toolbar-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --toolbar-input: light-dark(oklch(.929 .013 255.508), oklch(1 0 0 / 15%));
+  --toolbar-fill: light-dark(transparent, color-mix(in oklab, oklch(1 0 0 / 15%) 30%, transparent));
+  --toolbar-popover: light-dark(oklch(1 0 0), oklch(.208 .042 265.755));
+  --toolbar-ring: light-dark(oklch(.704 .04 256.788), oklch(.551 .027 264.364));
+  --toolbar-empty-shadow: 0 0 0 0 transparent;
+  --toolbar-shadow-layer: 0 1px 2px 0 rgb(0 0 0 / .05);
+  --toolbar-shadow: var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-shadow-layer);
+  --toolbar-transition: 150ms cubic-bezier(.4, 0, .2, 1);
+}
+.admin-toolbar-group .admin-toolbar-group-trigger.toolbar-select { height: 36px; min-height: 36px; padding: 8px 12px; border: 1px solid var(--toolbar-input); border-radius: 8px; background: var(--toolbar-fill); color: var(--cf-text); font-family: var(--toolbar-font); font-size: 14px; line-height: 20px; font-weight: 400; box-shadow: var(--toolbar-shadow); transition: color var(--toolbar-transition), box-shadow var(--toolbar-transition); cursor: default; }
+.admin-toolbar-group .admin-toolbar-group-trigger.toolbar-select:disabled { cursor: not-allowed; pointer-events: none; }
+.admin-toolbar-group .admin-toolbar-group-trigger.toolbar-select:focus-visible { border-color: var(--toolbar-ring); outline: none; box-shadow: var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), 0 0 0 3px color-mix(in oklab, var(--toolbar-ring) 50%, transparent), var(--toolbar-shadow-layer); }
+@media (hover: hover) { .admin-toolbar-group .admin-toolbar-group-trigger.toolbar-select:hover { background: light-dark(transparent, color-mix(in oklab, oklch(1 0 0 / 15%) 50%, transparent)); } }
 .admin-toolbar-group-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
 .admin-toolbar-group-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-toolbar-group-trigger svg { opacity: .5; color: var(--cf-muted); }

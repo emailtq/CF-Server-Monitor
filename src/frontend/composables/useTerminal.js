@@ -388,6 +388,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       const style = getComputedStyle(container)
       screen = new Terminal({
         cursorBlink: true, disableStdin: true, scrollback: 1000, screenReaderMode: true,
+        overviewRuler: { width: parseFloat(style.getPropertyValue('--terminal-scrollbar-hit')) || 14 },
         fontFamily: style.getPropertyValue('--terminal-font').trim() || 'Consolas, "Liberation Mono", monospace', fontSize: 14,
         theme: { background: style.getPropertyValue('--bg-primary').trim() || '#0d1117', foreground: style.getPropertyValue('--text-primary').trim() || '#c9d1d9' }
       })

@@ -33,7 +33,7 @@ test('Task5 notification and alert components compile as actual Vue templates', 
   }
 });
 
-test('Task5 real Vue wizard and alerts use isolated authenticated D1 and explicit transports', () => {
+test('Task5 real Vue single-page notifications and alerts use isolated authenticated D1 and explicit transports', () => {
   const result = spawnSync(process.execPath, ['--import', './test/fixtures/admin-ui/notification-preload.mjs', 'test/fixtures/admin-ui/notifications.mjs'], {
     encoding: 'utf8', timeout: 360000, windowsHide: true,
     env: { ...process.env, TASK5_REPORT_DIR: process.env.TASK5_REPORT_DIR || 'docs/superpowers/admin-ui-refactor/evidence/task-5/registered' }
@@ -71,7 +71,7 @@ test('long localized notification footer retains accessible Cancel and real prim
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('real Vue localized wizard glyphs stay visible without changing step semantics', () => {
+test('real Vue localized notification form labels stay visible', () => {
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/notification-labels.mjs'], {
     encoding: 'utf8', timeout: 360000, windowsHide: true,
     env: { ...process.env, TASK5_LABEL_REPORT_DIR: process.env.TASK5_LABEL_REPORT_DIR || 'docs/superpowers/admin-ui-refactor/evidence/task-5/final-4/registered-labels' }

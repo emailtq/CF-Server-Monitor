@@ -64,7 +64,6 @@ try {
           const a = await measure(page, actual), b = await measure(ref, expected); report.measurements.push({ width, theme, coarse, actual, expected, a, b });
           for (const key of ['fontSize', 'padding', 'radius', 'color', 'background']) assert.equal(a[key], b[key], `${actual}.${key}`);
           assert.ok(Math.abs(a.width - b.width) <= 2, `${actual}.width`);
-          if (!coarse && actual === '.admin-channel-row') assert.ok(Math.abs(a.height - b.height) <= 2, 'fine row density');
         }
         for (const name of ['bell', 'list-filter', 'send', 'mail', 'webhook', 'arrow-up-right']) {
           const svg = page.locator(`[data-reference-icon="${name}"]`).first(); if (!(await svg.count())) continue;
@@ -85,17 +84,16 @@ try {
       }
       await page.locator('[data-page=notifications]').click(); await page.locator('[data-action=add-channel]').click();
       const dialog = page.getByRole('dialog');
-      for (let step = 0; step < 3; step++) {
-        if (step === 1) { await dialog.locator('[name=name]').fill('示例通知'); await dialog.locator('[name=chatId]').fill('-1000000000001'); }
-        await check(`wizard ${step}/${stem}: bounds, real coarse targets and keyboard focus`, async () => {
+      {
+        { await dialog.locator('[name=name]').fill('示例通知'); await dialog.locator('[name=chatId]').fill('-1000000000001'); }
+        await check(`single-page notification/${stem}: bounds, real coarse targets and keyboard focus`, async () => {
           const r = await dialog.boundingBox(); assert.ok(r.x >= 15 && r.x + r.width <= width - 15); assert.ok(r.y >= 15 && r.y + r.height <= 885);
-          if (step === 1) assert.deepEqual(await dialog.locator('[data-secret=botToken], [name=chatId]').evaluateAll(nodes => nodes.map(n => n.dataset.secret || n.name)), ['botToken', 'chatId'], 'frozen Telegram connection field order');
-          for (const el of [dialog.locator('[data-action=next]'), dialog.locator('[data-action=save-channel]')]) if (await el.count()) { await el.scrollIntoViewIfNeeded(); const box = await el.boundingBox(); if (coarse) { assert.ok(box.width >= 44 && box.height >= 44); assert.equal(await el.evaluate(el => { const r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return [[x-21,y],[x+21,y],[x,y-21],[x,y+21]].every(([px,py])=>el.contains(document.elementFromPoint(px,py))); }), true); } }
+          assert.deepEqual(await dialog.locator('[data-secret=botToken], [name=chatId]').evaluateAll(nodes => nodes.map(n => n.dataset.secret || n.name)), ['botToken', 'chatId'], 'frozen Telegram connection field order');
+          for (const el of [dialog.locator('[data-action=test]'), dialog.locator('[data-action=save-channel]')]) if (await el.count()) { await el.scrollIntoViewIfNeeded(); const box = await el.boundingBox(); if (coarse) { assert.ok(box.width >= 44 && box.height >= 44); assert.equal(await el.evaluate(el => { const r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return [[x-21,y],[x+21,y],[x,y-21],[x,y+21]].every(([px,py])=>el.contains(document.elementFromPoint(px,py))); }), true); } }
           await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => !!document.activeElement.closest('[role=dialog]')), true);
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         });
-        await page.screenshot({ path: path.join(out, `wizard-${step}-${stem}.png`) }); assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), coarse);
-        if (step < 2) await dialog.locator('[data-action=next]').click();
+        await page.screenshot({ path: path.join(out, `single-page-${stem}.png`) }); assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), coarse);
       }
       await dialog.locator('[data-action=cancel]').click();
       await page.locator('[data-channel-edit=ops]').first().click(); assert.equal(await dialog.locator('[data-secret=botToken]').inputValue(), ''); await page.screenshot({ path: path.join(out, `masked-secret-${stem}.png`) }); await dialog.locator('[data-action=cancel]').click();

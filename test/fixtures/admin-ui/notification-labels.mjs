@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
-import { assertWizardLabelsVisible } from './wizard-label-assertions.mjs';
+import { assertNotificationLabelsVisible } from './notification-form-assertions.mjs';
 
 const { chromium } = createRequire(import.meta.url)('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const out = path.resolve(process.env.TASK5_LABEL_REPORT_DIR || 'docs/superpowers/admin-ui-refactor/evidence/task-5/final-4/registered-labels');
@@ -36,15 +36,12 @@ try {
       for (const [width, height] of [[320, 900], [390, 900], [1440, 900], [320, 540], [390, 540]]) {
         await page.setViewportSize({ width, height }); await page.locator('[data-action=add-channel]').click();
         const dialog = page.getByRole('dialog');
-        for (const step of [0, 1, 2]) {
-          if (step === 1) await dialog.locator('[name=name]').fill('Fixture label');
-          const geometry = await assertWizardLabelsVisible(dialog, step, [trans.adminNotificationType, trans.adminBasicInfo, trans.adminMessageTemplate]);
-          assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), coarse);
-          report.geometry.push({ locale, width, height, coarse, step, ...geometry });
-          report.checks.push({ name: `${locale}/${width}x${height}/${coarse}/step${step}: real glyph visibility and marker semantics`, pass: true });
-          if (step === 2 && locale === 'fr' && width === 320 && height === 900 && coarse) await page.screenshot({ path: path.join(out, 'fr320-visible.png') });
-          if (step < 2) await dialog.locator('[data-action=next]').click();
-        }
+        await dialog.locator('[name=name]').fill('Fixture label');
+        const geometry = await assertNotificationLabelsVisible(dialog, [trans.adminNotificationType, trans.adminNotificationName, trans.adminMessageTemplate, trans.adminMessagePreview]);
+        assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), coarse);
+        report.geometry.push({ locale, width, height, coarse, labels: geometry });
+        report.checks.push({ name: `${locale}/${width}x${height}/${coarse}: real single-page label glyph visibility`, pass: true });
+        if (locale === 'fr' && width === 320 && height === 900 && coarse) await page.screenshot({ path: path.join(out, 'fr320-visible.png') });
         await dialog.locator('[data-action=cancel]').click();
       }
     }

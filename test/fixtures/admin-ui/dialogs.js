@@ -48,7 +48,6 @@ const fixture = window.dialogFixture = {
     state.open = true
     await nextTick()
     await nextTick()
-    if (kind === 'notificationTemplate') component.$.setupState.step = 2
     if (kind === 'downloadConfirm') component.$.setupState.confirmReissue = true
     if (kind === 'terminal') component.$.setupState.showMenu = true
     if (kind === 'database') component.$.setupState.showSensitiveConfirm = true

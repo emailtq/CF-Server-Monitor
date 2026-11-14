@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
@@ -13,13 +12,13 @@ const { chromium } = runtimeRequire(playwrightPath);
 const { PNG } = runtimeRequire('pngjs');
 const out = path.resolve(process.env.ADMIN_DIALOG_REPORT_DIR || `.planning/2026-11-13-admin-ui-refinement/task2/run-${Date.now()}`);
 const viewportScrollbarOnly = process.argv.includes('--viewport-scrollbar');
+const pickerScrollportOnly = process.argv.includes('--picker-scrollport');
 fs.mkdirSync(out, { recursive: true });
 const report = { node: process.version, args: process.argv.slice(2), checks: [], geometry: [], screenshots: [], errors: [], actions: [], boundary: 'Mounted production Vue components and styles; synthetic HTTP responses only. Private Vue refs select existing inline dialogs; no substituted dialog markup.' };
-const hashFiles = ['src/frontend/styles/admin.css', 'src/frontend/styles/admin-download.css', 'src/frontend/views/admin/components/AdminDialog.vue', 'src/frontend/views/admin/components/AdminMultiSelect.vue', 'src/frontend/views/admin/Terminal.vue', 'test/fixtures/admin-ui/dialogs.js', 'test/fixtures/admin-ui/dialogs.mjs', 'test/fixtures/admin-ui/scrollbar-assertions.mjs'];
-report.hashes = Object.fromEntries(hashFiles.map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
 let server, browser, context, page, httpOrigin, origin;
 const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const check = async (name, fn) => {
+  if (pickerScrollportOnly && !name.startsWith('actual alert picker')) return;
   try { await fn(); report.checks.push({ name, pass: true }); console.log(`PASS ${name}`); }
   catch (error) { report.checks.push({ name, pass: false, error: error.stack }); console.error(`FAIL ${name}\n${error.stack}`); }
 };
@@ -42,12 +41,12 @@ const inspect = async (kind, dimensions) => {
     const structural = [...section.querySelectorAll('*'), section].filter(e => !e.matches('input,textarea,select,option') && e.getClientRects().length);
     const scrolls = structural.filter(e => ['auto', 'scroll'].includes(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight + 1);
     const scroll = getComputedStyle(body).overflowY === 'visible' ? section : body;
-    return { box: { x: r.x, y: r.y, width: r.width, height: r.height }, gutter: scroll.offsetWidth - scroll.clientWidth - scroll.clientLeft * 2, body: { clientWidth: body.clientWidth, offsetWidth: body.offsetWidth, clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, padding: getComputedStyle(body).padding }, scrolls: scrolls.map(e => e.className), horizontal: structural.filter(e => e.clientWidth && (e === section || e === body || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)) && e.scrollWidth > e.clientWidth + 1).map(e => ({ name: e.className, width: e.clientWidth, scrollWidth: e.scrollWidth })) };
+    return { group: section.classList.contains('admin-dialog-group'), box: { x: r.x, y: r.y, width: r.width, height: r.height }, gutter: scroll.offsetWidth - scroll.clientWidth - scroll.clientLeft * 2, body: { clientWidth: body.clientWidth, offsetWidth: body.offsetWidth, clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, padding: getComputedStyle(body).padding }, scrolls: scrolls.map(e => e.className), horizontal: structural.filter(e => e.clientWidth && (e === section || e === body || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)) && e.scrollWidth > e.clientWidth + 1).map(e => ({ name: e.className, width: e.clientWidth, scrollWidth: e.scrollWidth })) };
   });
   if (base.box.x < -.5 || base.box.x + base.box.width > dimensions.width + .5 || base.box.y < -.5 || base.box.y + base.box.height > dimensions.height + .5) problems.push('dialog outside viewport');
   if (base.horizontal.length) problems.push(`horizontal overflow ${JSON.stringify(base.horizontal)}`);
   if (base.body.clientHeight < 44) problems.push('dialog body collapsed below a usable control height');
-  if (kind === 'group') {
+  if (base.group) {
     // Actual minimal bounds its picker separately; the shell scrolls too in a short keyboard viewport.
     if (base.scrolls.some(name => !/(?:admin-dialog-group|admin-group-picker-list)/.test(name))) problems.push(`unexpected group scroll owner ${base.scrolls}`);
   } else {
@@ -139,8 +138,8 @@ try {
   await context.route('**/*', serveFixture);
   page = await context.newPage(); page.setDefaultTimeout(5000); page.on('pageerror', error => report.errors.push(error.stack));
   const kinds = ['add', 'group', 'delete', 'edit', 'batch', 'renew', 'download', 'downloadConfirm', 'autoDiscovery', 'notificationCreate', 'notificationSmtp', 'notificationWebhook', 'notificationTemplate', 'alert', 'revoke', 'terminal', 'database', 'notificationRemoval', 'autoUpdateWarning', 'databaseClear', 'databaseUpgrade', 'd1Usage', 'validation', 'saveResult', 'message'];
-  const matrix = viewportScrollbarOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 320, height: 480, locale: 'zh', dark: true }, { width: 360, height: 360, locale: 'ja', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
-  if (viewportScrollbarOnly) { await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture); }
+  const matrix = viewportScrollbarOnly || pickerScrollportOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 320, height: 480, locale: 'zh', dark: true }, { width: 360, height: 360, locale: 'ja', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
+  if (viewportScrollbarOnly || pickerScrollportOnly) { await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture); }
   const viewportCdp = await context.newCDPSession(page);
   for (const dimensions of matrix) {
     await viewportCdp.send('Emulation.setTouchEmulationEnabled', { enabled: dimensions.width < 640 });
@@ -162,6 +161,7 @@ try {
       return { owner: owner.className, scrollTop: owner.scrollTop, section: box(section), body: box(body), port: box(owner), trigger: box(section.querySelector('.admin-picker-summary')), menu: box(section.querySelector('.admin-picker-menu')) };
     });
     await trigger.click(); await menu.waitFor();
+    assert.equal(await menu.evaluate(el => el === document.activeElement), true, 'pointer opening focuses the non-input menu, not search');
     const beforeMenuScroll = await sample(), options = menu.locator('.admin-picker-options'), optionsBox = await options.boundingBox();
     await page.mouse.move(optionsBox.x + optionsBox.width / 2, optionsBox.y + optionsBox.height / 2); await page.mouse.wheel(0, 300);
     await page.waitForFunction(() => document.querySelector('.admin-picker-options')?.scrollTop > 0);
@@ -170,6 +170,7 @@ try {
     assert.equal(await menu.count(), 1); assert.equal((await sample()).scrollTop, beforeMenuScroll.scrollTop, 'menu keyboard scroll retains the background owner');
     await page.keyboard.press('Escape'); assert.equal(await menu.count(), 0); assert.equal(await trigger.evaluate(e => e === document.activeElement), true); assert.equal(await dialog.count(), 1);
     await trigger.click(); await menu.waitFor(); const before = await sample();
+    assert.equal(await menu.evaluate(el => el === document.activeElement), true, 'menu-container focus must not exempt active background scrolling');
     await page.mouse.move(before.port.right - 4, (before.port.top + before.port.bottom) / 2); await page.mouse.wheel(0, -2000);
     await page.waitForFunction(() => { const section = document.querySelector('.admin-dialog'), body = section.querySelector('.admin-dialog-body'); return (getComputedStyle(body).overflowY === 'visible' ? section : body).scrollTop === 0; });
     await frames(); const after = await sample(), outside = after.trigger.bottom <= after.port.top || after.trigger.top >= after.port.bottom;

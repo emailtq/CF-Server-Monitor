@@ -108,13 +108,14 @@ try {
           }
         }
         await page.evaluate(() => localStorage.clear()); await goto(page, true, locale);
-        for (const width of [1440, 1024, 768, 390, 320]) await check(`${locale}/${width}/${coarse ? 'coarse' : 'fine'}/login: text geometry and masked keyboard toggle`, async () => {
+        for (const width of [1440, 1024, 768, 390, 320]) await check(`${locale}/${width}/${coarse ? 'coarse' : 'fine'}/login: inset eye geometry and masked keyboard toggle`, async () => {
           await page.setViewportSize({ width, height: 900 });
           assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), coarse);
           const input = page.locator('.login-form-group.last input'), button = page.locator('.login-form-group.last button');
           await input.fill('synthetic-only-login-fixture'); await button.scrollIntoViewIfNeeded();
           const data = await button.evaluate(el => { const r=el.getBoundingClientRect(), input=el.parentElement.querySelector('input'), ir=input.getBoundingClientRect(), range=document.createRange();range.selectNodeContents(el);const x=r.x+r.width/2,y=r.y+r.height/2;return {width:r.width,height:r.height,rows:[...range.getClientRects()].map(rect=>Math.round(rect.y)),hit44:[[x-21,y],[x+21,y],[x,y-21],[x,y+21]].every(([px,py])=>el.contains(document.elementFromPoint(px,py))),overlap:ir.right-parseFloat(getComputedStyle(input).paddingRight)>r.left}; });
           assert.equal(new Set(data.rows).size,1);assert.ok(data.width >= (coarse?44:36));assert.ok(data.height >= (coarse?44:36));if(coarse)assert.equal(data.hit44,true);assert.equal(data.overlap,false);
+          assert.equal(await button.innerText(), ''); assert.equal(await button.locator('[data-reference-icon=eye]').count(), 1);
           assert.equal(await input.getAttribute('type'),'password');assert.equal(await button.getAttribute('aria-pressed'),'false');await button.focus();await page.keyboard.press('Enter');assert.equal(await input.getAttribute('type'),'text');await page.keyboard.press('Space');assert.equal(await input.getAttribute('type'),'password');
           await page.screenshot({ path: path.join(out, `login-${locale}-${width}-${coarse ? 'coarse' : 'fine'}.png`) });
         });
@@ -127,13 +128,13 @@ try {
           for (const width of [1440, 390, 320]) {
             await page.setViewportSize({ width, height: 900 });
             const button = page.locator('.login-form-group.last button');
-            assert.equal((await button.innerText()).trim(), 'Show protected value');
+            assert.equal((await button.innerText()).trim(), ''); assert.match(await button.getAttribute('aria-label'), /^Show protected value:/);
             const data = await button.evaluate(el => {
               const r = el.getBoundingClientRect(), input = el.parentElement.querySelector('input'), ir = input.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(el);
               return { rows: [...range.getClientRects()].map(row => Math.round(row.y)), overlap: ir.right - parseFloat(getComputedStyle(input).paddingRight) > r.left, inputWidth: ir.width, clipped: document.documentElement.scrollWidth > innerWidth || el.scrollWidth > el.clientWidth };
             });
             assert.equal(new Set(data.rows).size, 1); assert.equal(data.overlap, false); assert.equal(data.clipped, false); assert.ok(data.inputWidth > 24);
-            await button.click(); assert.equal((await button.innerText()).trim(), 'Hide protected value'); await button.click();
+            await button.click(); assert.equal((await button.innerText()).trim(), ''); assert.match(await button.getAttribute('aria-label'), /^Hide protected value:/); await button.click();
           }
         });
       }

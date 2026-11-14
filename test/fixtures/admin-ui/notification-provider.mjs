@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createServer } from './notification-matrix-server.mjs';
 import vue from '@vitejs/plugin-vue';
+import { chooseProvider } from './notification-form-assertions.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
@@ -30,30 +31,35 @@ try {
   for (const event of ['domcontentloaded', 'load']) page.on(event, () => report.lifecycle.push({ event, at: Date.now() }));
   await page.goto(`${origin}/test/fixtures/admin-ui/notification-provider.html`);
   const dialog = page.getByRole('dialog');
-  await dialog.locator('[data-action=next]').click();
+
   await dialog.locator('[name=name]').fill('Kept common draft'); await dialog.locator('[name=enabled]').uncheck();
   await dialog.locator('[name=chatId]').fill('42'); await dialog.locator('[data-secret=botToken]').fill('synthetic-only-token');
   await dialog.locator('[data-field=botToken] button').click();
-  await dialog.locator('[data-action=next]').click(); await dialog.locator('[name=template]').fill('Kept {{message}}');
-  await dialog.locator('[data-action=back]').click(); await dialog.locator('[data-action=back]').click();
-  await dialog.locator('[data-provider-type=smtp]').click(); await dialog.locator('[data-action=next]').click();
+   await dialog.locator('[name=template]').fill('Kept {{message}}');
+
+  await chooseProvider(dialog, 'smtp');
   const model = JSON.parse(await page.locator('#model').textContent());
   check('changing provider preserves exact name, disabled state and template', () => { assert.equal(model.name, 'Kept common draft'); assert.equal(model.enabled, false); assert.equal(model.template, 'Kept {{message}}'); });
   check('new provider resets connection defaults, credentials, clear requests and visibility', () => { assert.deepEqual(model.config, { port: 465, secure: 'auto' }); assert.deepEqual(model.secretKeys, []); assert.deepEqual(model.clearSecrets, []); });
   assert.equal(await dialog.locator('[name=name]').inputValue(), 'Kept common draft'); assert.equal(await dialog.locator('[name=enabled]').isChecked(), false);
   assert.equal(await dialog.locator('[data-secret]').first().inputValue(), ''); assert.equal(await dialog.locator('[data-secret]').first().getAttribute('type'), 'pass' + 'word'); assert.equal(await dialog.locator('[name=chatId]').count(), 0);
-  await dialog.locator('[data-action=next]').click(); assert.equal(await dialog.locator('[name=template]').inputValue(), 'Kept {{message}}');
+   assert.equal(await dialog.locator('[name=template]').inputValue(), 'Kept {{message}}');
   const events = JSON.parse(await page.locator('#events').textContent());
   check('switching and navigation never dispatch save or test', () => assert.deepEqual(events, []));
   await page.goto(`${origin}/test/fixtures/admin-ui/notification-provider.html?empty=1`);
-  await dialog.locator('[data-provider-type=webhook]').click();
+  await chooseProvider(dialog, 'webhook');
   const empty = JSON.parse(await page.locator('#model').textContent());
   check('false and empty common values remain exact rather than taking defaults', () => { assert.equal(empty.name, ''); assert.equal(empty.enabled, false); assert.equal(empty.template, ''); assert.deepEqual(empty.config, { method: 'POST', format: 'json', body: '' }); });
   assert.deepEqual(JSON.parse(await page.locator('#events').textContent()), []);
+  await dialog.locator('[data-action=save-channel]').click(); await dialog.locator('[data-action=test]').click();
+  const afterInvalid = JSON.parse(await page.locator('#events').textContent());
+  assert.equal(await dialog.locator('[role=alert]').count(), 1);
+  assert.equal(await dialog.locator('[name=name]').inputValue(), '');
+  check('empty name still blocks both save and explicit test without losing the draft', () => assert.deepEqual(afterInvalid, []));
 } catch (error) { report.errors.push(error.stack); }
 finally {
   await context?.close(); await browser?.close(); await server?.close(); report.stopped = true;
-  report.pass = report.checks.length === 4 && report.checks.every(check => check.pass) && report.errors.length === 0;
+  report.pass = report.checks.length === 5 && report.checks.every(check => check.pass) && report.errors.length === 0;
   fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ pass: report.pass, checks: report.checks, errors: report.errors }));
   if (!report.pass) process.exitCode = 1;

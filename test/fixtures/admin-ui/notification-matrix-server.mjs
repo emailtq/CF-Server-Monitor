@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
+import os from 'node:os';
 import assert from 'node:assert/strict';
 import { build, preview } from 'vite';
 
@@ -16,6 +16,8 @@ export async function createServer(options) {
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/toolbar-only'));
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/latency'));
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/successor/stage1'));
+  evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/successor/stage2'));
+  evidenceRoots.push(path.join(os.tmpdir(), 'cfsm-admin-ui-evidence'));
   assert.ok(evidenceRoots.some(base => {
     const relative = path.relative(base, realOut);
     return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
@@ -23,7 +25,6 @@ export async function createServer(options) {
   const bundle = fs.mkdtempSync(path.join(realOut, 'compiled-fixture-'));
   assert.equal(path.dirname(fs.realpathSync(bundle)), realOut);
   const entry = path.join(root, 'test/fixtures/admin-ui/index.html');
-  const entrySHA256 = crypto.createHash('sha256').update(fs.readFileSync(entry)).digest('hex');
   const startedAt = Date.now();
   const common = { configFile: false, envDir: false, root };
   const modules = options.frontendExports ? ['src/frontend/utils/i18n.js', 'src/frontend/composables/useTheme.js', 'src/frontend/utils/themeOptions.js'] : [];
@@ -47,7 +48,7 @@ export async function createServer(options) {
       next();
     });
   } }] });
-  const receipt = { entry, entrySHA256, input, exports, startedAt, readyAt: Date.now(), bundle, port: server.httpServer.address().port, method: 'compiled existing fixture via Vite build/preview; optional strict exports share real frontend module state', fixtureTarget: 'esnext', envDir: false, emptyOutDir: false, realEvidenceContainment: true, ...(middleware ? { middlewarePlugin: middleware.name, hookSourceSHA256: crypto.createHash('sha256').update(middleware.configureServer.toString()).digest('hex'), sameMiddlewareClosure: true, vueFixtureDevtools: options.vueFixtureDevtools === true, apiRouteMocksAdded: false } : {}) };
+  const receipt = { entry, input, exports, startedAt, readyAt: Date.now(), bundle, port: server.httpServer.address().port, method: 'compiled existing fixture via Vite build/preview; optional strict exports share real frontend module state', fixtureTarget: 'esnext', envDir: false, emptyOutDir: false, realEvidenceContainment: true, ...(middleware ? { middlewarePlugin: middleware.name, sameMiddlewareClosure: true, vueFixtureDevtools: options.vueFixtureDevtools === true, apiRouteMocksAdded: false } : {}) };
   const receiptPath = path.join(bundle, 'build-receipt.json');
   fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
   if (middleware) fs.writeFileSync(path.join(realOut, 'actual-d1-transport.json'), JSON.stringify(receipt, null, 2));

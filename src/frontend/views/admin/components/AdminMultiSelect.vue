@@ -3,7 +3,7 @@
     <button ref="trigger" type="button" class="admin-picker-summary" :title="summary" :aria-label="label || t('adminSelectItems')" :aria-expanded="open" :aria-controls="menuId" aria-haspopup="true" @click="toggle" @keydown.down.prevent="show" @keydown.up.prevent="show">
       <span>{{ summary }}</span><AdminIcon name="chevron-down" />
     </button>
-    <div v-if="open" :id="menuId" ref="menu" class="admin-picker-menu" :style="menuStyle" @keydown="keydown">
+    <div v-if="open" :id="menuId" ref="menu" class="admin-picker-menu" tabindex="-1" :style="menuStyle" @keydown="keydown">
       <div class="admin-picker-search"><input ref="search" v-model="query" type="search" :aria-label="t('adminSearchOptions')" :placeholder="t('adminSearchOptions')" /></div>
       <div class="admin-picker-count" role="status">{{ modelValue.length }} / {{ options.length }} {{ t('adminSelected') }}</div>
       <div ref="list" class="admin-picker-options" tabindex="-1" :style="{ maxHeight: `${listHeight}px` }">
@@ -46,7 +46,7 @@ const select = (option, event) => {
   emit('update:modelValue', event.target.checked ? [...props.modelValue, option.value] : props.modelValue.filter(value => value !== option.value))
 }
 const close = (restore = false) => { open.value = false; if (restore) trigger.value?.focus() }
-const position = () => {
+const position = (closeOffscreen = false) => {
   if (!open.value || !menu.value) return
   const rect = trigger.value.getBoundingClientRect()
   const body = root.value.closest('.admin-dialog-body')
@@ -57,7 +57,8 @@ const position = () => {
   const bottom = top + (viewport?.height || innerHeight) - 32
   const visibleTop = Math.max(top, container ? container.top + scrollport.clientTop : top)
   const visibleBottom = Math.min(bottom, container ? container.top + scrollport.clientTop + scrollport.clientHeight : bottom)
-  if (rect.bottom <= visibleTop || rect.top >= visibleBottom) { close(); return }
+  // Protect active text entry from keyboard panning, not the pointer-opening menu focus.
+  if (closeOffscreen === true && document.activeElement !== search.value && (rect.bottom <= visibleTop || rect.top >= visibleBottom)) { close(); return }
   const chrome = menu.value.offsetHeight - list.value.offsetHeight
   const below = bottom - rect.bottom - 4
   const above = rect.top - top - 4
@@ -75,13 +76,17 @@ const position = () => {
     top: `${Math.max(top, Math.min(side.value === 'up' ? rect.top - 4 - height : rect.bottom + 4, bottom - height))}px`
   }
 }
-const show = async () => {
+const show = async event => {
   if (open.value) return
   window.dispatchEvent(new CustomEvent('admin-picker-open', { detail: menuId }))
   query.value = ''; open.value = true
-  await nextTick(); position(); search.value?.focus()
+  await nextTick(); position()
+  // Only keyboard opening requests text entry; touch/mouse opening must not summon a soft keyboard.
+  const keyboard = event?.type === 'keydown' || event?.detail === 0
+  const target = keyboard ? search.value : menu.value
+  target?.focus({ preventScroll: true })
 }
-const toggle = () => open.value ? close() : show()
+const toggle = event => open.value ? close() : show(event)
 const keydown = event => {
   if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
   if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
@@ -93,7 +98,7 @@ const keydown = event => {
 const otherOpened = event => { if (event.detail !== menuId) close() }
 const outside = event => { if (!root.value?.contains(event.target)) close() }
 const blur = event => { if (event.relatedTarget && !root.value?.contains(event.relatedTarget)) close() }
-const scrolled = event => { if (!menu.value?.contains(event.target)) position() }
+const scrolled = event => { if (!menu.value?.contains(event.target)) position(true) }
 let observer
 watch(() => [props.modelValue, query.value, props.options], () => nextTick(position))
 onMounted(() => {

@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export async function nativeScrollbar({ page, out, report, PNG }, locator, axis, name) {
   report.geometry ||= []; report.screenshots ||= [];
+  assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), false, `${name} native mouse/8px assertion requires a fine-pointer context; coarse CDP drag has its own coverage`);
   const horizontal = axis === 'x';
   const geometry = await locator.evaluate((element, horizontal) => {
     const root = element === document.documentElement, owner = root ? document.scrollingElement : element;
