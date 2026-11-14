@@ -609,9 +609,20 @@ export function sanitizeAdminSettings(fullSettings = {}, notificationConfigAutho
 async function handleGetSettingsAction({ env, sys, loadFullSettings }) {
   const fullSettings = loadFullSettings ? await loadFullSettings() : sys;
   const notificationConfigAuthoritative = Boolean(await env.DB.prepare("SELECT 1 AS present FROM settings WHERE key = 'notification_config'").first());
+  const nameFields = PING_NODE_FIELDS.map(field => `${field}_name`);
+  const { results } = await env.DB.prepare(`SELECT key, value FROM settings WHERE key IN (${['site_options', ...nameFields].map(() => '?').join(', ')})`).bind('site_options', ...nameFields).all();
+  const rows = Object.fromEntries(results.map(row => [row.key, row.value]));
+  let siteOptions = {};
+  try { siteOptions = JSON.parse(rows.site_options || '{}') || {}; } catch (_) { /* Match loadSiteSettings' malformed JSON recovery. */ }
+  // Admin needs persisted names, not SITE defaults; public/Agent/settings consumers retain those defaults.
+  const configuredPingNodes = PING_NODE_FIELDS.filter(field => {
+    const key = `${field}_name`, name = Object.hasOwn(siteOptions, key) ? siteOptions[key] : rows[key];
+    return String(fullSettings[field] || '').trim() || String(name || '').trim();
+  });
   return createSuccessResponse({
     success: true,
-    settings: sanitizeAdminSettings(fullSettings, notificationConfigAuthoritative)
+    settings: sanitizeAdminSettings(fullSettings, notificationConfigAuthoritative),
+    configuredPingNodes
   });
 }
 

@@ -29,7 +29,6 @@
       </div>
         <ServerTable
           v-model:new-server-name="newServerName"
-          v-model:new-server-group="newServerGroup"
           :trans="trans"
           :servers="servers"
           :selected-servers="selectedServers"
@@ -122,7 +121,7 @@
         />
 
       <UpdatesPanel :trans="trans" :active-tab="activeTab" :latest-agent-version="latestAgentVersion" @donation="activeTab = 'donation'" />
-      <AddServerModal v-model:name="newServerName" v-model:group="newServerGroup" :trans="trans" :show="showAddModal" :saving="adding" :error="addError" :groups="groups" @save="addServer" @close="closeAddModal" />
+      <AddServerModal v-model:name="newServerName" :trans="trans" :show="showAddModal" :saving="adding" :error="addError" @save="addServer" @close="closeAddModal" />
       <GroupServersModal :trans="trans" :show="showGroupModal" :busy="batchEditing || cacheRefreshing" :servers="servers" :selected="selectedServers" @close="showGroupModal = false" @toggle="toggleServer" @select-all="toggleSelectAll" @batch-edit="showGroupModal = false; openBatchEditModal()" @batch-delete="showGroupModal = false; batchDelete()" @refresh="refreshServersCache" @save="saveGroup" />
       <RenewServerModal v-model:form="editForm" :trans="trans" :server-name="currentServerName" :show="showRenewModal" :saving="editSaving" :error="validationError" @close="closeRenewModal" @save="saveEdit" />
       <p v-if="validationError && validationField" class="danger-box" role="alert">{{ validationError }}</p>
@@ -812,14 +811,13 @@ const stats = ref({ total: '-', online: 0, offline: 0, avg_cpu: 0 })
 const groups = ref(['Default'])
 const latestAgentVersion = ref('')
 const newServerName = ref('')
-const newServerGroup = ref('')
 const showAddModal = ref(false)
 const showGroupModal = ref(false)
 const showRenewModal = ref(false)
 const currentServerVersion = ref('')
 const adding = ref(false)
 const addError = ref('')
-const closeAddModal = () => { if (adding.value) return; showAddModal.value = false; newServerName.value = ''; newServerGroup.value = ''; addError.value = '' }
+const closeAddModal = () => { if (adding.value) return; showAddModal.value = false; newServerName.value = ''; addError.value = '' }
 
 const settings = ref({
   site_title: '',
@@ -1282,7 +1280,6 @@ const resetAdminContext = () => {
   latestAgentVersion.value = ''
   changeAdminPassword.value = false
   newServerName.value = ''
-  newServerGroup.value = ''
   showAddModal.value = false
   showGroupModal.value = showRenewModal.value = false
   showBatchEditModal.value = false
@@ -1420,6 +1417,9 @@ const loadSettings = async () => {
         csp_static: settingsData.csp_static || '',
         csp_api: settingsData.csp_api || '',
         ua: settingsData.ua || 'cfsm'
+      }
+      if (Array.isArray(data.configuredPingNodes)) {
+        for (const field of PING_NODE_FIELDS) if (!data.configuredPingNodes.includes(field)) settings.value[`${field}_name`] = ''
       }
       applyMikusThemeOptions(settingsData.theme_options)
       changeAdminPassword.value = !settings.value.password_configured || !String(settings.value.username || '').trim()
@@ -1677,13 +1677,12 @@ const addServer = async () => {
 
   try {
     adding.value = true
-    const result = await adminApiForSite({ action: 'add', name, server_group: newServerGroup.value })
+    const result = await adminApiForSite({ action: 'add', name })
     if (generation !== siteGeneration.value) return
     if (!result.error) {
       saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serverAdded }
       showAddModal.value = false
       newServerName.value = ''
-      newServerGroup.value = ''
       loadServers()
     } else {
       addError.value = getMessage(result.error) || trans.value.operationFailed

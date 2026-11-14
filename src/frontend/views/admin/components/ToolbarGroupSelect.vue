@@ -19,11 +19,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AdminIcon from './AdminIcon.vue'
 
-const props = defineProps({ modelValue: String, groups: Array, allLabel: String, label: String, active: Boolean })
+const props = defineProps({ modelValue: String, groups: Array, choices: Array, allLabel: String, label: String, active: Boolean })
 const emit = defineEmits(['update:modelValue'])
 const root = ref(null), trigger = ref(null), menu = ref(null), viewport = ref(null), open = ref(false), menuStyle = ref({}), side = ref('bottom'), canUp = ref(false), canDown = ref(false)
 const menuId = `admin-toolbar-group-${crypto.randomUUID()}`
-const options = computed(() => [{ value: '', label: props.allLabel }, ...props.groups.map(group => ({ value: group, label: group }))])
+const options = computed(() => props.choices || [{ value: '', label: props.allLabel }, ...props.groups.map(group => ({ value: group, label: group }))])
 const summary = computed(() => options.value.find(option => option.value === props.modelValue)?.label || props.allLabel)
 let query = '', typedAt = 0, pointerType = 'touch', scrollTimer, scrollDirection = 0
 let modalActive = false, previousPointerEvents = '', restoreFocus = false, lastFocused = null

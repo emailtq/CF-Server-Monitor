@@ -78,6 +78,8 @@ export function useServerReorder(props, sortingDisabled, emit) {
     if (!rows.length) return
     // Layout offsets ignore the in-flight FLIP transforms, unlike elementFromPoint.
     const top = pointer.y - pointer.grab - pointer.row.offsetParent.getBoundingClientRect().top
+    const last = pointer.swap
+    if (last && last.direction * (top - last.top) > 0) last.top = top
     const from = rows.findIndex(row => row.dataset.serverId === pointer.id)
     if (from < 0) return
     const direction = top > rows[from].offsetTop ? 1 : -1, to = from + direction
@@ -85,9 +87,8 @@ export function useServerReorder(props, sortingDisabled, emit) {
     if (!target) return
     const height = rows[from].offsetHeight, threshold = Math.min(height, target.offsetHeight) / 2
     if (direction > 0 ? top + height < target.offsetTop + threshold : top > target.offsetTop + target.offsetHeight - threshold) return
-    // Unequal rows still overlap after swapping: require a real reversal, not a one-pixel boundary wobble.
-    const last = pointer.swap
-    if (last?.id === target.dataset.serverId && last.direction !== direction && direction * (top - last.top) < threshold) return
+    // Unequal rows still overlap after swapping; use the touch's turning point, not another half-row of travel.
+    if (last?.id === target.dataset.serverId && last.direction !== direction && direction * (top - last.top) <= 2) return
     pointer.swap = { id: target.dataset.serverId, direction, top }
     move(pointer.id, to)
   }

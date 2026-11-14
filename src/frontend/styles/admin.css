@@ -366,6 +366,7 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui .admin-node-table .server-row:is([data-lifted], [data-settling]) td { background: var(--cf-panel); }
 .admin-ui .admin-node-table .server-row:is([data-lifted], [data-settling]) td:first-child { border-radius: 12px 0 0 12px; }
 .admin-ui .admin-node-table .server-row:is([data-lifted], [data-settling]) td:last-child { border-radius: 0 12px 12px 0; }
+.admin-ui .admin-node-table .server-row:is([data-lifted], [data-settling])::after { content: ''; position: absolute; inset: 0; border: 1px solid var(--cf-border); border-radius: inherit; pointer-events: none; }
 :root[data-server-reordering] .admin-ui * { cursor: grabbing; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .server-row:hover { background: var(--cf-panel); }
 @media (prefers-reduced-motion: reduce) {

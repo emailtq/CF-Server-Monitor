@@ -383,10 +383,10 @@ try {
     assert.equal(await page.locator('.table-wrapper').getAttribute('aria-hidden'), null, 'accepted metadata accessibility is restored when the select closes');
     assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
     await group.click(); const dialog = page.getByRole('dialog'); await dialog.waitFor();
-    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true); await page.keyboard.press('Tab');
+    assert.equal(await group.evaluate(el => el === document.activeElement), true, 'group dialog follows actual minimal no-open-autofocus'); await page.keyboard.press('Tab');
     assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true); await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
     await trigger.click(); await page.waitForTimeout(220); await group.evaluate(el => el.click()); await dialog.waitFor(); await menu.waitFor({ state: 'detached' });
-    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'programmatic CF dialog opening takes focus ownership rather than competing traps');
+    await page.keyboard.press('Tab'); assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'group dialog takes keyboard focus on Tab without opening the phone keyboard');
     assert.equal(await page.evaluate(() => document.body.style.pointerEvents), ''); await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
     await trigger.click(); await page.waitForTimeout(220); await page.evaluate(() => window.dispatchEvent(new Event('blur'))); await menu.waitFor({ state: 'detached' });
     assert.equal(await page.evaluate(() => document.body.style.pointerEvents), ''); assert.equal(saves.length, 0);

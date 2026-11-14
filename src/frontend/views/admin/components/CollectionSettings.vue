@@ -64,53 +64,48 @@
         <div class="section-title">{{ trans.pingNodes }}</div>
 
         <div class="ping-node-grid">
-          <div class="ping-node-item">
-            <div class="ping-node-fields"><input type="text" :aria-label="settings.custom_ct_name + ': ' + trans.serverName" data-setting-field="custom_ct_name" v-model.trim="settings.custom_ct_name" class="form-input ping-node-name">
-            <input type="text" :aria-label="settings.custom_ct_name + ': ' + trans.pingNodes" data-setting-field="custom_ct" v-model.trim="settings.custom_ct" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_ct }]" placeholder="gd-ct-dualstack.ip.zstaticcdn.com">
-            </div><p v-if="pingNodeErrors.custom_ct" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_ct }}</p>
-          </div>
-
-          <div class="ping-node-item">
-            <div class="ping-node-fields"><input type="text" :aria-label="settings.custom_cu_name + ': ' + trans.serverName" data-setting-field="custom_cu_name" v-model.trim="settings.custom_cu_name" class="form-input ping-node-name">
-            <input type="text" :aria-label="settings.custom_cu_name + ': ' + trans.pingNodes" data-setting-field="custom_cu" v-model.trim="settings.custom_cu" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_cu }]" placeholder="gd-cu-dualstack.ip.zstaticcdn.com">
-            </div><p v-if="pingNodeErrors.custom_cu" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cu }}</p>
+          <div v-for="field in visiblePingFields" :key="field" class="ping-node-item" :data-ping-node="field">
+            <div class="ping-node-fields">
+              <input type="text" :aria-label="settings[`${field}_name`] + ': ' + trans.serverName" :data-setting-field="`${field}_name`" v-model.trim="settings[`${field}_name`]" class="form-input ping-node-name">
+              <input type="text" :aria-label="settings[`${field}_name`] + ': ' + trans.pingNodes" :data-setting-field="field" v-model.trim="settings[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port] / [IPv6]:port">
+              <button type="button" class="admin-icon-button ping-node-remove" data-action="remove-ping-node" :aria-label="trans.delete + ': ' + settings[`${field}_name`]" @click="removePingNode(field)"><AdminIcon name="x" /></button>
+            </div>
+            <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1" role="alert">{{ pingNodeErrors[field] }}</p>
           </div>
         </div>
-        <div class="ping-node-grid">
-          <div class="ping-node-item">
-            <div class="ping-node-fields"><input type="text" :aria-label="settings.custom_cm_name + ': ' + trans.serverName" data-setting-field="custom_cm_name" v-model.trim="settings.custom_cm_name" class="form-input ping-node-name">
-            <input type="text" :aria-label="settings.custom_cm_name + ': ' + trans.pingNodes" data-setting-field="custom_cm" v-model.trim="settings.custom_cm" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_cm }]" placeholder="gd-cm-dualstack.ip.zstaticcdn.com">
-            </div><p v-if="pingNodeErrors.custom_cm" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cm }}</p>
-          </div>
-
-          <div class="ping-node-item">
-            <div class="ping-node-fields"><input type="text" :aria-label="settings.custom_bd_name + ': ' + trans.serverName" data-setting-field="custom_bd_name" v-model.trim="settings.custom_bd_name" class="form-input ping-node-name">
-            <input type="text" :aria-label="settings.custom_bd_name + ': ' + trans.pingNodes" data-setting-field="custom_bd" v-model.trim="settings.custom_bd" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_bd }]" placeholder="ip.zstaticcdn.com">
-            </div><p v-if="pingNodeErrors.custom_bd" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_bd }}</p>
-          </div>
-        </div>
-        <div class="ping-node-grid">
-          <div v-for="field in ['node_1', 'node_2']" :key="field" class="ping-node-item">
-            <div class="ping-node-fields"><input type="text" :aria-label="field + ': ' + trans.serverName" v-model.trim="settings[`${field}_name`]" class="form-input ping-node-name"><input type="text" :aria-label="settings[`${field}_name`] + ': ' + trans.pingNodes" :data-setting-field="field" v-model.trim="settings[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port] / [IPv6]:port"></div>
-            <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
-          </div>
-        </div>
-        <div class="ping-node-grid">
-          <div v-for="field in ['node_3', 'node_4']" :key="field" class="ping-node-item">
-            <div class="ping-node-fields"><input type="text" :aria-label="field + ': ' + trans.serverName" v-model.trim="settings[`${field}_name`]" class="form-input ping-node-name"><input type="text" :aria-label="settings[`${field}_name`] + ': ' + trans.pingNodes" :data-setting-field="field" v-model.trim="settings[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port] / [IPv6]:port"></div>
-            <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
-          </div>
+        <div class="ping-node-actions">
+          <button type="button" class="btn" data-action="add-ping-node" :disabled="visiblePingFields.length >= PING_NODE_FIELDS.length" @click="addPingNode"><AdminIcon name="plus" />{{ trans.adminAddPingNode }}</button>
+          <span data-ping-capacity class="text-muted text-sm" role="status">{{ visiblePingFields.length }}/{{ PING_NODE_FIELDS.length }}<template v-if="visiblePingFields.length === PING_NODE_FIELDS.length"> · {{ trans.adminPingCapacity }}</template></span>
         </div>
       </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import AdminIcon from './AdminIcon.vue'
+import { PING_NODE_FIELDS } from '../../../utils/pingNode.js'
 import HelpTooltip from './AdminHelp.vue'
 const props = defineProps({ trans: Object, settings: Object, passwordVisible: Object, canEditSiteSettings: Boolean, cspErrors: Object, pingNodeErrors: Object, userAgentInvalid: Boolean, changeAdminPassword: Boolean, d1UsageLoading: Boolean })
 defineEmits(['toggle-password', 'toggle-admin-password-change', 'upload-bg', 'upload-bg-mobile', 'upload-favicon', 'query-d1-usage', 'validate-csp'])
 import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY } from '../../../utils/constants.js'
+const visiblePingFields = ref([])
+let nextPingNumber = 1
+watch(() => props.settings, () => {
+  visiblePingFields.value = PING_NODE_FIELDS.filter(field => props.settings[field] || props.settings[`${field}_name`])
+  nextPingNumber = Math.max(visiblePingFields.value.length, ...visiblePingFields.value.map(field => Number(/^Node (\d+)$/.exec(props.settings[`${field}_name`] || '')?.[1]) || 0)) + 1
+}, { immediate: true })
+const addPingNode = () => {
+  const field = PING_NODE_FIELDS.find(field => !visiblePingFields.value.includes(field))
+  if (!field) return
+  props.settings[`${field}_name`] = `Node ${nextPingNumber++}`
+  visiblePingFields.value.push(field)
+}
+const removePingNode = field => {
+  props.settings[field] = ''
+  props.settings[`${field}_name`] = ''
+  visiblePingFields.value = visiblePingFields.value.filter(value => value !== field)
+}
 const longHistoryPointOptions = computed(() => (
   HISTORY.LONG_RANGE_POINT_OPTIONS.map(points => ({
     value: String(points),
@@ -215,12 +210,12 @@ const formatWssHourRange = hour => {
 }
 
 .collection-settings .ping-node-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  grid-template-columns: 1fr;
 }
 
 .collection-settings .ping-node-fields .ping-node-name {
-  width: 96px;
-  flex: 0 0 96px;
+  width: 140px;
+  flex: 0 0 140px;
 }
 
 .collection-settings .ping-node-fields .form-input:not(.ping-node-name) {
@@ -228,7 +223,13 @@ const formatWssHourRange = hour => {
   flex: 1;
 }
 
+.collection-settings .ping-node-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.collection-settings .ping-node-item { position: relative; }
+.collection-settings .ping-node-remove { flex: none; }
+
 @media (max-width: 639px) {
+  .collection-settings .ping-node-item { padding-right: 40px; }
+  .collection-settings .ping-node-remove { position: absolute; top: 0; right: 0; }
   .collection-settings .ping-node-fields {
     flex-direction: column;
     align-items: stretch;

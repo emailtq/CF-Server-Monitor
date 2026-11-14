@@ -1,0 +1,65 @@
+.admin-ui.admin-ui.admin-ui .admin-dialog-group { max-width: 672px; border-radius: 10px; padding: 24px; gap: 16px; font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; line-height: 20px; box-shadow: 0 10px 15px -3px #0000001a, 0 4px 6px -4px #0000001a; }
+.admin-ui .admin-dialog-group .admin-dialog-head { margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; text-align: center; }
+.admin-ui .admin-dialog-group .admin-dialog-head h2 { font-size: 18px; line-height: 18px; font-weight: 600; }
+.admin-ui .admin-dialog-group .admin-group-description { font-size: 14px; line-height: 22.75px; color: var(--cf-muted); margin: 0; }
+.admin-ui .admin-dialog-group .admin-dialog-close { top: 8px; right: 8px; color: var(--cf-text); opacity: .7; transition: opacity 150ms; }
+.admin-ui .admin-dialog-group .admin-dialog-close:hover { opacity: 1; background: none; }
+.admin-ui .admin-dialog-group .admin-dialog-body { padding: 0; scrollbar-gutter: auto; overflow: visible; flex-shrink: 0; }
+.admin-ui .admin-dialog-group { overflow-y: auto; }
+.admin-ui .admin-dialog-group .admin-group-layout fieldset { padding: 0; border: 0; margin: 0; min-width: 0; display: grid; gap: 16px; }
+.admin-ui .admin-dialog-group .admin-group-name-field { display: grid; gap: 8px; }
+.admin-ui .admin-dialog-group .admin-group-name-field > label { font-size: 14px; font-weight: 500; line-height: 14px; }
+.admin-ui .admin-dialog-group .admin-group-name-field > p { font-size: 12px; line-height: 19.5px; color: var(--cf-muted); margin: 0; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .form-input { height: 36px; min-height: 36px; padding: 4px 12px; font-size: 16px; line-height: 24px; border-radius: 8px; border-color: light-dark(var(--cf-border), oklch(1 0 0 / 15%)); background: light-dark(transparent, oklch(1 0 0 / 4.5%)); transition: color 150ms, box-shadow 150ms; }
+.admin-ui .admin-dialog-group .admin-group-combobox { position: relative; min-width: 0; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .admin-group-combobox input[role=combobox] { padding-right: 36px; }
+.admin-ui .admin-dialog-group .admin-group-combobox > button { position: absolute; inset: 0 0 0 auto; display: flex; align-items: center; justify-content: center; width: 36px; border: 0; background: none; color: var(--cf-muted); }
+.admin-ui .admin-dialog-group .admin-group-combobox > button svg { width: 16px; height: 16px; opacity: .5; transition: transform 150ms; }
+.admin-ui .admin-dialog-group .admin-group-combobox > button svg.is-open { transform: rotate(180deg); }
+.admin-ui .admin-dialog-group .admin-group-options { position: fixed; z-index: 6; padding: 4px; overflow-y: auto; background: light-dark(var(--cf-panel), oklch(.208 .042 265.755)); border: 1px solid var(--cf-border); border-radius: 8px; box-shadow: 0 4px 6px -1px #0000001a, 0 2px 4px -2px #0000001a; }
+.admin-ui .admin-dialog-group .admin-group-option { position: relative; display: flex; align-items: center; gap: 8px; padding: 6px 32px 6px 8px; border-radius: 6px; font-size: 14px; line-height: 20px; cursor: default; user-select: none; }
+.admin-ui .admin-dialog-group .admin-group-option.is-active { background: var(--cf-soft); }
+.admin-ui .admin-dialog-group .admin-group-option > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-ui .admin-dialog-group .admin-group-option small { margin-left: auto; flex-shrink: 0; color: var(--cf-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.admin-ui .admin-dialog-group .admin-group-option svg { position: absolute; right: 8px; width: 16px; height: 16px; }
+.admin-ui .admin-dialog-group .admin-group-option-divider { height: 1px; background: var(--cf-border); margin: 4px 0; }
+.admin-ui .admin-dialog-group .admin-group-fresh { margin: 0; padding: 6px 8px; color: var(--cf-muted); font-size: 12px; line-height: 16px; }
+.admin-ui .admin-dialog-group .admin-group-picker { border: 1px solid var(--cf-border); border-radius: 10px; }
+.admin-ui .admin-dialog-group .admin-group-picker-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; border-bottom: 1px solid var(--cf-border); padding: 8px; }
+.admin-ui .admin-dialog-group .admin-group-picker-search { position: relative; flex: 1 1 160px; min-width: 0; }
+.admin-ui .admin-dialog-group .admin-group-picker-search svg { position: absolute; left: 10px; top: 50%; translate: 0 -50%; width: 16px; height: 16px; color: var(--cf-muted); pointer-events: none; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .admin-group-picker-search .form-input { padding-left: 32px; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .toolbar-select { width: 128px; height: 36px; min-height: 36px; font-size: 14px; padding: 8px 12px; border-radius: 8px; border-color: light-dark(var(--cf-border), oklch(1 0 0 / 15%)); background: light-dark(transparent, oklch(1 0 0 / 4.5%)); }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .btn { min-height: 36px; height: 36px; border-radius: 8px; padding: 8px 16px; font-size: 14px; line-height: 20px; font-weight: 500; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .admin-group-ghost { border-color: transparent; background: transparent; box-shadow: none; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .admin-group-ghost:hover { background: var(--cf-soft); }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .admin-group-picker-toolbar .btn { padding: 0 10px; height: 32px; min-height: 32px; }
+.admin-ui .admin-dialog-group .admin-group-picker-list { display: grid; grid-template-columns: 1fr; align-content: start; gap: 2px; padding: 6px; max-height: min(16rem, 40dvh); overflow-y: auto; overscroll-behavior: contain; }
+.admin-ui .admin-dialog-group .admin-group-picker-list > label { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 14px; line-height: 20px; }
+.admin-ui .admin-dialog-group .admin-group-picker-list > label:hover { background: var(--cf-soft); }
+.admin-ui .admin-dialog-group .admin-group-picker-list input { width: 13px; height: 13px; }
+.admin-ui .admin-dialog-group .admin-group-picker-list > label > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-ui .admin-dialog-group .admin-group-picker-list small { margin-left: auto; flex-shrink: 0; font-size: 12px; line-height: 16px; color: var(--cf-muted); }
+.admin-ui .admin-dialog-group .admin-group-picker-list > p { margin: 0; padding: 8px; grid-column: 1 / -1; color: var(--cf-muted); font-size: 12px; line-height: 16px; }
+.admin-ui .admin-dialog-group .admin-details { margin-top: 16px; padding: 0; border: 0; background: none; }
+.admin-ui .admin-dialog-group .admin-details summary { min-height: 32px; display: flex; align-items: center; }
+.admin-ui .admin-dialog-group .admin-dialog-footer { margin: 0; gap: 8px; flex-direction: column-reverse; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group .admin-dialog-footer .btn-primary { max-width: 100%; gap: 0; }
+.admin-ui .admin-dialog-group .admin-dialog-footer .btn-primary > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-ui .admin-dialog-group .admin-dialog-footer .btn-primary > span:last-child { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group :is(input, button):focus-visible { outline: 0; border-color: light-dark(oklch(.704 .04 256.788), oklch(.551 .027 264.364)); box-shadow: 0 0 0 3px light-dark(oklch(.704 .04 256.788 / 50%), oklch(.551 .027 264.364 / 50%)); }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group input[type=checkbox]:focus-visible { outline: 2px solid var(--cf-muted); outline-offset: 2px; box-shadow: none; }
+.admin-ui .admin-dialog-group .admin-group-popover-enter-active, .admin-ui .admin-dialog-group .admin-group-popover-leave-active { transition: opacity 150ms, scale 150ms; }
+.admin-ui .admin-dialog-group .admin-group-popover-enter-from, .admin-ui .admin-dialog-group .admin-group-popover-leave-to { opacity: 0; scale: .95; }
+.admin-ui.admin-group-dialog-enter-active, .admin-ui.admin-group-dialog-leave-active { transition: opacity 200ms; }
+.admin-ui.admin-group-dialog-enter-active .admin-dialog-group, .admin-ui.admin-group-dialog-leave-active .admin-dialog-group { transition: scale 200ms; }
+.admin-ui.admin-group-dialog-enter-from, .admin-ui.admin-group-dialog-leave-to { opacity: 0; }
+.admin-ui.admin-group-dialog-enter-from .admin-dialog-group, .admin-ui.admin-group-dialog-leave-to .admin-dialog-group { scale: .95; }
+@media (min-width: 480px) { .admin-ui .admin-dialog-group .admin-group-picker-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 640px) {
+  .admin-ui .admin-dialog-group .admin-group-picker-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .admin-ui .admin-dialog-group .admin-dialog-head { text-align: left; }
+  .admin-ui .admin-dialog-group .admin-dialog-footer { flex-direction: row; }
+}
+@media (min-width: 768px) { .admin-ui.admin-ui.admin-ui .admin-dialog-group .form-input { font-size: 14px; line-height: 20px; } }
+@media (prefers-reduced-motion: reduce) { .admin-ui .admin-dialog-group .admin-group-popover-enter-active, .admin-ui .admin-dialog-group .admin-group-popover-leave-active, .admin-ui.admin-group-dialog-enter-active, .admin-ui.admin-group-dialog-leave-active, .admin-ui.admin-group-dialog-enter-active .admin-dialog-group, .admin-ui.admin-group-dialog-leave-active .admin-dialog-group { transition: none; } }

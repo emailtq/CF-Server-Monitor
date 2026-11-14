@@ -15,6 +15,7 @@ export async function createServer(options) {
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/credential'));
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/toolbar-only'));
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round2/latency'));
+  evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/successor/stage1'));
   assert.ok(evidenceRoots.some(base => {
     const relative = path.relative(base, realOut);
     return relative && !relative.startsWith('..') && !path.isAbsolute(relative);

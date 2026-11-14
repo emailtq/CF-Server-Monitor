@@ -70,7 +70,6 @@ const props = defineProps({
 })
 
 const newServerName = defineModel('newServerName', { type: String, default: '' })
-const newServerGroup = defineModel('newServerGroup', { type: String, default: '' })
 
 const emit = defineEmits([
   'groups', 'add-server', 'auto-discovery-cmd', 'batch-edit', 'batch-delete', 'toggle-select-all', 'refresh-cache', 'select-all',

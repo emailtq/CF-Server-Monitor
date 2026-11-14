@@ -1,10 +1,11 @@
 <template>
   <Teleport to="body">
-    <Transition :name="size === 'terminal' ? 'terminal-menu' : undefined" :css="size === 'terminal'" @before-leave="retainLeavingDialog" @after-leave="finishLeave">
+    <Transition :name="size === 'terminal' ? 'terminal-menu' : size === 'group' ? 'admin-group-dialog' : undefined" :css="size === 'terminal' || size === 'group'" @before-leave="retainLeavingDialog" @after-leave="finishLeave">
     <div v-if="open" class="admin-ui admin-dialog-overlay" :class="{ 'admin-dialog-short': shortViewport }" :style="viewportStyle" @click.self="requestClose">
-      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" :style="size === 'terminal' ? { height: viewportHeight } : undefined" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || undefined" :aria-busy="busy" tabindex="-1">
+      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" :style="size === 'terminal' ? { height: viewportHeight } : undefined" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || ($slots.description ? `${titleId}-description` : undefined)" :aria-busy="busy" tabindex="-1">
         <header class="admin-dialog-head">
           <h2 :id="titleId">{{ title }}</h2>
+          <p v-if="$slots.description" :id="`${titleId}-description`" class="admin-group-description"><slot name="description" /></p>
           <button type="button" class="admin-dialog-close" :disabled="busy" :aria-label="t('close')" @click="requestClose"><AdminIcon name="x" /></button>
         </header>
         <div class="admin-dialog-body"><slot name="body"><slot /></slot></div>
@@ -24,7 +25,7 @@ import AdminIcon from './AdminIcon.vue'
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { t } from '../../../utils/i18n.js'
 import '../../../styles/admin.css'
-const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'edit', 'download', 'download-confirm', 'terminal'].includes(value) }, viewportHeight: { type: String, default: '100dvh' }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
+const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'group', 'edit', 'download', 'download-confirm', 'terminal'].includes(value) }, viewportHeight: { type: String, default: '100dvh' }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
 const emit = defineEmits(['close', 'after-leave'])
 const dialog = ref(null)
 const viewportStyle = ref({})
@@ -33,9 +34,9 @@ const titleId = `admin-dialog-${++nextId}`
 let previousFocus = null
 let registered = false
 let observedViewport = null
-// Vue clears the section ref before the terminal CSS leave removes its DOM.
+// Vue clears the section ref before an animated leave removes its DOM.
 let leavingDialog = null
-const retainLeavingDialog = element => { if (props.size === 'terminal') leavingDialog = element.querySelector('.admin-dialog') }
+const retainLeavingDialog = element => { if (['terminal', 'group'].includes(props.size)) leavingDialog = element.querySelector('.admin-dialog') }
 const dialogElement = () => dialog.value || leavingDialog
 const updateViewport = () => {
   const height = window.visualViewport?.height || window.innerHeight
@@ -48,7 +49,7 @@ const focusFirst = () => (focusable()[0] || dialogElement())?.focus()
 const requestClose = () => { if (!props.busy && topmost()) emit('close') }
 const keydown = event => {
   if (!topmost()) return
-  if (event.key === 'Escape' && !event.target.closest('.admin-picker-menu')) { event.preventDefault(); event.stopImmediatePropagation(); requestClose() }
+  if (event.key === 'Escape' && !event.target.closest('.admin-picker-menu, .admin-group-combobox[data-open], .admin-toolbar-group-menu')) { event.preventDefault(); event.stopImmediatePropagation(); requestClose() }
   if (event.key !== 'Tab') return
   const elements = focusable()
   const first = elements[0]
@@ -76,10 +77,10 @@ const release = () => {
 }
 const finishLeave = () => { if (!props.open) { release(); emit('after-leave') } }
 watch(() => props.open, async open => {
-  if (!open) { if (props.size !== 'terminal') release(); return }
+  if (!open) { if (!['terminal', 'group'].includes(props.size)) release(); return }
   if (registered) {
     await nextTick() // A reversed leave remounts the section without replacing its stack owner.
-    if (registered && props.open && topmost()) focusFirst()
+    if (registered && props.open && topmost() && props.size !== 'group') focusFirst()
     return
   }
   previousFocus = document.activeElement
@@ -94,7 +95,7 @@ watch(() => props.open, async open => {
   if (!registered) return
   document.addEventListener('keydown', keydown, true)
   document.addEventListener('focusin', focusin)
-  focusFirst()
+  if (props.size !== 'group') focusFirst()
 }, { immediate: true, flush: 'post' })
 onBeforeUnmount(release)
 </script>

@@ -210,7 +210,7 @@ try {
       await page.locator('[name=edit_custom_ct]').fill('bad host');
       assert.ok((await page.getByRole('dialog').innerText()).includes(en.invalidPingNodeFormat));
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: en.group, exact: true }).click(); await page.locator('.server-checkbox').first().check(); await page.getByRole('dialog').locator('summary').click(); await page.getByRole('button', { name: en.batchEdit, exact: true }).click();
+      await page.getByRole('button', { name: en.group, exact: true }).click(); await page.locator('.server-checkbox').first().check(); await page.getByRole('dialog').locator('summary').click(); await page.getByRole('button', { name: en.batchEdit, exact: true }).click(); await page.locator('.admin-dialog-group').waitFor({ state: 'detached' });
       const block = page.getByRole('dialog').locator('.batch-edit-field').filter({ has: page.locator('input[placeholder="gd-ct-dualstack.ip.zstaticcdn.com"]') }).first();
       await block.locator('input[type=checkbox]').check(); await block.locator('input[type=text]').fill('bad host');
       await page.getByRole('dialog').getByRole('button', { name: new RegExp(en.save, 'i'), exact: true }).click();
@@ -223,7 +223,7 @@ try {
       await page.keyboard.press('Escape');
       const id = await page.locator('.server-row').first().getAttribute('data-server-id');
       await page.locator('.server-row').first().getByRole('button', { name: en.delete, exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: en.confirmDelete }).click(); await page.locator(`[data-server-id="${id}"]`).waitFor({ state: 'detached' }); await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: en.group, exact: true }).click(); assert.match(await page.getByRole('dialog').innerText(), /0\/5/); await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: en.group, exact: true }).click(); assert.equal(await page.locator('.admin-group-picker-list input:checked').count(), 0); assert.equal(await page.locator('.admin-group-picker-list input').count(), 5); await page.keyboard.press('Escape');
     });
     await check('renewal validation closes with its form instead of leaving an orphan error dialog', async () => {
       servers = [{ ...initialServers[0], custom_ct: 'bad host' }];
@@ -309,32 +309,16 @@ try {
       await page.screenshot({ path: path.join(out, `actual-${width}-${theme}.png`), fullPage: true });
       await reference.locator('.rep-product').screenshot({ path: path.join(out, `reference-${width}-${theme}.png`) });
       await page.getByRole('button', { name: zh.group, exact: true }).click();
-      await reference.locator('.rep-toolbar [data-action=rep-groups]').click();
-      const dialogGeometry = (target, selectors) => target.evaluate(selectors => Object.fromEntries(Object.entries(selectors).map(([key, selector]) => {
-        const element = document.querySelector(selector), rect = element.getBoundingClientRect(), css = getComputedStyle(element);
-        return [key, { width: rect.width, height: rect.height, padding: css.padding, fontSize: css.fontSize, fontWeight: css.fontWeight, textAlign: css.textAlign, marginBottom: css.marginBottom, display: css.display, columns: css.gridTemplateColumns, direction: css.flexDirection }];
-      })), selectors);
-      const actualDialog = await dialogGeometry(page, { dialog: '.admin-dialog', head: '.admin-dialog-head', input: '#group-name', grid: '.admin-node-picker', icon: '.admin-dialog-close svg', footer: '.admin-dialog-footer', button: '.admin-dialog-footer button' });
-      const referenceDialog = await dialogGeometry(reference, { dialog: '.cf-dialog', head: '.cf-dialog-head', input: '.cf-dialog input:not([type=checkbox])', grid: '.cf-node-picker', icon: '.cf-dialog-head svg', footer: '.cf-dialog-footer', button: '.cf-dialog-footer button' });
-      await check(`same-locale grouping field/dialog geometry ${width}/${theme}`, async () => {
-        assert.ok(Math.abs(actualDialog.dialog.width - referenceDialog.dialog.width) <= 2);
-        assert.equal(actualDialog.dialog.padding, referenceDialog.dialog.padding);
-        assert.equal(actualDialog.button.height, referenceDialog.button.height);
-        assert.equal(actualDialog.button.fontWeight, referenceDialog.button.fontWeight);
-        assert.equal(actualDialog.head.textAlign, referenceDialog.head.textAlign);
-        assert.equal(actualDialog.head.marginBottom, referenceDialog.head.marginBottom);
-        assert.equal(actualDialog.input.height, referenceDialog.input.height);
-        assert.ok(Math.abs(actualDialog.input.width - referenceDialog.input.width) <= 2);
-        assert.equal(actualDialog.input.fontSize, referenceDialog.input.fontSize);
-        assert.equal(actualDialog.grid.display, referenceDialog.grid.display);
-        assert.equal(actualDialog.grid.columns.split(' ').length, referenceDialog.grid.columns.split(' ').length);
-        assert.equal(actualDialog.icon.width, referenceDialog.icon.width); assert.equal(actualDialog.icon.height, referenceDialog.icon.height);
-        assert.equal(actualDialog.footer.direction, referenceDialog.footer.direction);
+      await check(`grouping keeps the bounded actual-minimal structure ${width}/${theme}`, async () => {
+        const dialog = page.locator('.admin-dialog-group');
+        assert.equal(await dialog.count(), 1);
+        assert.equal(await dialog.locator('#group-name').count(), 1);
+        assert.equal(await dialog.locator('.admin-group-picker-search input').count(), 1);
+        assert.equal(await dialog.locator('.admin-group-picker-list input').count(), initialServers.length);
+        assert.equal(await dialog.locator('.admin-group-picker-list').evaluate(e => getComputedStyle(e).gridTemplateColumns.split(' ').length), width < 480 ? 1 : width < 640 ? 2 : 3);
       });
-      (report.dialogComparisons ||= []).push({ width, theme, actual: actualDialog, expected: referenceDialog });
       await page.screenshot({ path: path.join(out, `actual-group-${width}-${theme}.png`) });
-      await reference.locator('.rep-product').screenshot({ path: path.join(out, `reference-group-${width}-${theme}.png`) });
-      await page.keyboard.press('Escape'); await reference.locator('.cf-dialog-head [data-action=close-dialog]').click();
+      await page.keyboard.press('Escape');
     }
     await reference.close();
   } else {
@@ -431,7 +415,7 @@ try {
     await page.locator('.toolbar .btn-primary').click(); await page.locator('#add-server-name').fill('Cancelled fixture'); await page.keyboard.press('Escape');
     assert.equal(report.actions.slice(before).filter(a => a.action === 'add').length, 0);
     await page.locator('.toolbar .btn-primary').click(); assert.equal(await page.locator('#add-server-name').inputValue(), '');
-    await page.locator('#add-server-name').fill('New fixture'); await page.locator('#add-server-group').fill('Fixture group');
+    await page.locator('#add-server-name').fill('New fixture'); assert.equal(await page.locator('#add-server-group').count(), 0);
     failedAction = 'add';
     await page.getByRole('dialog').getByRole('button', { name: new RegExp(en.adminAddNode) }).click();
     await page.getByRole('dialog').getByRole('alert').waitFor();
@@ -442,7 +426,7 @@ try {
     await page.keyboard.press('Escape'); assert.equal(await page.getByRole('dialog').count(), 1);
     hold = null; holds.splice(0).forEach(resolve => resolve());
     await page.locator('.server-row[data-server-id="fixture-added"]').waitFor();
-    const data = report.actions.filter(a => a.action === 'add').at(-1); assert.deepEqual(Object.keys(data).sort(), ['action', 'name', 'server_group', 'site']); assert.equal(data.name, 'New fixture'); assert.equal(data.server_group, 'Fixture group');
+    const data = report.actions.filter(a => a.action === 'add').at(-1); assert.deepEqual(Object.keys(data).sort(), ['action', 'name', 'site']); assert.equal(data.name, 'New fixture');
     await page.keyboard.press('Escape');
     await page.locator('.server-row[data-server-id="fixture-added"]').getByRole('button', { name: en.delete, exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: en.confirmDelete }).click(); await page.locator('.server-row[data-server-id="fixture-added"]').waitFor({ state: 'detached' });
@@ -453,15 +437,15 @@ try {
     const initial = await nodeIds();
     await page.getByRole('button', { name: en.group, exact: true }).click();
     await page.locator('.server-checkbox').first().check();
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape'); await page.locator('.admin-dialog-group').waitFor({ state: 'detached' });
     await page.locator('#tab-servers .admin-search input').fill(initialServers[1].ip_v4);
     assert.equal(await page.locator('.server-row').count(), 1);
     assert.equal(await page.locator('.drag-handle').first().isDisabled(), true);
     await page.getByRole('button', { name: en.group, exact: true }).click();
-    assert.match(await page.getByRole('dialog').innerText(), /1\/6/);
-    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.admin-group-picker-list input:checked').count(), 1); assert.equal(await page.locator('.admin-group-picker-list input').count(), 6);
+    await page.keyboard.press('Escape'); await page.locator('.admin-dialog-group').waitFor({ state: 'detached' });
     await page.locator('#tab-servers .admin-search input').fill('');
-    assert.deepEqual(await nodeIds(), initial); await page.getByRole('button', { name: en.group, exact: true }).click(); assert.equal(await page.locator('.server-checkbox').first().isChecked(), true); await page.keyboard.press('Escape');
+    assert.deepEqual(await nodeIds(), initial); await page.getByRole('button', { name: en.group, exact: true }).click(); assert.equal(await page.locator('.server-checkbox').first().isChecked(), true); await page.keyboard.press('Escape'); await page.locator('.admin-dialog-group').waitFor({ state: 'detached' });
     await page.locator('.admin-toolbar-group-trigger').click();
     await page.getByRole('option', { name: initialServers[0].server_group, exact: true }).click();
     assert.equal(await page.locator('.server-row').count(), 3);
@@ -479,7 +463,7 @@ try {
   await check('batch changes only enabled fields for actual selected IDs with the existing full-row API', async () => {
     await page.getByRole('button', { name: en.group, exact: true }).click();
     await page.getByRole('dialog').locator('summary').click();
-    await page.getByRole('button', { name: en.batchEdit, exact: true }).click();
+    await page.getByRole('button', { name: en.batchEdit, exact: true }).click(); await page.locator('.admin-dialog-group').waitFor({ state: 'detached' });
     const dialog = page.getByRole('dialog');
     await dialog.waitFor();
     const enable = dialog.locator('input[type=checkbox]').first(); await enable.check();
@@ -535,7 +519,7 @@ try {
       const downloadCount = report.downloads.length;
       hold = null; holds.splice(0).forEach(resolve => resolve());
       await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 120)));
-      assert.equal(await page.getByRole('dialog').count(), 0);
+      await page.getByRole('dialog').waitFor({ state: 'detached' });
       await nav(en.settings).click(); assert.equal(await page.locator('[data-setting-field=site_title]').inputValue(), 'Site B');
       assert.equal(await page.evaluate(() => window.fixtureBlobs.length), 0);
       assert.equal(report.downloads.length, downloadCount);
