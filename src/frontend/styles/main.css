@@ -4721,29 +4721,6 @@ body.mikus-theme .mikus-stats-mascot-img {
     flex: 1;
 }
 
-.password-toggle {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 4px;
-    border-radius: 4px;
-    transition: background 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-}
-
-.password-toggle:hover {
-    background: rgba(255, 255, 255, 0.05);
-}
-
 /* --------------------------------------------------------------------------
    43. Utility Classes
    -------------------------------------------------------------------------- */

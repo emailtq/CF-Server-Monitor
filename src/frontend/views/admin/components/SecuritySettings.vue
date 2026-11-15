@@ -13,8 +13,7 @@
           <div class="form-group flex-1">
             <label class="checkbox-item">
               <input type="checkbox" id="cfg_turnstile_login_enabled" :aria-label="trans.enableTurnstileLogin" data-setting-field="turnstile_login_enabled" v-model="settings.turnstile_login_enabled">
-              <span>{{ trans.enableTurnstileLogin }}</span>
-              <HelpTooltip :text="trans.turnstileLoginTip" />
+              <span>{{ trans.enableTurnstileLogin }}<HelpTooltip :text="trans.turnstileLoginTip" /></span>
             </label>
           </div>
         </div>
@@ -30,9 +29,9 @@
 
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.turnstileSecretKey }}</label>
-            <div class="password-input-wrapper">
+            <div class="password-input-wrapper admin-secret-field">
               <input type="text" name="turnstile_secret_key" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" :aria-label="trans.turnstileSecretKey" data-setting-field="turnstile_secret_key" v-model="settings.turnstile_secret_key" :class="['form-input', { 'secret-input-masked': !passwordVisible.turnstileSecret }]" :placeholder="trans.turnstileSecretKeyPlaceholder">
-              <button type="button" class="password-toggle btn admin-quiet" :aria-pressed="!!passwordVisible.turnstileSecret" :aria-label="(passwordVisible.turnstileSecret ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.turnstileSecretKey" @click="$emit('toggle-password', 'turnstileSecret')">{{ passwordVisible.turnstileSecret ? trans.adminHideSecret : trans.adminShowSecret }}</button>
+              <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.turnstileSecret" :aria-label="(passwordVisible.turnstileSecret ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.turnstileSecretKey" @mousedown.prevent @click="$emit('toggle-password', 'turnstileSecret')"><AdminIcon :name="passwordVisible.turnstileSecret ? 'eye-off' : 'eye'" /></button>
             </div>
           </div>
         </div>
@@ -43,9 +42,9 @@
               {{ trans.jwtSecret }}
               <HelpTooltip :text="trans.jwtSecretTip" />
             </label>
-            <div class="password-input-wrapper">
+            <div class="password-input-wrapper admin-secret-field">
               <input type="text" name="jwt_secret" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" :aria-label="trans.jwtSecret" data-setting-field="jwt_secret" v-model="settings.jwt_secret" :class="['form-input', { 'secret-input-masked': !passwordVisible.jwtSecret }]" placeholder="••••••••••••••••••••••••••••••••">
-              <button type="button" class="password-toggle btn admin-quiet" :aria-pressed="!!passwordVisible.jwtSecret" :aria-label="(passwordVisible.jwtSecret ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.jwtSecret" @click="$emit('toggle-password', 'jwtSecret')">{{ passwordVisible.jwtSecret ? trans.adminHideSecret : trans.adminShowSecret }}</button>
+              <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.jwtSecret" :aria-label="(passwordVisible.jwtSecret ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.jwtSecret" @mousedown.prevent @click="$emit('toggle-password', 'jwtSecret')"><AdminIcon :name="passwordVisible.jwtSecret ? 'eye-off' : 'eye'" /></button>
             </div>
           </div>
 
@@ -54,7 +53,7 @@
               {{ trans.customUserAgent }}
               <HelpTooltip :text="trans.customUserAgentTip" />
             </label>
-            <div class="password-input-wrapper">
+            <div class="password-input-wrapper admin-secret-field">
               <input
                 :aria-label="trans.customUserAgent" data-setting-field="ua" v-model.trim="settings.ua"
                 type="text"
@@ -68,7 +67,7 @@
                 :class="['form-input', { 'secret-input-masked': !passwordVisible.ua, 'input-invalid': userAgentInvalid }]"
                 :placeholder="trans.customUserAgentPlaceholder"
               >
-              <button type="button" class="password-toggle btn admin-quiet" :aria-pressed="!!passwordVisible.ua" :aria-label="(passwordVisible.ua ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.customUserAgent" @click="$emit('toggle-password', 'ua')">{{ passwordVisible.ua ? trans.adminHideSecret : trans.adminShowSecret }}</button>
+              <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.ua" :aria-label="(passwordVisible.ua ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.customUserAgent" @mousedown.prevent @click="$emit('toggle-password', 'ua')"><AdminIcon :name="passwordVisible.ua ? 'eye-off' : 'eye'" /></button>
             </div>
             <p v-if="userAgentInvalid" class="text-red text-sm mt-1">{{ trans.customUserAgentInvalid }}</p>
           </div>
@@ -104,7 +103,7 @@
         <div v-if="changeAdminPassword" class="form-row">
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.password }}</label>
-            <div class="password-input-wrapper">
+            <div class="password-input-wrapper admin-secret-field">
               <input
                 :type="passwordVisible.password ? 'text' : 'password'"
                 name="settings_admin_passphrase"
@@ -117,13 +116,13 @@
                 class="form-input"
                 :placeholder="settings.password_configured ? '••••••••' : ''"
               >
-              <button type="button" class="password-toggle btn admin-quiet" :aria-pressed="!!passwordVisible.password" :aria-label="(passwordVisible.password ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.password" @click="$emit('toggle-password', 'password')">{{ passwordVisible.password ? trans.adminHideSecret : trans.adminShowSecret }}</button>
+              <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.password" :aria-label="(passwordVisible.password ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.password" @mousedown.prevent @click="$emit('toggle-password', 'password')"><AdminIcon :name="passwordVisible.password ? 'eye-off' : 'eye'" /></button>
             </div>
           </div>
 
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.confirmPassword }}</label>
-            <div class="password-input-wrapper">
+            <div class="password-input-wrapper admin-secret-field">
               <input
                 :type="passwordVisible.confirmPassword ? 'text' : 'password'"
                 name="settings_admin_passphrase_confirm"
@@ -136,7 +135,7 @@
                 class="form-input"
                 :placeholder="settings.password_configured ? '••••••••' : ''"
               >
-              <button type="button" class="password-toggle btn admin-quiet" :aria-pressed="!!passwordVisible.confirmPassword" :aria-label="(passwordVisible.confirmPassword ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.confirmPassword" @click="$emit('toggle-password', 'confirmPassword')">{{ passwordVisible.confirmPassword ? trans.adminHideSecret : trans.adminShowSecret }}</button>
+              <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.confirmPassword" :aria-label="(passwordVisible.confirmPassword ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.confirmPassword" @mousedown.prevent @click="$emit('toggle-password', 'confirmPassword')"><AdminIcon :name="passwordVisible.confirmPassword ? 'eye-off' : 'eye'" /></button>
             </div>
           </div>
         </div>
@@ -152,6 +151,7 @@
 <script setup>
 import { computed } from 'vue'
 import HelpTooltip from './AdminHelp.vue'
+import AdminIcon from './AdminIcon.vue'
 const props = defineProps({ trans: Object, settings: Object, passwordVisible: Object, canEditSiteSettings: Boolean, cspErrors: Object, pingNodeErrors: Object, userAgentInvalid: Boolean, changeAdminPassword: Boolean, d1UsageLoading: Boolean })
 defineEmits(['toggle-password', 'toggle-admin-password-change', 'upload-bg', 'upload-bg-mobile', 'upload-favicon', 'query-d1-usage', 'validate-csp'])
 </script>

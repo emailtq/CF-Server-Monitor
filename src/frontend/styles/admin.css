@@ -272,6 +272,11 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui.admin-ui.admin-ui .theme-card { min-width: 0; box-shadow: none; }
 .admin-ui.admin-ui.admin-ui .settings-section :is(p, label, .form-label, .section-title, .theme-current-value) { overflow-wrap: anywhere; }
 .admin-ui.admin-ui.admin-ui .settings-section .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.admin-ui #tab-settings .form-label { display: block; }
+.admin-ui #tab-settings .inline-help-action { display: flex; flex-wrap: wrap; align-items: flex-start; }
+.admin-ui #tab-settings .inline-help-action .admin-field-hint { flex-basis: 100%; }
+.admin-ui .admin-updates-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-ui.admin-ui.admin-ui #tab-theme-store .theme-actions .btn { height: auto; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .server-name-link { font: inherit; font-weight: 500; color: var(--cf-text); min-width: 96px; white-space: normal; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .admin-copy-value { color: var(--cf-text); font-size: 14px; padding: 0; line-height: 20px; font-variant-numeric: tabular-nums; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .drag-handle,
@@ -291,6 +296,7 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
   .admin-ui .admin-search { width: 0; flex: 1; }
   .admin-ui.admin-ui.admin-ui .admin-filter-group .toolbar-select { flex-shrink: 0; }
   .admin-ui .settings-section .form-row { flex-direction: column; gap: 0; }
+  .admin-ui.admin-ui.admin-ui #tab-settings .inline-help-action .btn { height: auto; }
   .admin-ui.admin-ui.admin-ui .settings-section { padding: 16px; }
   .admin-ui .admin-node-detail { grid-template-columns: 1fr; gap: 4px; }
 }
@@ -398,8 +404,7 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui .checkbox-item span { flex: 1; }
 .admin-ui.admin-ui.admin-ui .password-input-wrapper { gap: 8px; }
 .admin-ui.admin-ui.admin-ui .password-input-wrapper :is(.form-input, .login-input) { width: 0; min-width: 0; flex: 1; padding-right: 12px; }
-.admin-ui.admin-ui.admin-ui .password-toggle { position: static; transform: none; flex: none; width: auto; min-width: 36px; white-space: nowrap; }
-/* Notification and login opt into an inset eye; other secret controls retain their layout. */
+/* Secret fields opt into the same neutral inset eye. */
 .admin-ui.admin-ui.admin-ui .password-input-wrapper.admin-secret-field { position:relative; display:block; }
 .admin-ui.admin-ui.admin-ui .admin-secret-field :is(.form-input,.login-input) { width:100%; padding-right:48px; }
 .admin-ui.admin-ui.admin-ui .admin-secret-field .admin-secret-eye { position:absolute; top:0; right:0; display:flex; align-items:center; justify-content:center; width:36px; height:36px; padding:0; border:0; outline:none; background:transparent; box-shadow:none; opacity:1; transition:none; animation:none; -webkit-tap-highlight-color:transparent; color:var(--cf-muted); cursor:pointer; }
@@ -421,7 +426,6 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
   .admin-ui.admin-ui.admin-ui .admin-search .toolbar-input { font-size: 14px; }
 }
 @media (pointer: coarse) {
-  .admin-ui.admin-ui.admin-ui .password-toggle { height: 44px; min-height: 44px; min-width: 44px; }
   .admin-ui.admin-ui.admin-ui .admin-header-actions .admin-public-link,
   .admin-ui.admin-ui.admin-ui .admin-filter-group .toolbar-select { height: 44px; min-height: 44px; }
 }

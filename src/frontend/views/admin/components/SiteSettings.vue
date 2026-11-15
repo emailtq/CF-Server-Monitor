@@ -18,9 +18,9 @@
               Cloudflare API Token
               <HelpTooltip :text="trans.cloudflareTokenTip" />
             </label>
-            <div class="password-input-wrapper">
+            <div class="password-input-wrapper admin-secret-field">
               <input type="text" name="cloudflare_token" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" :aria-label="trans.cloudflareToken" data-setting-field="cloudflare_token" v-model="settings.cloudflare_token" :class="['form-input', { 'secret-input-masked': !passwordVisible.cloudflareToken }]" :placeholder="trans.cloudflareTokenPlaceholder">
-              <button type="button" class="password-toggle btn admin-quiet" :aria-pressed="!!passwordVisible.cloudflareToken" :aria-label="(passwordVisible.cloudflareToken ? trans.adminHideSecret : trans.adminShowSecret) + ': Cloudflare API Token'" @click="$emit('toggle-password', 'cloudflareToken')">{{ passwordVisible.cloudflareToken ? trans.adminHideSecret : trans.adminShowSecret }}</button>
+              <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.cloudflareToken" :aria-label="(passwordVisible.cloudflareToken ? trans.adminHideSecret : trans.adminShowSecret) + ': Cloudflare API Token'" @mousedown.prevent @click="$emit('toggle-password', 'cloudflareToken')"><AdminIcon :name="passwordVisible.cloudflareToken ? 'eye-off' : 'eye'" /></button>
             </div>
           </div>
         </div>
@@ -38,6 +38,7 @@
 <script setup>
 import { computed } from 'vue'
 import HelpTooltip from './AdminHelp.vue'
+import AdminIcon from './AdminIcon.vue'
 const props = defineProps({ trans: Object, settings: Object, passwordVisible: Object, canEditSiteSettings: Boolean, cspErrors: Object, pingNodeErrors: Object, userAgentInvalid: Boolean, changeAdminPassword: Boolean, d1UsageLoading: Boolean })
 defineEmits(['toggle-password', 'toggle-admin-password-change', 'upload-bg', 'upload-bg-mobile', 'upload-favicon', 'query-d1-usage', 'validate-csp'])
 </script>

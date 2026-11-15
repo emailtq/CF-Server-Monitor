@@ -3,8 +3,10 @@
     <h2 class="section-title">{{ trans.adminUpdates }}</h2>
     <dl class="admin-node-detail"><dt>Worker</dt><dd>{{ VERSION || '-' }}</dd><dt>{{ trans.adminLatestWorker }}</dt><dd>{{ LAST_WORKERS_VERSION || '-' }}</dd><dt>{{ trans.agentVersion }}</dt><dd>{{ latestAgentVersion || '-' }}</dd></dl>
     <p class="text-muted text-sm">{{ trans.adminExistingVersionInfo }}</p>
-    <a class="btn" href="https://github.com/huilang-me/CF-Server-Monitor/releases" target="_blank" rel="noopener noreferrer">{{ trans.view }}</a>
-    <button class="btn" @click="$emit('donation')">{{ trans.donation }}</button>
+    <div class="admin-updates-actions">
+      <a class="btn" href="https://github.com/emailtq/CF-Server-Monitor/tree/terminal" target="_blank" rel="noopener noreferrer">{{ trans.view }}</a>
+      <button class="btn" @click="$emit('donation')">{{ trans.donation }}</button>
+    </div>
   </section>
 </template>
 <script setup>

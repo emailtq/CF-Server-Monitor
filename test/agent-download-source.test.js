@@ -187,14 +187,14 @@ for (const missing of [false, true]) {
     globalThis.fetch = async url => {
       requests.push(url);
       if (url === releaseUrl) return missing ? new Response('', { status: 404 }) : Response.json({ tag_name: 'v9.8.7' });
-      if (url === 'https://raw.githubusercontent.com/huilang-me/CF-Server-Monitor/refs/heads/main/version.json') return Response.json({ workers: '2.8.6' });
+      if (url === 'https://raw.githubusercontent.com/emailtq/CF-Server-Monitor/refs/heads/terminal/version.json') return Response.json({ workers: '2.8.7 Beta6', agent: '1.1.1' });
       return new Response('', { status: 404 });
     };
     try {
       const { getRemoteVersion } = await import(`../src/utils/version.js?source-check=${missing}`);
       const result = await getRemoteVersion();
       assert.equal(result.agent, missing ? '' : 'v9.8.7');
-      assert.equal(result.workers, '2.8.6');
+      assert.equal(result.workers, '2.8.7 Beta6');
       assert.ok(requests.includes(releaseUrl));
       assert.ok(!requests.some(url => url.includes('huilang-me/cfsm-agent')));
     } finally { globalThis.fetch = originalFetch; }

@@ -1,6 +1,6 @@
 import { AGENT_RELEASE_URL } from '../shared/agentSource.js';
 
-const REMOTE_VERSION_URL = 'https://raw.githubusercontent.com/huilang-me/CF-Server-Monitor/refs/heads/main/version.json';
+const REMOTE_VERSION_URL = 'https://raw.githubusercontent.com/emailtq/CF-Server-Monitor/refs/heads/terminal/version.json';
 const REMOTE_VERSION_TTL = 10 * 60 * 1000;
 const REMOTE_VERSION_FAILURE_TTL = 30 * 1000;
 const REMOTE_VERSION_FETCH_TIMEOUT_MS = 2000;
