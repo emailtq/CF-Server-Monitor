@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import { nativeScrollbar } from './scrollbar-assertions.mjs';
+import { round3Dialogs } from './round3-dialogs.mjs';
 
 const playwrightPath = createRequire(import.meta.url).resolve(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const runtimeRequire = createRequire(playwrightPath);
@@ -13,16 +14,26 @@ const { PNG } = runtimeRequire('pngjs');
 const out = path.resolve(process.env.ADMIN_DIALOG_REPORT_DIR || `.planning/2026-11-13-admin-ui-refinement/task2/run-${Date.now()}`);
 const viewportScrollbarOnly = process.argv.includes('--viewport-scrollbar');
 const pickerScrollportOnly = process.argv.includes('--picker-scrollport');
+const edgeKeyboardOnly = process.argv.includes('--edge-keyboard');
 fs.mkdirSync(out, { recursive: true });
 const report = { node: process.version, args: process.argv.slice(2), checks: [], geometry: [], screenshots: [], errors: [], actions: [], boundary: 'Mounted production Vue components and styles; synthetic HTTP responses only. Private Vue refs select existing inline dialogs; no substituted dialog markup.' };
 let server, browser, context, page, httpOrigin, origin;
 const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const check = async (name, fn) => {
+  if (edgeKeyboardOnly) return;
   if (pickerScrollportOnly && !name.startsWith('actual alert picker')) return;
   try { await fn(); report.checks.push({ name, pass: true }); console.log(`PASS ${name}`); }
   catch (error) { report.checks.push({ name, pass: false, error: error.stack }); console.error(`FAIL ${name}\n${error.stack}`); }
 };
-const screenshot = async name => { const file = path.join(out, `${name}.png`); await page.screenshot({ path: file }); report.screenshots.push(file); };
+const screenshot = async name => {
+  const file = path.join(out, `${name}.png`);
+  if (edgeKeyboardOnly) {
+    const cdp = await context.newCDPSession(page);
+    try { const image = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); fs.writeFileSync(file, Buffer.from(image.data, 'base64')); }
+    finally { await cdp.detach(); }
+  } else await page.screenshot({ path: file });
+  report.screenshots.push(file);
+};
 const open = async (kind, stress = false) => {
   await page.evaluate(({ kind, stress }) => window.dialogFixture.open(kind, stress), { kind, stress });
   await page.locator('.admin-dialog').last().waitFor();
@@ -41,10 +52,11 @@ const inspect = async (kind, dimensions) => {
     const structural = [...section.querySelectorAll('*'), section].filter(e => !e.matches('input,textarea,select,option') && e.getClientRects().length);
     const scrolls = structural.filter(e => ['auto', 'scroll'].includes(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight + 1);
     const scroll = getComputedStyle(body).overflowY === 'visible' ? section : body;
-    return { group: section.classList.contains('admin-dialog-group'), box: { x: r.x, y: r.y, width: r.width, height: r.height }, gutter: scroll.offsetWidth - scroll.clientWidth - scroll.clientLeft * 2, body: { clientWidth: body.clientWidth, offsetWidth: body.offsetWidth, clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, padding: getComputedStyle(body).padding }, scrolls: scrolls.map(e => e.className), horizontal: structural.filter(e => e.clientWidth && (e === section || e === body || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)) && e.scrollWidth > e.clientWidth + 1).map(e => ({ name: e.className, width: e.clientWidth, scrollWidth: e.scrollWidth })) };
+    return { group: section.classList.contains('admin-dialog-group'), scheme: getComputedStyle(section).colorScheme, box: { x: r.x, y: r.y, width: r.width, height: r.height }, gutter: scroll.offsetWidth - scroll.clientWidth - scroll.clientLeft * 2, body: { clientWidth: body.clientWidth, offsetWidth: body.offsetWidth, clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, padding: getComputedStyle(body).padding }, scrolls: scrolls.map(e => e.className), horizontal: structural.filter(e => e.clientWidth && (e === section || e === body || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)) && e.scrollWidth > e.clientWidth + 1).map(e => ({ name: e.className, width: e.clientWidth, scrollWidth: e.scrollWidth })) };
   });
   if (base.box.x < -.5 || base.box.x + base.box.width > dimensions.width + .5 || base.box.y < -.5 || base.box.y + base.box.height > dimensions.height + .5) problems.push('dialog outside viewport');
   if (base.horizontal.length) problems.push(`horizontal overflow ${JSON.stringify(base.horizontal)}`);
+  if (dimensions.dark !== undefined && base.scheme !== (dimensions.dark ? 'dark' : 'light')) problems.push('effective theme differs from requested theme');
   if (base.body.clientHeight < 44) problems.push('dialog body collapsed below a usable control height');
   if (base.group) {
     // Actual minimal bounds its picker separately; the shell scrolls too in a short keyboard viewport.
@@ -113,9 +125,9 @@ const inspect = async (kind, dimensions) => {
 try {
   server = await createServer({ fixtureEntries: [path.resolve('test/fixtures/admin-ui/dialogs.html')], vueFixtureDevtools: true, cacheDir: path.join(out, '.cache'), plugins: [vue()], publicDir: path.resolve('public') });
   httpOrigin = `http://127.0.0.1:${server.httpServer.address().port}`; origin = httpOrigin.replace('http:', 'https:');
-  browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], executablePath: process.env.ADMIN_UI_CHROMIUM || 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
+  browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'], executablePath: process.env.ADMIN_UI_CHROMIUM || (edgeKeyboardOnly ? 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1248/chrome-win64/chrome.exe' : 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe') });
   report.chromium = browser.version();
-  context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ...(edgeKeyboardOnly ? { isMobile: true, hasTouch: true } : {}) });
   const serveFixture = async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === 'https://api.github.com') {
@@ -123,6 +135,7 @@ try {
       return route.fulfill({ json: { tag_name: 'task2.synthetic', draft: false, assets: ['linux-amd64', 'darwin-arm64', 'windows-amd64.exe', 'freebsd-amd64'].map(platform => ({ name: 'cf-probe-' + platform, state: 'uploaded', browser_download_url: 'https://github.com/emailtq/cfsm-agent/releases/download/task2.synthetic/cf-probe-' + platform })) } });
     }
     if (url.origin !== origin) return route.abort();
+    if (url.pathname === '/api/nodes/1/token' && edgeKeyboardOnly && process.env.ADMIN_DIALOG_REFERENCE === '1') return route.fulfill({ json: { token: 'a'.repeat(64) } });
     if (url.pathname.endsWith('/admin/api')) {
       const data = request.postDataJSON(); report.actions.push({ action: data.action });
       if (data.action === 'node_read_install') return route.fulfill({ json: { token: 'a'.repeat(64), enabled: false, needsRotation: false } });
@@ -137,8 +150,9 @@ try {
   };
   await context.route('**/*', serveFixture);
   page = await context.newPage(); page.setDefaultTimeout(5000); page.on('pageerror', error => report.errors.push(error.stack));
-  const kinds = ['add', 'group', 'delete', 'edit', 'batch', 'renew', 'download', 'downloadConfirm', 'autoDiscovery', 'notificationCreate', 'notificationSmtp', 'notificationWebhook', 'notificationTemplate', 'alert', 'revoke', 'terminal', 'database', 'notificationRemoval', 'autoUpdateWarning', 'databaseClear', 'databaseUpgrade', 'd1Usage', 'validation', 'saveResult', 'message'];
-  const matrix = viewportScrollbarOnly || pickerScrollportOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 320, height: 480, locale: 'zh', dark: true }, { width: 360, height: 360, locale: 'ja', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
+  if (edgeKeyboardOnly) await round3Dialogs({ page, context, open, frames, out, report, PNG, screenshot, origin });
+  const kinds = ['add', 'group', 'delete', 'edit', 'batch', 'renew', 'download', 'downloadConfirm', 'autoDiscovery', 'notificationCreate', 'notificationSmtp', 'notificationWebhook', 'notificationTemplate', 'alert', 'alertEdit', 'revoke', 'terminal', 'database', 'notificationRemoval', 'autoUpdateWarning', 'databaseClear', 'databaseUpgrade', 'd1Usage', 'validation', 'saveResult', 'message'];
+  const matrix = viewportScrollbarOnly || pickerScrollportOnly || edgeKeyboardOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 1920, height: 1080, locale: 'ja', dark: true }, { width: 360, height: 780, locale: 'zh', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
   if (viewportScrollbarOnly || pickerScrollportOnly) { await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture); }
   const viewportCdp = await context.newCDPSession(page);
   for (const dimensions of matrix) {
@@ -149,10 +163,10 @@ try {
     dimensions.coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
     assert.equal(dimensions.coarse, dimensions.width < 640, 'mobile geometry must exercise the real coarse-pointer stylesheet');
     await page.evaluate(dark => document.body.classList.toggle('light', !dark), dimensions.dark);
-    for (const kind of kinds) await check(`${kind} ${dimensions.width}x${dimensions.height} ${dimensions.locale} containment`, async () => { await open(kind, dimensions.stress); await inspect(kind, dimensions); });
+    for (const kind of kinds) await check(`${kind} ${dimensions.width}x${dimensions.height} ${dimensions.locale} containment`, async () => { await open(kind, dimensions.stress); await page.evaluate(dark => document.body.classList.toggle('light', !dark), dimensions.dark); await inspect(kind, dimensions); });
   }
   await viewportCdp.detach();
-  for (const height of [360, 700]) await check(`actual alert picker follows the ${height === 360 ? 'short section' : 'normal body'} scrollport, own scrolling and keyboard`, async () => {
+  for (const height of [360, 700]) await check(`actual alert picker follows the stable shell at ${height}px, own scrolling and keyboard`, async () => {
     await page.setViewportSize({ width: 390, height }); await open('alert');
     const dialog = page.locator('.admin-dialog').last(), trigger = dialog.locator('.admin-picker-summary').first(), menu = dialog.locator('.admin-picker-menu');
     const sample = () => dialog.evaluate(section => {
@@ -236,7 +250,7 @@ try {
         await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture);
         await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
         await open('edit');
-        await nativeScrollbar({ page, report, out, PNG }, page.locator('.admin-dialog-body').last(), 'y', `modal-${dark}-${dpr}`);
+        await nativeScrollbar({ page, report, out, PNG }, page.locator('.admin-dialog').last(), 'y', `modal-${dark}-${dpr}`);
         await open('notificationTemplate');
         const textarea = page.locator('.admin-dialog textarea').last();
         await textarea.fill(Array.from({ length: 60 }, (_, i) => `preview ${i}`).join('\n')); await textarea.scrollIntoViewIfNeeded();

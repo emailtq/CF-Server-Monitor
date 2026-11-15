@@ -253,10 +253,10 @@ try {
         assert.ok(enabled.textRight < enabled.inputX && Math.abs(enabled.inputRight - enabled.rowRight) < 2);
         assert.equal(await dialog.locator('.admin-form-grid').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length), mobile ? 1 : 2);
         await dialog.locator('[name=template]').fill('Local {{message}}'); assert.match(await dialog.locator('.admin-message-preview').innerText(), /Local/);
-        await dialog.locator('.admin-dialog-body').evaluate(el => { el.scrollTop = 0; });
+        await dialog.evaluate(el => { el.scrollTop = 0; });
         await shot('smtp-form-top');
-        if (mobile) await nativeDrag(page, cdp, dialog.locator('.admin-dialog-body'), false, true, `dialog-${width}-${theme}`);
-        else { await page.setViewportSize({ width, height: 640 }); await nativeDrag(page, cdp, dialog.locator('.admin-dialog-body'), false, false, `dialog-${width}-${theme}`); await page.setViewportSize({ width, height }); }
+        if (mobile) await nativeDrag(page, cdp, dialog, false, true, `dialog-${width}-${theme}`);
+        else { await page.setViewportSize({ width, height: 640 }); await nativeDrag(page, cdp, dialog, false, false, `dialog-${width}-${theme}`); await page.setViewportSize({ width, height }); }
         await dialog.locator('[name=template]').scrollIntoViewIfNeeded(); await shot('template-preview');
       });
       await check(`${width}/${theme}: notification eye stays inside full-width field, toggles and supports keyboard`, async () => {
@@ -282,7 +282,7 @@ try {
         assert.equal(await input.inputValue(), 'synthetic-eye-only'); await input.fill('');
         report.geometry.push({ name: 'inside-notification-eye', width, theme, input: r, eye: b });
         await eye.scrollIntoViewIfNeeded(); await shot('visible-notification-eye');
-        await dialog.locator('.admin-dialog-body').evaluate(el => { el.scrollTop = 0; }); await shot('smtp-inside-eye');
+        await dialog.evaluate(el => { el.scrollTop = 0; }); await shot('smtp-inside-eye');
       });
       if (width === 360 && theme === 'light') await check('all twelve providers render their full connection fields on the same Android page', async () => {
         for (const type of providers) {
@@ -291,7 +291,7 @@ try {
           assert.deepEqual(await dialog.locator('[data-field]').evaluateAll(nodes => nodes.map(n => n.dataset.field)), channelFields(type));
           assert.equal(await dialog.locator('[name=template]').inputValue(), 'Local {{message}}');
           assert.equal(await dialog.locator('[data-action=test], [data-action=save-channel], [data-action=cancel]').count(), 3);
-          if (['webhook', 'legacy'].includes(type)) { await dialog.locator('.admin-dialog-body').evaluate(el => { el.scrollTop = 0; }); await shot(`${type}-form`); }
+          if (['webhook', 'legacy'].includes(type)) { await dialog.evaluate(el => { el.scrollTop = 0; }); await shot(`${type}-form`); }
         }
       });
       await click(dialog.locator('[data-action=cancel]'));

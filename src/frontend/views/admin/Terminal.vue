@@ -275,9 +275,9 @@ onBeforeUnmount(() => {
 .terminal-menu-enter-from .admin-dialog-terminal, .terminal-menu-leave-to .admin-dialog-terminal { transform: translateX(100%); }
 @media (prefers-reduced-motion: reduce) { .terminal-menu-enter-active, .terminal-menu-leave-active, .terminal-menu-enter-active .admin-dialog-terminal, .terminal-menu-leave-active .admin-dialog-terminal { transition: none; } }
 .terminal-page .terminal-screen .xterm .scrollbar.vertical .slider { box-sizing: border-box; border-left: calc((var(--terminal-scrollbar-hit) - var(--admin-scrollbar-paint) - 1px) / 2) solid transparent; border-right: calc((var(--terminal-scrollbar-hit) - var(--admin-scrollbar-paint) + 1px) / 2) solid transparent; touch-action: none; }
-.admin-ui .admin-dialog-terminal { position: fixed; top: 0; right: 0; margin: 0; width: min(340px, 100vw); max-width: 100vw; max-height: 100dvh; padding: 16px; border-radius: 0; }
+.admin-ui .admin-dialog-terminal { position: fixed; top: var(--admin-dialog-offset, 0px); right: 0; margin: 0; width: min(340px, 100vw); max-width: 100vw; max-height: var(--admin-dialog-viewport, 100dvh); border-radius: 0; }
 .admin-ui .admin-dialog-terminal .admin-dialog-head { text-align: left; min-height: 44px; display: flex; align-items: center; }
-.admin-ui .admin-dialog-terminal .admin-dialog-close { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+.admin-ui .admin-dialog-terminal .admin-dialog-close { right: max(12px, calc(var(--admin-scrollbar-hit) + 6px)); min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
 .admin-ui .admin-dialog-terminal .admin-dialog-close:is(:hover, :active, :focus) { background: transparent; }
 .terminal-menu-panel { display: flex; flex-direction: column; gap: 16px; }
 .terminal-menu-panel .terminal-actions { display: flex; flex-direction: column; gap: 8px; }

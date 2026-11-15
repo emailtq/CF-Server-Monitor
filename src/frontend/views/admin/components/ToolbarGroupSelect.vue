@@ -185,6 +185,7 @@ const blur = event => {
   else lastFocused?.focus({ preventScroll: true })
 }
 const scrolled = event => { if (!menu.value?.contains(event.target)) position() }
+const viewportChanged = () => requestAnimationFrame(position)
 const otherOpened = event => { if (event.detail !== menuId) { close(); releaseModal() } }
 const windowClosed = () => { if (open.value) close(true) }
 watch([() => props.groups, () => props.active, () => props.disabled], () => { close(); releaseModal() })
@@ -200,8 +201,8 @@ onMounted(() => {
   window.addEventListener('resize', windowClosed)
   window.addEventListener('blur', windowClosed)
   window.addEventListener('admin-picker-open', otherOpened)
-  window.visualViewport?.addEventListener('resize', position)
-  window.visualViewport?.addEventListener('scroll', position)
+  window.visualViewport?.addEventListener('resize', viewportChanged)
+  window.visualViewport?.addEventListener('scroll', viewportChanged)
 })
 onBeforeUnmount(() => {
   stopScroll()
@@ -213,8 +214,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', windowClosed)
   window.removeEventListener('blur', windowClosed)
   window.removeEventListener('admin-picker-open', otherOpened)
-  window.visualViewport?.removeEventListener('resize', position)
-  window.visualViewport?.removeEventListener('scroll', position)
+  window.visualViewport?.removeEventListener('resize', viewportChanged)
+  window.visualViewport?.removeEventListener('scroll', viewportChanged)
 })
 </script>
 

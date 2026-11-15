@@ -1,4 +1,4 @@
-.admin-ui.admin-ui.admin-ui .admin-dialog-group { max-width: 672px; border-radius: 10px; padding: 24px; gap: 16px; font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; line-height: 20px; box-shadow: 0 10px 15px -3px #0000001a, 0 4px 6px -4px #0000001a; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-group { max-width: 672px; border-radius: 10px; gap: 16px; font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; line-height: 20px; box-shadow: 0 10px 15px -3px #0000001a, 0 4px 6px -4px #0000001a; }
 .admin-ui .admin-dialog-group .admin-dialog-head { margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; text-align: center; }
 .admin-ui .admin-dialog-group .admin-dialog-head h2 { font-size: 18px; line-height: 18px; font-weight: 600; }
 .admin-ui .admin-dialog-group .admin-group-description { font-size: 14px; line-height: 22.75px; color: var(--cf-muted); margin: 0; }

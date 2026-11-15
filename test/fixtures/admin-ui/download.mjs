@@ -557,13 +557,15 @@ try {
         return { scheme: getComputedStyle(d).colorScheme, overflow: d.scrollWidth > d.clientWidth, pageOverflow: document.documentElement.scrollWidth > innerWidth,
           rows: rows.map(row => { const label = row.querySelector('label'), control = row.querySelector(':scope > .form-input,:scope > .form-select,:scope > .download-option-control'); const l = label.getBoundingClientRect(), c = control.getBoundingClientRect(); return { labelBottom: l.bottom, controlTop: c.top, width: c.width, rowWidth: row.clientWidth, font: getComputedStyle(control).fontSize } }),
           commandOverflow: getComputedStyle(d.querySelector('pre')).overflowY, commandScrolls: d.querySelector('pre').scrollHeight > d.querySelector('pre').clientHeight,
-          bodyScrolls: d.querySelector('.admin-dialog-body').scrollHeight > d.querySelector('.admin-dialog-body').clientHeight,
+          shellScrolls: d.scrollHeight > d.clientHeight,
           footer: d.querySelector('footer').getBoundingClientRect().bottom, viewport: innerHeight };
       });
       assert.equal(geometry.overflow, false); assert.equal(geometry.pageOverflow, false);
       assert.equal(geometry.scheme, dark ? 'dark' : 'light');
       if (width < 640) for (const row of geometry.rows) { assert.ok(row.controlTop >= row.labelBottom - 1, 'mobile controls must sit below labels'); assert.ok(Math.abs(row.width - row.rowWidth) < 2); }
-      assert.equal(geometry.commandScrolls, false, 'command must wrap within the only body scroller'); assert.ok(geometry.footer <= geometry.viewport - 15);
+      assert.equal(geometry.commandScrolls, false, 'command must wrap within the only shell scroller');
+      await dialog().locator('footer').scrollIntoViewIfNeeded();
+      assert.ok(await dialog().locator('footer').evaluate(el => el.getBoundingClientRect().bottom <= innerHeight - 15), 'footer remains reachable inside the viewport');
       report.geometry.push({ locale, width, dark, os, ...geometry });
       if (os === 'unix') { const hint = dialog().locator('[data-os-hint]'); await hint.waitFor(); assert.match(await hint.innerText(), /OpenWrt.*Alpine.*Synology DSM.*FreeBSD/); }
     }
@@ -583,7 +585,7 @@ try {
     const shot = path.join(out, `download-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
     await page.screenshot({ path: shot }); report.screenshots.push(shot);
     if (width === 320 || width === 390) {
-      await dialog().locator('.admin-dialog-body').evaluate(el => { el.scrollTop = el.scrollHeight });
+      await dialog().evaluate(el => { el.scrollTop = el.scrollHeight });
       const bottomShot = path.join(out, `download-bottom-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
       await page.screenshot({ path: bottomShot }); report.screenshots.push(bottomShot);
     }

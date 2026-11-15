@@ -99,25 +99,28 @@ const otherOpened = event => { if (event.detail !== menuId) close() }
 const outside = event => { if (!root.value?.contains(event.target)) close() }
 const blur = event => { if (event.relatedTarget && !root.value?.contains(event.relatedTarget)) close() }
 const scrolled = event => { if (!menu.value?.contains(event.target)) position(true) }
+const viewportChanged = () => requestAnimationFrame(position)
 let observer
 watch(() => [props.modelValue, query.value, props.options], () => nextTick(position))
 onMounted(() => {
   window.addEventListener('admin-picker-open', otherOpened)
   window.addEventListener('resize', position)
   document.addEventListener('scroll', scrolled, true)
-  window.visualViewport?.addEventListener('resize', position)
-  window.visualViewport?.addEventListener('scroll', position)
+  window.visualViewport?.addEventListener('resize', viewportChanged)
+  window.visualViewport?.addEventListener('scroll', viewportChanged)
   document.addEventListener('pointerdown', outside)
   root.value.addEventListener('focusout', blur)
   observer = new ResizeObserver(position)
   observer.observe(trigger.value)
+  const dialog = root.value.closest('.admin-dialog')
+  if (dialog) observer.observe(dialog)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('admin-picker-open', otherOpened)
   window.removeEventListener('resize', position)
   document.removeEventListener('scroll', scrolled, true)
-  window.visualViewport?.removeEventListener('resize', position)
-  window.visualViewport?.removeEventListener('scroll', position)
+  window.visualViewport?.removeEventListener('resize', viewportChanged)
+  window.visualViewport?.removeEventListener('scroll', viewportChanged)
   document.removeEventListener('pointerdown', outside)
   root.value?.removeEventListener('focusout', blur)
   observer?.disconnect()

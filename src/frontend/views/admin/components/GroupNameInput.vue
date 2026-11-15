@@ -55,7 +55,24 @@ const key = event => {
   }
 }
 const outside = event => { if (!root.value?.contains(event.target)) open.value = false }
+const viewportChanged = () => requestAnimationFrame(position)
+let observer
 watch([shown, active, items], async () => { await nextTick(); position(); if (shown.value) document.getElementById(`${listId}-${active.value}`)?.scrollIntoView({ block: 'nearest' }) })
-onMounted(() => { document.addEventListener('pointerdown', outside); window.addEventListener('resize', position); window.addEventListener('scroll', position, true) })
-onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true) })
+onMounted(() => {
+  document.addEventListener('pointerdown', outside)
+  window.addEventListener('resize', position)
+  window.addEventListener('scroll', position, true)
+  window.visualViewport?.addEventListener('resize', viewportChanged)
+  window.visualViewport?.addEventListener('scroll', viewportChanged)
+  observer = new ResizeObserver(position)
+  observer.observe(root.value.closest('.admin-dialog'))
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', outside)
+  window.removeEventListener('resize', position)
+  window.removeEventListener('scroll', position, true)
+  window.visualViewport?.removeEventListener('resize', viewportChanged)
+  window.visualViewport?.removeEventListener('scroll', viewportChanged)
+  observer?.disconnect()
+})
 </script>

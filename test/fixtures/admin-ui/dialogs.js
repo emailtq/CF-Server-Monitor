@@ -28,7 +28,7 @@ const state = reactive({ kind: '', open: false, busy: false, props: {}, events: 
 let component
 const capture = vm => { component = vm }
 const event = name => (...args) => { state.events.push({ name, args }); if (name === 'close') state.open = false }
-const directNames = { add: 'AddServerModal', group: 'GroupServersModal', delete: 'DeleteServerModal', edit: 'EditServerModal', batch: 'BatchEditServersModal', renew: 'RenewServerModal', download: 'CopyCommandModal', downloadConfirm: 'CopyCommandModal', autoDiscovery: 'AutoDiscoveryCommandModal', revoke: 'TerminalAccessModal', notificationCreate: 'NotificationDialog', notificationSmtp: 'NotificationDialog', notificationWebhook: 'NotificationDialog', notificationTemplate: 'NotificationDialog', alert: 'AlertDialog' }
+const directNames = { add: 'AddServerModal', group: 'GroupServersModal', delete: 'DeleteServerModal', edit: 'EditServerModal', batch: 'BatchEditServersModal', renew: 'RenewServerModal', download: 'CopyCommandModal', downloadConfirm: 'CopyCommandModal', autoDiscovery: 'AutoDiscoveryCommandModal', revoke: 'TerminalAccessModal', notificationCreate: 'NotificationDialog', notificationSmtp: 'NotificationDialog', notificationWebhook: 'NotificationDialog', notificationTemplate: 'NotificationDialog', alert: 'AlertDialog', alertEdit: 'AlertDialog' }
 const mountKind = name => directNames[name] ? find(directNames[name]) : name === 'terminal' ? Terminal : name === 'database' ? DatabasePanel : name === 'notificationRemoval' ? NotificationWorkspace : Admin
 const fixture = window.dialogFixture = {
   state, setLanguage,
@@ -39,7 +39,7 @@ const fixture = window.dialogFixture = {
     state.busy = false
     state.events = []
     const enabled = Object.fromEntries(['name', 'server_group', 'traffic_limit', 'traffic_calc_type', 'reset_day', 'traffic_alert_percent', 'price', 'currency', 'billing_cycle', 'expire_date', 'ping_node', 'ping_node2', 'ping_node3'].map(key => [key, true]))
-    state.props = { show: true, trans: trans.value, settings: { wss_report_enabled: true, terminal_enabled: true }, currentServerName: 'Fixture node with a long descriptive name', serverName: long, serverId: 'node-a', server: { id: 'node-a', name: long }, groups: [long], servers, selected: ['node-0'], selectedCount: 3, name: long, group: long, form: form(), editForm: form(), enabled, deleteServerId: 'node-a', uninstallCommand: 'fixture-uninstall ' + 'path-'.repeat(120), deleteInstallMode: 'cfsm-user', deleteGhProxy: 'https://fixture.invalid/', targetOs: 'linux', ghProxy: 'https://fixture.invalid/', installCommand: 'fixture-install ' + 'path-'.repeat(120), channels: [channel], draft: kind === 'alert' ? structuredClone(rule) : { ...newChannel(kind === 'notificationWebhook' ? 'webhook' : 'smtp'), ...(kind !== 'notificationCreate' ? { id: 'channel-a' } : {}), name: long, template: '{{message}}\n' + long.repeat(4), secrets: {}, secretFields: {}, clearSecrets: [] } }
+    state.props = { show: true, trans: trans.value, settings: { wss_report_enabled: true, terminal_enabled: true }, currentServerName: 'Fixture node with a long descriptive name', serverName: long, serverId: 'node-a', server: { id: 'node-a', name: long }, groups: [long], servers, selected: ['node-0'], selectedCount: 3, name: long, group: long, form: form(), editForm: form(), enabled, deleteServerId: 'node-a', uninstallCommand: 'fixture-uninstall ' + 'path-'.repeat(120), deleteInstallMode: 'cfsm-user', deleteGhProxy: 'https://fixture.invalid/', targetOs: 'linux', ghProxy: 'https://fixture.invalid/', installCommand: 'fixture-install ' + 'path-'.repeat(120), channels: [channel], previous: kind === 'alertEdit' ? structuredClone(rule) : undefined, draft: kind.startsWith('alert') ? structuredClone(rule) : { ...newChannel(kind === 'notificationWebhook' ? 'webhook' : 'smtp'), ...(kind !== 'notificationCreate' ? { id: 'channel-a' } : {}), name: long, template: '{{message}}\n' + long.repeat(4), secrets: {}, secretFields: {}, clearSecrets: [] } }
     if (stress) {
       // Extend real translated form labels, not dialog titles/action names, to stress wrapping.
       state.props.trans = { ...trans.value }
@@ -71,6 +71,7 @@ const app = createApp({ render: () => h('div', [h('button', { id: 'outside', onC
   'onUpdate:form': value => { state.props.form = value }, 'onUpdate:editForm': value => { state.props.editForm = value },
   'onUpdate:name': value => { state.props.name = value }, 'onUpdate:group': value => { state.props.group = value },
   'onUpdate:target-os': value => { state.props.targetOs = value },
+  'onUpdate:install-version': value => { state.props.installVersion = value },
   'onUpdate:autoUpdate': value => { state.props.autoUpdate = value }
 }) : null]) })
 app.provide('appConfig', { authorization: true, last_agent_version: 'fixture' })
