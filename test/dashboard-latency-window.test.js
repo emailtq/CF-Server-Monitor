@@ -38,7 +38,8 @@ async function createHistoryTable(db) {
       loss_node_1 INTEGER DEFAULT NULL,
       loss_node_2 INTEGER DEFAULT NULL,
       loss_node_3 INTEGER DEFAULT NULL,
-      loss_node_4 INTEGER DEFAULT NULL
+      loss_node_4 INTEGER DEFAULT NULL,
+      extra_probes TEXT DEFAULT '{}'
     )
   `).run();
 }

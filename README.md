@@ -80,6 +80,8 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 
 ## 系统架构
 
+Ping 目标可在采集设置中继续添加，超过八个仅提示资源开销。额外目标需支持 schema 8 的 Go Agent；原八槽与旧 Agent 协议保持兼容。更新顺序、历史含义和地址隐私见 [无限数量 Ping 目标](docs/unlimited-ping.md)。
+
 ```mermaid
 flowchart LR
   Agent["Server Agent<br/>Go Agent"] -->|"POST /update"| Worker["Cloudflare Worker"]

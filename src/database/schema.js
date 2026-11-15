@@ -6,6 +6,7 @@ import { addHistoryColumns, addServerColumns } from './updateDatabase.js';
 import { ensureTerminalSchema } from './terminal.js';
 import { ensureNodeCredentialSchema } from './nodeCredentials.js';
 import { ensureAgentRegistrationSchema } from './agentRegistration.js';
+import { normalizeExtraProbes } from '../shared/extraPing.js';
 import {
   buildSparseHistoryQuery,
   shouldUseSparseHistorySampling
@@ -28,7 +29,7 @@ const LOSS_AGG_COLUMNS = new Set(['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd', 'l
 const DEFAULT_HISTORY_MAX_POINTS = 160;
 const LATENCY_NODE_FIELDS = ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const DASHBOARD_LATENCY_COLUMNS = LATENCY_NODE_FIELDS
-  .flatMap(field => [`ping_${field}`, `loss_${field}`]);
+  .flatMap(field => [`ping_${field}`, `loss_${field}`]).concat('extra_probes');
 const dashboardLatencyHistoryCache = new Map();
 
 function pruneDashboardLatencyHistoryCache(now = Date.now()) {
@@ -126,6 +127,8 @@ export async function initDatabase(db) {
     if (!serverColumns.success) throw new Error(serverColumns.error);
     // 确保 metrics_history 表存在（主键 id 已编码分区与时间，无需二级索引）
     await db.prepare(createHistoryTableSql('metrics_history')).run();
+    const historyColumns = await addHistoryColumns(db);
+    if (!historyColumns.success) throw new Error(historyColumns.error);
     await ensureNodeCredentialSchema(db);
     await ensureTerminalSchema(db);
 
@@ -362,6 +365,9 @@ function buildLatencyHistoryPoint(row, metricType, { includeEmpty = false } = {}
     const value = normalizeLatencyHistoryValue(row[column], metricType);
     if (value !== null) point[field] = value;
     else if (includeEmpty) point[field] = null;
+  }
+  for (const [id, probe] of Object.entries(normalizeExtraProbes(row.extra_probes || {}) || {})) {
+    point[`extra_${id}`] = normalizeLatencyHistoryValue(probe[metricType], metricType);
   }
 
   return includeEmpty || Object.keys(point).length > 1 ? point : null;
@@ -676,7 +682,8 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
     metrics.ip_v6 || '0',
     metrics.boot_time || '',
     parseFloat(metrics.net_rx_monthly) || 0,
-    parseFloat(metrics.net_tx_monthly) || 0
+    parseFloat(metrics.net_tx_monthly) || 0,
+    JSON.stringify(normalizeExtraProbes(metrics.extra_probes || {}) || {})
     ).run();
   };
 

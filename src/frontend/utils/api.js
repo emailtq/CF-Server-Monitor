@@ -326,7 +326,7 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
     : Object.entries(data.latestMetricsMap || {}).map(([id, metrics]) => ({ id, ...metrics }))
 
   for (const server of rawServers) {
-    mergedData.servers.push({ ...server, source: baseUrl })
+    mergedData.servers.push({ ...server, extra_ping_nodes: data.sysConfig?.extra_ping_nodes || [], source: baseUrl })
   }
 
   const latestReportUpdates = Array.isArray(data.latestReportUpdates) ? data.latestReportUpdates : []
@@ -357,6 +357,7 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
       show_expire: data.sysConfig.show_expire ?? mergedData.sysConfig.show_expire,
       show_tf: data.sysConfig.show_tf ?? mergedData.sysConfig.show_tf,
       show_three_net_details: data.sysConfig.show_three_net_details ?? mergedData.sysConfig.show_three_net_details,
+      extra_ping_nodes: data.sysConfig.extra_ping_nodes || [],
       display_mode: resolveDisplayMode(data.sysConfig, mergedData.sysConfig.display_mode),
       site_title: multiSite ? localTitle : mergedData.sysConfig.site_title,
       latency_window: data.sysConfig.latency_window ?? mergedData.sysConfig.latency_window

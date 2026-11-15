@@ -1,3 +1,4 @@
+import { publicExtraPingNodes } from './shared/extraPing.js';
 import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './database/schema.js';
 import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './services/notification.js';
 import { loadNotificationConfig } from './database/notifications.js';
@@ -341,6 +342,7 @@ export default {
           node_2_name: sys.node_2_name || 'Node 2',
           node_3_name: sys.node_3_name || 'Node 3',
           node_4_name: sys.node_4_name || 'Node 4',
+          extra_ping_nodes: publicExtraPingNodes(sys.extra_ping_nodes),
           site_title: appearanceOptions.site_title || '',
           display_mode: appearanceOptions.display_mode || 'bar',
           preferred_theme: appearanceOptions.preferred_theme || 'auto',

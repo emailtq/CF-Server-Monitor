@@ -380,6 +380,7 @@ import { TIME, DEFAULT_SITE_TITLE, STORAGE, LATENCY_WINDOW } from '../utils/cons
 import { normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
 import { normalizeDashboardView, normalizeDisplayMode, resolveDisplayMode } from '../utils/displayMode.js'
 import { getPlaybackElapsedMs, resolvePlaybackCursor } from '../utils/playback.js'
+import { mergeExtraProbeMetrics } from '../../shared/extraPing.js'
 import { getMikusAssetUrl, isMikusThemeEnabled, normalizeThemeOptions, setMikusThemeClass } from '../utils/themeOptions.js'
 import {
   CURRENCY_SYMBOLS,
@@ -411,6 +412,7 @@ const sysConfig = ref({
   node_2_name: appConfig?.node_2_name || 'Node 2',
   node_3_name: appConfig?.node_3_name || 'Node 3',
   node_4_name: appConfig?.node_4_name || 'Node 4',
+  extra_ping_nodes: appConfig?.extra_ping_nodes || [],
   frontend_ws_timeout_minutes: normalizeLiveSocketTimeoutMinutes(appConfig?.frontend_ws_timeout_minutes),
   display_mode: 'bar',
   site_title: DEFAULT_SITE_TITLE,
@@ -868,7 +870,9 @@ const applyServerSample = (serverId, data, sampleTs, displayTs, reportTs = null)
   }, displayTs, now.value)
 
   if (idx >= 0) {
-    servers.value[idx] = { ...servers.value[idx], ...merged }
+    const next = { ...servers.value[idx], ...merged }
+    if (Object.hasOwn(data, 'extra_probes')) mergeExtraProbeMetrics(next, data.extra_probes)
+    servers.value[idx] = next
   } else {
     servers.value.push({ ...merged, name: serverId })
   }
@@ -1012,6 +1016,7 @@ const refreshData = async () => {
           node_2_name: data.sysConfig?.node_2_name || sysConfig.value.node_2_name,
           node_3_name: data.sysConfig?.node_3_name || sysConfig.value.node_3_name,
           node_4_name: data.sysConfig?.node_4_name || sysConfig.value.node_4_name,
+      extra_ping_nodes: data.sysConfig?.extra_ping_nodes || [],
           frontend_ws_timeout_minutes: sysConfig.value.frontend_ws_timeout_minutes,
           display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
           site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,
@@ -1059,6 +1064,7 @@ const refreshData = async () => {
       node_2_name: data.sysConfig?.node_2_name || sysConfig.value.node_2_name,
       node_3_name: data.sysConfig?.node_3_name || sysConfig.value.node_3_name,
       node_4_name: data.sysConfig?.node_4_name || sysConfig.value.node_4_name,
+      extra_ping_nodes: data.sysConfig?.extra_ping_nodes || [],
       frontend_ws_timeout_minutes: sysConfig.value.frontend_ws_timeout_minutes,
       display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
       site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,

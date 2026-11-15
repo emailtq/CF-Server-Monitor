@@ -1,6 +1,6 @@
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
-import { getLatestMetricsForAllServers } from '../database/schema.js';
-import { getAllServers, clearServersListCache } from '../utils/cache.js';
+import { getLatestMetricsForAllServers, clearDashboardLatencyHistoryCache } from '../database/schema.js';
+import { getAllServers, clearServersListCache, clearAllCaches } from '../utils/cache.js';
 import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { normalizePctOrNull } from '../utils/traffic.js';
@@ -11,6 +11,7 @@ import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } f
 import { getNotificationMessages } from '../services/notificationMessages.js';
 import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
+import { validateExtraPingNodes } from '../shared/extraPing.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
@@ -886,6 +887,11 @@ async function applyImportedSettings({ env, sys, settings, notificationConfig, s
   const site = pickImportableFields(siteSource, IMPORTABLE_SITE_FIELDS);
   if (notificationConfig) for (const field of LEGACY_NOTIFICATION_FIELDS) delete site.picked[field];
   const appearance = pickImportableFields(appearanceSource, IMPORTABLE_APPEARANCE_FIELDS);
+  if (site.picked.extra_ping_nodes !== undefined) {
+    const extra = validateExtraPingNodes(site.picked.extra_ping_nodes, validatePingNode);
+    if (extra.valid) site.picked.extra_ping_nodes = extra.value;
+    else { delete site.picked.extra_ping_nodes; site.ignoredFields.push('extra_ping_nodes'); }
+  }
 
   // 主题配置必须是对象，否则整份外观设置会写坏，直接丢弃该字段。
   if (appearance.picked.theme_options !== undefined && !isValidThemeOptions(appearance.picked.theme_options)) {
@@ -915,6 +921,10 @@ async function applyImportedSettings({ env, sys, settings, notificationConfig, s
 
   if (siteFields.length > 0) {
     await saveSiteOptions(env.DB, site.picked);
+    if (site.picked.extra_ping_nodes !== undefined) {
+      clearAllCaches();
+      clearDashboardLatencyHistoryCache();
+    }
   }
   if (appearanceFields.length > 0) {
     await saveAppearanceOptions(env.DB, appearance.picked);
@@ -1042,6 +1052,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       if (!pingNodes.valid) {
         return createBadRequestResponse('invalidPingNodeFormat');
       }
+      const extraPingNodes = settings.extra_ping_nodes === undefined ? null : validateExtraPingNodes(settings.extra_ping_nodes, validatePingNode);
+      if (extraPingNodes && !extraPingNodes.valid) return createBadRequestResponse(extraPingNodes.error === 'too_large' ? 'pingConfigTooLarge' : 'invalidPingNodeFormat');
 
       // UA 必须在任何写库动作之前校验：否则非法值会留下「外观已保存、站点设置未保存」的半成品状态。
       let normalizedUserAgent = '';
@@ -1105,6 +1117,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             }
           } else if (PING_NODE_FIELDS.includes(field)) {
             siteOptions[field] = pingNodes.values[field];
+          } else if (field === 'extra_ping_nodes') {
+            siteOptions[field] = extraPingNodes.value;
           } else if (field === 'tg_notify') {
             siteOptions[field] = tgNotify;
           } else if (field === 'expire_reminder') {
@@ -1152,6 +1166,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       if (settings.terminal_enabled === false || settings.terminal_enabled === 'false') await disableTerminalAccess(env, sys);
       await saveSiteOptions(env.DB, siteOptions);
+      if (extraPingNodes && JSON.stringify(extraPingNodes.value) !== JSON.stringify(sys?.extra_ping_nodes || [])) {
+        clearAllCaches();
+        clearDashboardLatencyHistoryCache();
+      }
       // 保存设置后非致命补列：确保 servers 表的告警相关列存在，避免启用月流量阈值后
       // 告警状态因缺列无法持久化而重复发送通知。设置已保存成功，补列失败不回滚、不报错。
       try {

@@ -142,7 +142,8 @@ try {
     const dto = report.actions.filter(a => a.action === 'save_settings').at(-1).settings;
     assert.equal(dto.custom_cm, 'new.test:443'); assert.equal(dto.custom_cu_name, 'Name without target'); assert.equal(dto.custom_ct, 'restored.test'); assert.ok(Object.keys(dto).length > 35);
     await page.keyboard.press('Escape');
-    for (let i = 0; i < 5; i++) await page.locator('[data-action=add-ping-node]').click(); assert.equal(await rows.count(), 8); assert.equal(await page.locator('[data-action=add-ping-node]').isDisabled(), true);
+    for (let i = 0; i < 6; i++) await page.locator('[data-action=add-ping-node]').click(); assert.equal(await rows.count(), 9); assert.equal(await page.locator('[data-action=add-ping-node]').isEnabled(), true);
+    assert.ok(await page.locator('[data-ping-resource-warning]').innerText());
     assert.ok(await page.locator('[data-ping-capacity]').innerText()); await page.locator('.ping-node-grid').scrollIntoViewIfNeeded(); await snap(`ping-${width}-${locale}-${dark}`);
     await page.locator('[data-action=add-ping-node]').scrollIntoViewIfNeeded(); await snap(`ping-capacity-${width}-${locale}-${dark}`);
     assert.equal(await page.locator('.collection-settings').evaluate(e => e.scrollWidth <= e.clientWidth + 1), true);

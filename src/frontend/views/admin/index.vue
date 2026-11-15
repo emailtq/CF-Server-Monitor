@@ -528,6 +528,7 @@ import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
 import { normalizeLanguagePreference, t, useTranslation } from '../../utils/i18n'
 import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
+import { validateExtraPingNodes } from '../../../shared/extraPing.js'
 import { AGENT_REPOSITORY, AGENT_INSTALL_REF, AGENT_RELEASE_URL } from '../../../shared/agentSource.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
 import { applyMikusThemeOptions } from '../../utils/themeOptions.js'
@@ -859,6 +860,7 @@ const settings = ref({
   custom_cu_name: '联通',
   custom_cm_name: '移动',
   custom_bd_name: 'BGP',
+  extra_ping_nodes: [],
   theme_url: '',
   csp_static: '',
   csp_api: '',
@@ -1406,6 +1408,7 @@ const loadSettings = async () => {
         custom_cu: settingsData.custom_cu || '',
         custom_cm: settingsData.custom_cm || '',
         custom_bd: settingsData.custom_bd || '',
+        extra_ping_nodes: Array.isArray(settingsData.extra_ping_nodes) ? settingsData.extra_ping_nodes.map(node => ({ ...node })) : [],
         node_1: settingsData.node_1 || '', node_2: settingsData.node_2 || '', node_3: settingsData.node_3 || '', node_4: settingsData.node_4 || '',
         custom_ct_name: settingsData.custom_ct_name || '电信',
         custom_cu_name: settingsData.custom_cu_name || '联通',
@@ -1514,6 +1517,11 @@ const saveSettings = async () => {
     invalidSettingsField(buildPingNodeError(pingNodeValidation.field), 'collection', pingNodeValidation.field)
     return
   }
+  const extraPingValidation = validateExtraPingNodes(settings.value.extra_ping_nodes || [], validatePingNode)
+  if (!extraPingValidation.valid) {
+    invalidSettingsField(extraPingValidation.error === 'too_large' ? trans.value.pingConfigTooLarge : trans.value.invalidPingNodeFormat, 'collection', extraPingValidation.field || 'extra_ping_nodes')
+    return
+  }
 
   const themeOptionsResult = parseThemeOptions(settings.value.theme_options)
   if (!themeOptionsResult.valid) {
@@ -1569,6 +1577,7 @@ const saveSettings = async () => {
       custom_cu: pingNodeValidation.values.custom_cu,
       custom_cm: pingNodeValidation.values.custom_cm,
       custom_bd: pingNodeValidation.values.custom_bd,
+      extra_ping_nodes: extraPingValidation.value,
       node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
       custom_ct_name: settings.value.custom_ct_name.trim(),
       custom_cu_name: settings.value.custom_cu_name.trim(),

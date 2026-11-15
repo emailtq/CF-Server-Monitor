@@ -334,7 +334,7 @@
           </span>
           <div class="chart-header-actions">
             <div class="ping-indicator">
-              <span v-for="item in visiblePingStats" :key="item.field" :class="item.className">
+              <span v-for="item in visiblePingStats" :key="item.field" :class="item.className" :style="item.color ? { color: item.color } : undefined">
                 {{ item.label }} <b>{{ item.value !== null ? item.value + 'ms' : 'Timeout' }}</b>
               </span>
             </div>
@@ -354,7 +354,7 @@
           </span>
           <div class="chart-header-actions">
             <div class="ping-indicator">
-              <span v-for="item in visibleLossStats" :key="item.field" :class="item.className">
+              <span v-for="item in visibleLossStats" :key="item.field" :class="item.className" :style="item.color ? { color: item.color } : undefined">
                 {{ item.label }} <b>{{ item.value }}%</b>
               </span>
             </div>
@@ -414,6 +414,7 @@ import useTheme from '../composables/useTheme'
 import { isDisabledProbeMetric } from '../utils/server.js'
 import { resolvePlaybackCursor } from '../utils/playback.js'
 import { applyMikusThemeOptions } from '../utils/themeOptions.js'
+import { extraPingDefinitions, mergeExtraProbeMetrics } from '../../shared/extraPing.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -490,7 +491,7 @@ const ChartExpandButton = {
   }
 }
 
-const PING_FIELD_DEFS = [
+const LEGACY_PING_FIELD_DEFS = [
   { field: 'ping_ct', lossField: 'loss_ct', labelKey: 'pingCt', className: 'ping-ct', datasetIndex: 0 },
   { field: 'ping_cu', lossField: 'loss_cu', labelKey: 'pingCu', className: 'ping-cu', datasetIndex: 1 },
   { field: 'ping_cm', lossField: 'loss_cm', labelKey: 'pingCm', className: 'ping-cm', datasetIndex: 2 },
@@ -500,6 +501,14 @@ const PING_FIELD_DEFS = [
   { field: 'ping_node_3', lossField: 'loss_node_3', labelKey: 'node3', className: 'ping-node-3', datasetIndex: 6 },
   { field: 'ping_node_4', lossField: 'loss_node_4', labelKey: 'node4', className: 'ping-node-4', datasetIndex: 7 }
 ]
+const PROBE_COLORS = ['#00d4aa', '#ffb870', '#4da6ff', '#b392f0', '#ff7b72', '#79c0ff', '#7ee787', '#ffa657']
+const PING_FIELD_DEFS = computed(() => {
+  const nodes = config.value?.extra_ping_nodes || appConfig?.site_configs?.[apiIndex.value]?.extra_ping_nodes || appConfig?.extra_ping_nodes
+  return [...LEGACY_PING_FIELD_DEFS, ...extraPingDefinitions(nodes).map((def, i) => ({
+    ...def, color: 'var(--text-primary)', datasetIndex: i + 8
+  }))]
+})
+const avgExtraProbes = ref({})
 const pingLabel = (key) => String(appConfig?.[key.startsWith('node_') ? `${key}_name` : `custom_${key}_name`] || trans.value[`ping${key.toUpperCase().charAt(0)}${key.slice(1)}`] || key.toUpperCase())
 
 const DISK_IO_FIELDS = ['read_bps', 'write_bps', 'read_iops', 'write_iops', 'await_ms', 'util']
@@ -769,17 +778,17 @@ const avgLossRefs = {
   loss_node_4: avgLossNode4
 }
 
-const visiblePingFields = computed(() => PING_FIELD_DEFS.filter(item => {
+const visiblePingFields = computed(() => PING_FIELD_DEFS.value.filter(item => {
   const value = server.value[item.field]
   return value !== undefined && !isDisabledProbeMetric(value)
 }))
 const hasPingData = computed(() => visiblePingFields.value.length > 0)
 const visiblePingStats = computed(() => visiblePingFields.value.map(item => ({
   ...item,
-  label: pingLabel(item.field.replace('ping_', '')),
-  value: avgPingRefs[item.field].value
+  label: item.label || pingLabel(item.field.replace('ping_', '')),
+  value: item.datasetIndex >= 8 ? (avgExtraProbes.value[item.field] ?? server.value[item.field] ?? null) : avgPingRefs[item.field].value
 })))
-const visibleLossFields = computed(() => PING_FIELD_DEFS.filter(item => (
+const visibleLossFields = computed(() => PING_FIELD_DEFS.value.filter(item => (
   server.value[item.field] !== undefined &&
   !isDisabledProbeMetric(server.value[item.field]) &&
   (lossHistoryFields.value[item.lossField] || isLossValid(server.value[item.lossField]))
@@ -787,8 +796,8 @@ const visibleLossFields = computed(() => PING_FIELD_DEFS.filter(item => (
 const visibleLossStats = computed(() => visibleLossFields.value.map(item => ({
   ...item,
   field: item.lossField,
-  label: pingLabel(item.field.replace('ping_', '')),
-  value: avgLossRefs[item.lossField].value
+  label: item.label || pingLabel(item.field.replace('ping_', '')),
+  value: item.datasetIndex >= 8 ? (avgExtraProbes.value[item.lossField] ?? server.value[item.lossField] ?? null) : avgLossRefs[item.lossField].value
 })).filter(item => item.value !== null))
 
 const trafficUsageBytes = computed(() => getTrafficUsageBytes(server.value))
@@ -914,6 +923,7 @@ const ds = (label, color, opts = {}) => ({
   fill: !!opts.fill, tension: opts.tension ?? 0.4, borderWidth: 1.5,
   pointRadius: 0, hoverRadius: 5, spanGaps: false, ...opts
 })
+const probeDataset = item => ds(item.label || pingLabel(item.field.replace('ping_', '')), PROBE_COLORS[item.datasetIndex % 8], { tension: 0.3, probeField: item.field })
 
 const GPU_COLORS = ['#ff7b72', '#79c0ff', '#d2a8ff', '#7ee787', '#ffa657', '#ff7b72', '#56d4dd', '#e3b341']
 
@@ -971,8 +981,8 @@ const CHART_DEFS = [
   { key: 'proc', ref: () => procChartRef.value, datasets: [ds('Processes', '#f778ba', { fill: true })] },
   { key: 'net', ref: () => netChartRef.value, datasets: [ds('Download', '#00d4aa', { fill: true }), ds('Upload', '#4da6ff', { fill: true })], legend: true, formatValue: (v) => formatBytes(v) + '/s', tickFormat: (v) => formatBytes(v) },
   { key: 'conn', ref: () => connChartRef.value, datasets: [ds('TCP', '#b392f0'), ds('UDP', '#f778ba')], legend: true },
-  { key: 'ping', ref: () => pingChartRef.value, datasets: ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'].map((key, i) => ds(pingLabel(key), ['#00d4aa', '#ffb870', '#4da6ff', '#b392f0', '#ff7b72', '#79c0ff', '#7ee787', '#ffa657'][i], { tension: 0.3 })), unit: ' ms', legend: true },
-  { key: 'loss', ref: () => lossChartRef.value, datasets: ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'].map((key, i) => ds(pingLabel(key), ['#00d4aa', '#ffb870', '#4da6ff', '#b392f0', '#ff7b72', '#79c0ff', '#7ee787', '#ffa657'][i], { tension: 0.3 })), unit: '%', legend: true },
+  { key: 'ping', ref: () => pingChartRef.value, datasets: PING_FIELD_DEFS.value.map(probeDataset), unit: ' ms', legend: true },
+  { key: 'loss', ref: () => lossChartRef.value, datasets: PING_FIELD_DEFS.value.map(probeDataset), unit: '%', legend: true },
   { key: 'load', ref: () => loadChartRef.value, datasets: [ds(trans.value.load1m || '1 Min', '#00d4aa', { tension: 0.3 }), ds(trans.value.load5m || '5 Min', '#ffb870', { tension: 0.3 }), ds(trans.value.load15m || '15 Min', '#4da6ff', { tension: 0.3 })], legend: true }
 ]
 
@@ -981,7 +991,13 @@ const syncProbeChartVisibility = () => {
     const chart = charts[chartKey]
     if (!chart) continue
 
-    for (const item of PING_FIELD_DEFS) {
+    const existing = new Map(chart.data.datasets.map(dataset => [dataset.probeField, dataset]))
+    chart.data.datasets = PING_FIELD_DEFS.value.map(item => {
+      const dataset = existing.get(item.field) || probeDataset(item)
+      dataset.label = item.label || pingLabel(item.field.replace('ping_', ''))
+      return dataset
+    })
+    for (const item of PING_FIELD_DEFS.value) {
       const dataset = chart.data.datasets[item.datasetIndex]
       if (!dataset) continue
       const value = server.value[item.field]
@@ -989,6 +1005,7 @@ const syncProbeChartVisibility = () => {
       // 与 WSS 保持一致：字段不存在(undefined)或为 false 时不显示；
       // null 表示超时，仍需保留在图表中，不能当作“无数据”隐藏。
       const noReport = value === undefined
+      const wasUnavailable = dataset.disabledProbe || dataset.noDataProbe
       dataset.disabledProbe = disabled
       dataset.noDataProbe = noReport
       // Only force hide if disabled by config; otherwise preserve user's legend toggle
@@ -997,6 +1014,9 @@ const syncProbeChartVisibility = () => {
         if (typeof chart.setDatasetVisibility === 'function') {
           chart.setDatasetVisibility(item.datasetIndex, false)
         }
+      } else if (item.datasetIndex >= 8 && wasUnavailable) {
+        dataset.hidden = false
+        chart.setDatasetVisibility(item.datasetIndex, true)
       }
     }
     chart.update('none')
@@ -1361,11 +1381,12 @@ const loadAllHistory = async (hours) => {
   try {
     const allData = await fetchAllHistory(serverId, hours, apiIndex.value)
     lastReportChartUpdateTime = 0
-    lossHistoryFields.value = Object.fromEntries(PING_FIELD_DEFS.map(item => [
+    lossHistoryFields.value = Object.fromEntries(PING_FIELD_DEFS.value.map(item => [
       item.lossField,
       allData.some(row => isLossValid(row[item.lossField]))
     ]))
 
+    syncProbeChartVisibility()
     if (allData.length > 0) {
       lastReportChartUpdateTime = allData.reduce((latest, row) => {
         const rowTime = new Date(row.timestamp).getTime()
@@ -1442,6 +1463,14 @@ const loadAllHistory = async (hours) => {
       avgLossNode2.value = avg(allData, 'loss_node_2', false)
       avgLossNode3.value = avg(allData, 'loss_node_3', false)
       avgLossNode4.value = avg(allData, 'loss_node_4', false)
+      const extraAverages = {}
+      for (const item of PING_FIELD_DEFS.value.slice(8)) {
+        updateChartDataset(charts.ping, item.datasetIndex, allData, fieldAccessor(item.field, true))
+        updateChartDataset(charts.loss, item.datasetIndex, allData, fieldAccessor(item.lossField, true))
+        extraAverages[item.field] = avg(allData, item.field)
+        extraAverages[item.lossField] = avg(allData, item.lossField, false)
+      }
+      avgExtraProbes.value = extraAverages
       syncProbeChartVisibility()
     }
 
@@ -1715,7 +1744,7 @@ const appendReportCharts = (data, dataTimestamp) => {
 
   // 与 WSS 一致：字段不存在(undefined)或为 false 时不产生图表点，
   // null 表示超时，保留为断点/超时提示。
-  for (const item of PING_FIELD_DEFS) {
+  for (const item of PING_FIELD_DEFS.value) {
     const appendProbe = (chart, field, isPing) => {
       if (!hasOwn(data, field)) return
       if (isDisabledProbeMetric(data[field])) return
@@ -1757,8 +1786,10 @@ const fetchCurrentStatus = async (incomingData, options = {}) => {
     }
     if (!data) return
 
+    if (data.sysConfig) config.value = data.sysConfig
     if (incomingData) {
       const newServer = { ...server.value }
+      if (Object.hasOwn(data, 'extra_probes')) mergeExtraProbeMetrics(newServer, data.extra_probes)
       const hasValidIncomingDiskIo = markDiskIoDataAvailable(data)
       for (const key of Object.keys(data)) {
         if (!shouldMergeIncomingField(key, mergeMode)) {

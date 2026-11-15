@@ -908,7 +908,7 @@ export class MetricsBroadcaster {
       if (descriptors instanceof Map) {
         return descriptors.get(schemaVersion) || null;
       }
-      return schemaVersion === AGENT_CONFIG_SCHEMA_VERSION ? descriptors : null;
+      return schemaVersion === descriptors?.config?.schema_version ? descriptors : null;
     };
 
     for (const ws of this._getAgentReportWebSockets()) {
@@ -1454,7 +1454,12 @@ export class MetricsBroadcaster {
       ws.serializeAttachment(attachment);
     }
 
-    const samples = normalizeMetricSamples(data);
+    let samples;
+    try { samples = normalizeMetricSamples(data); }
+    catch (error) {
+      if (error?.code === 400) { this._closeWsWithError(ws, 'Invalid extra_probes', 400); return; }
+      throw error;
+    }
     if (!this._isCorrectionAck(data) && samples.length === 0) {
       this._closeWsWithError(ws, 'Missing metrics', 400);
       return;

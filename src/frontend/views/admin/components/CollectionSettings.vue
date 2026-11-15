@@ -72,11 +72,21 @@
             </div>
             <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1" role="alert">{{ pingNodeErrors[field] }}</p>
           </div>
+        <div v-for="node in settings.extra_ping_nodes" :key="node.id" class="ping-node-item" :data-ping-node="node.id">
+          <div class="ping-node-fields">
+            <input type="text" :aria-label="node.name + ': ' + trans.serverName" :data-setting-field="`${node.id}_name`" v-model.trim="node.name" class="form-input ping-node-name">
+            <input type="text" :aria-label="node.name + ': ' + trans.pingNodes" :data-setting-field="node.id" v-model.trim="node.target" :class="['form-input', { 'input-invalid': pingNodeErrors[node.id] }]" placeholder="host[:port] / [IPv6]:port">
+            <button type="button" class="admin-icon-button ping-node-remove" data-action="remove-ping-node" :aria-label="trans.delete + ': ' + node.name" @click="removeExtraPingNode(node.id)"><AdminIcon name="x" /></button>
+          </div>
+          <p v-if="pingNodeErrors[node.id]" class="text-red text-sm mt-1" role="alert">{{ pingNodeErrors[node.id] }}</p>
+        </div>
         </div>
         <div class="ping-node-actions">
-          <button type="button" class="btn" data-action="add-ping-node" :disabled="visiblePingFields.length >= PING_NODE_FIELDS.length" @click="addPingNode"><AdminIcon name="plus" />{{ trans.adminAddPingNode }}</button>
-          <span data-ping-capacity class="text-muted text-sm" role="status">{{ visiblePingFields.length }}/{{ PING_NODE_FIELDS.length }}<template v-if="visiblePingFields.length === PING_NODE_FIELDS.length"> · {{ trans.adminPingCapacity }}</template></span>
+          <button type="button" class="btn" data-action="add-ping-node" @click="addPingNode"><AdminIcon name="plus" />{{ trans.adminAddPingNode }}</button>
+          <span data-ping-capacity class="text-muted text-sm" role="status">{{ pingCount }}</span>
         </div>
+        <p v-if="pingCount > 8" data-ping-resource-warning class="text-muted text-sm mt-1" role="status">{{ trans.adminPingResourceWarning }}</p>
+        <p v-if="settings.extra_ping_nodes?.length" class="text-muted text-sm mt-1">{{ trans.adminPingSchemaRequired }}</p>
       </div>
   </div>
 </template>
@@ -91,16 +101,22 @@ defineEmits(['toggle-password', 'toggle-admin-password-change', 'upload-bg', 'up
 import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY } from '../../../utils/constants.js'
 const visiblePingFields = ref([])
 let nextPingNumber = 1
+const pingCount = computed(() => visiblePingFields.value.length + (props.settings.extra_ping_nodes?.length || 0))
 watch(() => props.settings, () => {
   visiblePingFields.value = PING_NODE_FIELDS.filter(field => props.settings[field] || props.settings[`${field}_name`])
-  nextPingNumber = Math.max(visiblePingFields.value.length, ...visiblePingFields.value.map(field => Number(/^Node (\d+)$/.exec(props.settings[`${field}_name`] || '')?.[1]) || 0)) + 1
+  nextPingNumber = Math.max(pingCount.value, ...visiblePingFields.value.map(field => Number(/^Node (\d+)$/.exec(props.settings[`${field}_name`] || '')?.[1]) || 0), ...(props.settings.extra_ping_nodes || []).map(node => Number(/^Node (\d+)$/.exec(node.name)?.[1]) || 0)) + 1
 }, { immediate: true })
 const addPingNode = () => {
   const field = PING_NODE_FIELDS.find(field => !visiblePingFields.value.includes(field))
-  if (!field) return
+  if (!field) {
+    props.settings.extra_ping_nodes ||= []
+    props.settings.extra_ping_nodes.push({ id: `p_${crypto.randomUUID()}`, name: `Node ${nextPingNumber++}`, target: '' })
+    return
+  }
   props.settings[`${field}_name`] = `Node ${nextPingNumber++}`
   visiblePingFields.value.push(field)
 }
+const removeExtraPingNode = id => { props.settings.extra_ping_nodes = props.settings.extra_ping_nodes.filter(node => node.id !== id) }
 const removePingNode = field => {
   props.settings[field] = ''
   props.settings[`${field}_name`] = ''
@@ -225,6 +241,7 @@ const formatWssHourRange = hour => {
 
 .collection-settings .ping-node-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 .collection-settings .ping-node-item { position: relative; }
+.collection-settings [data-action="add-ping-node"] { scroll-margin-block: 80px; }
 .collection-settings .ping-node-remove { flex: none; }
 
 @media (max-width: 639px) {

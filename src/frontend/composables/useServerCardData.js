@@ -1,4 +1,5 @@
 import { computed } from 'vue'
+import { extraPingDefinitions } from '../../shared/extraPing.js'
 import { formatBytes, getFlagRegionCode, isServerOnline } from '../utils/api'
 import { getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n'
@@ -437,7 +438,7 @@ export function useServerCardData(props) {
   const threeNetDetails = computed(() => {
     const enabled = []
     const disabled = []
-    for (const def of THREE_NET_DEFS) {
+    for (const def of [...THREE_NET_DEFS, ...extraPingDefinitions(props.server.extra_ping_nodes || props.sysConfig?.extra_ping_nodes)]) {
       (isDisabledByLatestLoss(def.key) ? disabled : enabled).push(def)
     }
     // 启用的节点优先且保持原顺序；不足 3 个时用禁用节点按原顺序补位
@@ -454,7 +455,8 @@ export function useServerCardData(props) {
     { label: props.server.node_1_name || 'Node 1', value: props.server.ping_node_1 },
     { label: props.server.node_2_name || 'Node 2', value: props.server.ping_node_2 },
     { label: props.server.node_3_name || 'Node 3', value: props.server.ping_node_3 },
-    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4 }
+    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4 },
+    ...extraPingDefinitions(props.server.extra_ping_nodes || props.sysConfig?.extra_ping_nodes).map(def => ({ key: def.key, label: def.label, value: props.server[def.field] }))
   ].filter(ping => !isPingDisabled(ping.value)))
 
   const hasPingData = computed(() => pingList.value.length > 0)

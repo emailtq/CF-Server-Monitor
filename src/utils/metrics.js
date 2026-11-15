@@ -2,6 +2,7 @@ import {
   NUMERIC_METRIC_FIELDS,
   PROBE_METRIC_FIELDS
 } from './historyFields.js';
+import { normalizeExtraProbes, mergeExtraProbeMetrics } from '../shared/extraPing.js';
 
 export const DISK_IO_METRIC_FIELDS = [
   'read_bps',
@@ -115,6 +116,9 @@ export function isDisabledProbeMetric(value) {
 export function coerceNumericMetricFields(payload) {
   if (!payload || typeof payload !== 'object') return payload;
   const result = { ...payload };
+  if (Object.hasOwn(result, 'extra_probes')) {
+    mergeExtraProbeMetrics(result, normalizeExtraProbes(result.extra_probes) || {});
+  }
 
   for (const field of NUMERIC_METRIC_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(result, field)) continue;
@@ -156,6 +160,9 @@ export function normalizeProbeMetricRow(metrics) {
   if (!metrics) return metrics;
 
   const normalized = { ...metrics };
+  if (Object.hasOwn(normalized, 'extra_probes')) {
+    mergeExtraProbeMetrics(normalized, normalizeExtraProbes(normalized.extra_probes) || {});
+  }
   for (const field of PROBE_METRIC_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(normalized, field)) {
       normalized[field] = normalizeProbeMetric(normalized[field]);
@@ -194,6 +201,7 @@ export function mergeMetricsIntoServer(server, metrics) {
   server.loss_node_2 = normalizeProbeMetric(metrics.loss_node_2);
   server.loss_node_3 = normalizeProbeMetric(metrics.loss_node_3);
   server.loss_node_4 = normalizeProbeMetric(metrics.loss_node_4);
+  mergeExtraProbeMetrics(server, normalizeExtraProbes(metrics.extra_probes || {}) || {});
   server.ram_total = metrics.ram_total || 0;
   server.ram_used = metrics.ram_used || 0;
   server.swap_total = metrics.swap_total || 0;

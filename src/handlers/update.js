@@ -1,5 +1,6 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { validTerminalObservation } from '../database/terminal.js';
+import { normalizeExtraProbes } from '../shared/extraPing.js';
 import { getServerDetail, clearServerDetailCache, patchServerDetailCache } from '../utils/cache.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
 import {
@@ -141,6 +142,15 @@ export function normalizeCorrectionValue(value) {
 }
 
 export function normalizeMetricSamples(data) {
+  const validateExtras = metrics => {
+    if (metrics && Object.hasOwn(metrics, 'extra_ping_nodes')) throw new AppError('Configuration targets are not metrics', 400);
+    if (metrics && Object.hasOwn(metrics, 'extra_probes') && (
+      !metrics.extra_probes || typeof metrics.extra_probes !== 'object' || Array.isArray(metrics.extra_probes) || !normalizeExtraProbes(metrics.extra_probes)
+    )) {
+      throw new AppError('Invalid extra_probes', 400);
+    }
+  };
+  validateExtras(data.metrics);
   const now = Date.now();
   const rawSamples = Array.isArray(data.samples)
     ? data.samples
@@ -160,6 +170,7 @@ export function normalizeMetricSamples(data) {
     if (!item || typeof item !== 'object') return null;
     const metrics = item.metrics || item.data || item.payload || item;
     if (!metrics || typeof metrics !== 'object') return null;
+    validateExtras(metrics);
     const ts = normalizeTimestamp(item.ts ?? item.timestamp ?? metrics.timestamp, now);
     return { ts, metrics };
   }).filter(Boolean);

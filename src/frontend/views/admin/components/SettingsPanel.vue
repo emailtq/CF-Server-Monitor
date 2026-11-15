@@ -14,6 +14,7 @@
 <script setup>
 import { computed, reactive } from 'vue'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
+import { validateExtraPingNodes } from '../../../../shared/extraPing.js'
 import AppearanceSettings from './AppearanceSettings.vue'
 import CollectionSettings from './CollectionSettings.vue'
 import SecuritySettings from './SecuritySettings.vue'
@@ -73,7 +74,7 @@ const pingNodeErrors = computed(() => Object.fromEntries(
   PING_NODE_FIELDS.map(field => [
     field,
     validatePingNode(props.settings[field]).valid ? '' : pingNodeErrorMessage.value
-  ])
+  ]).concat((props.settings.extra_ping_nodes || []).map(node => [node.id, validateExtraPingNodes([node], validatePingNode).valid ? '' : pingNodeErrorMessage.value]))
 ))
 
 const hasPingNodeErrors = computed(() => Object.values(pingNodeErrors.value).some(Boolean))

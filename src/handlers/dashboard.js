@@ -17,6 +17,7 @@ import {
 } from '../utils/config.js';
 
 const PROBE_FIELDS = ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'];
+import { publicExtraPingNodes } from '../shared/extraPing.js';
 
 // REST 接口中，丢包值为 null 表示该探针没有可用样本；此时隐藏对应的延迟和丢包字段。
 export function omitNullLossProbeFields(item) {
@@ -204,6 +205,7 @@ export async function handleServerAPI(request, env, sys) {
   mergeMetricsIntoServer(server, latestMetrics);
   server.latestReportUpdates = realtimeState.latestReportUpdates;
   server.sysConfig = {
+    extra_ping_nodes: publicExtraPingNodes(sys.extra_ping_nodes),
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
   };
   
@@ -290,6 +292,7 @@ export async function handleServersAPI(request, env, sys) {
       node_2_name: sys.node_2_name || 'Node 2',
       node_3_name: sys.node_3_name || 'Node 3',
       node_4_name: sys.node_4_name || 'Node 4',
+      extra_ping_nodes: publicExtraPingNodes(sys.extra_ping_nodes),
       display_mode: sys.display_mode || 'bar',
       latency_window: {
         points: DASHBOARD_LATENCY_WINDOW_POINTS,
