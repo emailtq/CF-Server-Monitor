@@ -5,7 +5,7 @@
 .admin-ui .admin-dialog-group .admin-dialog-close { top: 8px; right: 8px; color: var(--cf-text); opacity: .7; transition: opacity 150ms; }
 .admin-ui .admin-dialog-group .admin-dialog-close:hover { opacity: 1; background: none; }
 .admin-ui .admin-dialog-group .admin-dialog-body { padding: 0; scrollbar-gutter: auto; overflow: visible; flex-shrink: 0; }
-.admin-ui .admin-dialog-group { overflow-y: auto; }
+.admin-ui .admin-dialog-group { overflow: hidden; }
 .admin-ui .admin-dialog-group .admin-group-layout fieldset { padding: 0; border: 0; margin: 0; min-width: 0; display: grid; gap: 16px; }
 .admin-ui .admin-dialog-group .admin-group-name-field { display: grid; gap: 8px; }
 .admin-ui .admin-dialog-group .admin-group-name-field > label { font-size: 14px; font-weight: 500; line-height: 14px; }

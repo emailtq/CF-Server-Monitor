@@ -50,7 +50,7 @@ const position = (closeOffscreen = false) => {
   if (!open.value || !menu.value) return
   const rect = trigger.value.getBoundingClientRect()
   const body = root.value.closest('.admin-dialog-body')
-  const scrollport = body && (getComputedStyle(body).overflowY === 'visible' ? body.closest('.admin-dialog') : body)
+  const scrollport = body?.closest('.admin-dialog-scroll') || body
   const container = scrollport?.getBoundingClientRect()
   const viewport = window.visualViewport
   const top = (viewport?.offsetTop || 0) + 16

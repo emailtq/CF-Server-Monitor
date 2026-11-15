@@ -111,7 +111,7 @@ export async function refinementChecks({ page, context, report, check, state, ou
     await page.keyboard.press('Tab'); await button.focus();
     assert.notEqual(await button.evaluate(el => getComputedStyle(el).outlineStyle), 'none');
   });
-  await check('terminal X keeps its centered 44px hit target, neutral pointer fill and keyboard ring', async () => {
+  await check('terminal X keeps the shared rail axis, 44px hit target, neutral fill and keyboard ring', async () => {
     const inputs = report.inputs.length, sockets = report.sockets, resizes = report.resizes.length;
     const button = page.locator('.admin-dialog-terminal .admin-dialog-close');
     const samples = [];
@@ -145,7 +145,7 @@ export async function refinementChecks({ page, context, report, check, state, ou
       assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), report.pointer !== 'fine');
     }
     await page.evaluate(() => document.body.classList.add('light')); report.closeGlyph = samples;
-    assert.ok(samples.every(s => s.width === 44 && s.height === 44 && s.dx === 0 && s.dy === 0 && (s.phase === 'touch-release-leaving' || s.hit)), JSON.stringify(samples));
+    assert.ok(samples.every(s => s.width === 44 && s.height === 44 && s.dx === 5.5 && s.dy === 0 && (s.phase === 'touch-release-leaving' || s.hit)), JSON.stringify(samples));
     assert.ok(samples.every(s => s.background === 'rgba(0, 0, 0, 0)'), JSON.stringify(samples));
     assert.ok(samples.at(-1).focusVisible && samples.at(-1).ring === 'solid');
     assert.equal(report.inputs.length, inputs); assert.equal(report.sockets, sockets); assert.equal(report.resizes.length, resizes);

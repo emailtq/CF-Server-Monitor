@@ -3,13 +3,15 @@
     <Transition :name="size === 'terminal' ? 'terminal-menu' : size === 'group' ? 'admin-group-dialog' : undefined" :css="size === 'terminal' || size === 'group'" @before-leave="retainLeavingDialog" @after-leave="finishLeave">
     <div v-if="open" class="admin-ui admin-dialog-overlay" :style="viewportStyle" @click.self="requestClose">
       <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" :style="size === 'terminal' ? { height: viewportHeight } : undefined" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || ($slots.description ? `${titleId}-description` : undefined)" :aria-busy="busy" tabindex="-1">
+        <button type="button" class="admin-dialog-close" :disabled="busy" :aria-label="t('close')" @click="requestClose"><AdminIcon name="x" /></button>
+        <div class="admin-dialog-scroll">
         <header class="admin-dialog-head">
           <h2 :id="titleId">{{ title }}</h2>
           <p v-if="$slots.description" :id="`${titleId}-description`" class="admin-group-description"><slot name="description" /></p>
-          <button type="button" class="admin-dialog-close" :disabled="busy" :aria-label="t('close')" @click="requestClose"><AdminIcon name="x" /></button>
         </header>
         <div class="admin-dialog-body"><slot name="body"><slot /></slot></div>
         <footer v-if="$slots.footer" class="admin-dialog-footer"><slot name="footer" /></footer>
+        </div>
       </section>
     </div>
     </Transition>
@@ -33,15 +35,32 @@ const titleId = `admin-dialog-${++nextId}`
 let previousFocus = null
 let registered = false
 let observedViewport = null
+let headerObserver
 // Vue clears the section ref before an animated leave removes its DOM.
 let leavingDialog = null
 const retainLeavingDialog = element => { if (['terminal', 'group'].includes(props.size)) leavingDialog = element.querySelector('.admin-dialog') }
 const dialogElement = () => dialog.value || leavingDialog
+const updateTrackStart = () => {
+  const section = dialogElement(), title = section?.querySelector('h2'), close = section?.querySelector('.admin-dialog-close')
+  if (!title || !close) return
+  // Native track margins separate the scrollbar from the title and the full X hit area.
+  const hitInset = matchMedia('(pointer:coarse)').matches ? 6 : 0
+  section.style.setProperty('--admin-dialog-track-start', `${Math.max(title.offsetTop + title.offsetHeight, close.offsetTop + close.offsetHeight + hitInset) + 12}px`)
+}
+watch(dialog, section => {
+  headerObserver?.disconnect()
+  if (!section) return
+  headerObserver = new ResizeObserver(updateTrackStart)
+  headerObserver.observe(section.querySelector('h2'))
+  headerObserver.observe(section.querySelector('.admin-dialog-close'))
+  updateTrackStart()
+})
 const updateViewport = async () => {
   const height = window.visualViewport?.height || window.innerHeight
   const top = window.visualViewport?.offsetTop || 0
   viewportStyle.value = { top: `${top}px`, height: `${height}px`, '--admin-dialog-viewport': `${height}px`, '--admin-dialog-offset': `${top}px` }
   await nextTick()
+  updateTrackStart()
   const section = dialogElement(), active = document.activeElement
   if (!topmost() || !section?.contains(active) || !active.matches('input,textarea')) return
   const field = active.getBoundingClientRect(), port = section.getBoundingClientRect()
@@ -70,6 +89,7 @@ const release = () => {
   const wasTop = topmost()
   dialogs.splice(dialogs.indexOf(titleId), 1)
   registered = false
+  headerObserver?.disconnect()
   leavingDialog = null
   document.removeEventListener('keydown', keydown, true)
   document.removeEventListener('focusin', focusin)

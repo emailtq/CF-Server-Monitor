@@ -540,8 +540,8 @@ try {
     await page.setViewportSize({ width: 320, height: 480 });
     await page.waitForFunction(() => document.querySelector('.admin-dialog-overlay').getBoundingClientRect().height === visualViewport.height);
     const geometry = await dialog().evaluate(el => {
-      const body = el.querySelector('.admin-dialog-body'), footer = el.querySelector('footer'), scroll = getComputedStyle(body).overflowY === 'visible' ? el : body; scroll.scrollTop = scroll.scrollHeight;
-      return { ownerScroll: scroll.scrollHeight > scroll.clientHeight, owners: [el, body].filter(node => getComputedStyle(node).overflowY === 'auto' && node.scrollHeight > node.clientHeight).length, bottom: footer.getBoundingClientRect().bottom, height: innerHeight, commandScroll: el.querySelector('pre').scrollHeight > el.querySelector('pre').clientHeight };
+      const body = el.querySelector('.admin-dialog-body'), footer = el.querySelector('footer'), scroll = el.querySelector('.admin-dialog-scroll'); scroll.scrollTop = scroll.scrollHeight;
+      return { ownerScroll: scroll.scrollHeight > scroll.clientHeight, owners: [el, el.querySelector('.admin-dialog-scroll'), body].filter(node => getComputedStyle(node).overflowY === 'auto' && node.scrollHeight > node.clientHeight).length, bottom: footer.getBoundingClientRect().bottom, height: innerHeight, commandScroll: el.querySelector('pre').scrollHeight > el.querySelector('pre').clientHeight };
     });
     assert.equal(geometry.ownerScroll, true); assert.equal(geometry.owners, 1); assert.equal(geometry.commandScroll, false); assert.ok(geometry.bottom <= geometry.height - 15);
     assert.equal(await dialog().locator('[data-copy-command]').isEnabled(), true);
@@ -557,7 +557,7 @@ try {
         return { scheme: getComputedStyle(d).colorScheme, overflow: d.scrollWidth > d.clientWidth, pageOverflow: document.documentElement.scrollWidth > innerWidth,
           rows: rows.map(row => { const label = row.querySelector('label'), control = row.querySelector(':scope > .form-input,:scope > .form-select,:scope > .download-option-control'); const l = label.getBoundingClientRect(), c = control.getBoundingClientRect(); return { labelBottom: l.bottom, controlTop: c.top, width: c.width, rowWidth: row.clientWidth, font: getComputedStyle(control).fontSize } }),
           commandOverflow: getComputedStyle(d.querySelector('pre')).overflowY, commandScrolls: d.querySelector('pre').scrollHeight > d.querySelector('pre').clientHeight,
-          shellScrolls: d.scrollHeight > d.clientHeight,
+          shellScrolls: d.querySelector('.admin-dialog-scroll').scrollHeight > d.querySelector('.admin-dialog-scroll').clientHeight,
           footer: d.querySelector('footer').getBoundingClientRect().bottom, viewport: innerHeight };
       });
       assert.equal(geometry.overflow, false); assert.equal(geometry.pageOverflow, false);
@@ -585,7 +585,7 @@ try {
     const shot = path.join(out, `download-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
     await page.screenshot({ path: shot }); report.screenshots.push(shot);
     if (width === 320 || width === 390) {
-      await dialog().evaluate(el => { el.scrollTop = el.scrollHeight });
+      await dialog().locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = el.scrollHeight });
       const bottomShot = path.join(out, `download-bottom-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
       await page.screenshot({ path: bottomShot }); report.screenshots.push(bottomShot);
     }

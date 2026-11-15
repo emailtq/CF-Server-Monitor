@@ -50,7 +50,8 @@ const nativeDrag = async (page, cdp, locator, horizontal, mobile, name) => {
   const g = await locator.evaluate((el, horizontal) => {
     el.scrollTop = 0; el.scrollLeft = 0;
     const root = el === document.scrollingElement, r = el.getBoundingClientRect();
-    return { root, left: root ? 0 : r.left, top: root ? 0 : r.top, right: root ? innerWidth : r.right, bottom: root ? innerHeight : r.bottom, length: horizontal ? el.clientWidth : root ? innerHeight : el.clientHeight, total: horizontal ? el.scrollWidth : el.scrollHeight, gutter: root ? innerWidth - el.clientWidth : horizontal ? el.offsetHeight - el.clientHeight : el.offsetWidth - el.clientWidth };
+    const track = getComputedStyle(el, '::-webkit-scrollbar-track');
+    return { root, left: root ? 0 : r.left, top: root ? 0 : r.top, right: root ? innerWidth : r.right, bottom: root ? innerHeight : r.bottom, length: horizontal ? el.clientWidth : root ? innerHeight : el.clientHeight, total: horizontal ? el.scrollWidth : el.scrollHeight, trackTop: horizontal ? 0 : parseFloat(track.marginTop) || 0, trackBottom: horizontal ? 0 : parseFloat(track.marginBottom) || 0, gutter: root ? innerWidth - el.clientWidth : horizontal ? el.offsetHeight - el.clientHeight : el.offsetWidth - el.clientWidth };
   }, horizontal);
   assert.ok(g.total > g.length + 40, name + ' must have real scrollable content');
   if (g.root && mobile && g.gutter === 0) {
@@ -67,8 +68,8 @@ const nativeDrag = async (page, cdp, locator, horizontal, mobile, name) => {
     assert.ok(samples.at(-1) > 20); assert.ok(samples.every((value, n) => n === 0 || value >= samples[n - 1]));
     return;
   }
-  const offset = mobile ? 14 : 4, middle = Math.max(8, Math.min(g.length ** 2 / g.total / 2, 24));
-  const x = horizontal ? g.left + middle : g.right - offset, y = horizontal ? g.bottom - offset : g.top + middle;
+  const offset = mobile ? 14 : 4, middle = Math.max(8, Math.min((g.length - g.trackTop - g.trackBottom) * g.length / g.total / 2, 24));
+  const x = horizontal ? g.left + middle : g.right - offset, y = horizontal ? g.bottom - offset : g.top + g.trackTop + middle;
   const paintShot = `${name}-paint.png`, clip = horizontal ? { x: Math.round(x), y: Math.round(g.bottom - g.gutter), width: 1, height: g.gutter } : { x: Math.round(g.right - g.gutter), y: Math.round(y), width: g.gutter, height: 1 };
   const png = PNG.sync.read(await page.screenshot({ path: path.join(out, paintShot), clip })), background = [...png.data.subarray(0, 3)];
   const contrast = Array.from({ length: horizontal ? png.height : png.width }, (_, n) => Math.max(...background.map((value, c) => Math.abs(value - png.data[n * 4 + c]))));
@@ -138,7 +139,7 @@ try {
     await page.waitForFunction(() => visualViewport.height === 320);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await dialog.locator('.admin-picker-menu').count(), 1);
-    await dialog.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await dialog.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await dialog.locator('.admin-picker-menu').count(), 1, 'keyboard-induced dialog scroll must retain focused search');
     await dialog.locator('.admin-picker-search input').fill('Node 2');
@@ -253,10 +254,10 @@ try {
         assert.ok(enabled.textRight < enabled.inputX && Math.abs(enabled.inputRight - enabled.rowRight) < 2);
         assert.equal(await dialog.locator('.admin-form-grid').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length), mobile ? 1 : 2);
         await dialog.locator('[name=template]').fill('Local {{message}}'); assert.match(await dialog.locator('.admin-message-preview').innerText(), /Local/);
-        await dialog.evaluate(el => { el.scrollTop = 0; });
+        await dialog.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = 0; });
         await shot('smtp-form-top');
-        if (mobile) await nativeDrag(page, cdp, dialog, false, true, `dialog-${width}-${theme}`);
-        else { await page.setViewportSize({ width, height: 640 }); await nativeDrag(page, cdp, dialog, false, false, `dialog-${width}-${theme}`); await page.setViewportSize({ width, height }); }
+        if (mobile) await nativeDrag(page, cdp, dialog.locator('.admin-dialog-scroll'), false, true, `dialog-${width}-${theme}`);
+        else { await page.setViewportSize({ width, height: 640 }); await nativeDrag(page, cdp, dialog.locator('.admin-dialog-scroll'), false, false, `dialog-${width}-${theme}`); await page.setViewportSize({ width, height }); }
         await dialog.locator('[name=template]').scrollIntoViewIfNeeded(); await shot('template-preview');
       });
       await check(`${width}/${theme}: notification eye stays inside full-width field, toggles and supports keyboard`, async () => {
@@ -275,14 +276,16 @@ try {
         assert.equal(await eye.locator('[data-reference-icon=eye-off]').count(), 1);
         await assertEye(eye, mobile, 'eye-off');
         await shot('notification-eye-pointer');
-        await eye.focus(); await page.keyboard.press('Space'); assert.equal(await input.getAttribute('type'), 'pass' + 'word');
+        await eye.focus(); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await eye.evaluate(el => el === document.activeElement),true,'keyboard eye must actually retain focus');
+        await page.keyboard.press('Space'); assert.equal(await input.getAttribute('type'), 'pass' + 'word');
         await assertEye(eye, mobile, 'eye');
         assert.equal(await eye.evaluate((el, color) => el === document.activeElement && getComputedStyle(el).color !== color, unfocusedColor), true);
         await shot('notification-eye-keyboard');
         assert.equal(await input.inputValue(), 'synthetic-eye-only'); await input.fill('');
         report.geometry.push({ name: 'inside-notification-eye', width, theme, input: r, eye: b });
         await eye.scrollIntoViewIfNeeded(); await shot('visible-notification-eye');
-        await dialog.evaluate(el => { el.scrollTop = 0; }); await shot('smtp-inside-eye');
+        await dialog.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = 0; }); await shot('smtp-inside-eye');
       });
       if (width === 360 && theme === 'light') await check('all twelve providers render their full connection fields on the same Android page', async () => {
         for (const type of providers) {
@@ -291,7 +294,7 @@ try {
           assert.deepEqual(await dialog.locator('[data-field]').evaluateAll(nodes => nodes.map(n => n.dataset.field)), channelFields(type));
           assert.equal(await dialog.locator('[name=template]').inputValue(), 'Local {{message}}');
           assert.equal(await dialog.locator('[data-action=test], [data-action=save-channel], [data-action=cancel]').count(), 3);
-          if (['webhook', 'legacy'].includes(type)) { await dialog.evaluate(el => { el.scrollTop = 0; }); await shot(`${type}-form`); }
+          if (['webhook', 'legacy'].includes(type)) { await dialog.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = 0; }); await shot(`${type}-form`); }
         }
       });
       await click(dialog.locator('[data-action=cancel]'));

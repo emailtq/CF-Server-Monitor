@@ -31,6 +31,7 @@ async function referenceAssets(out) {
 }
 
 export async function round3Dialogs({ page, context, open, frames, out, report, PNG, screenshot, origin }) {
+  if (process.argv.includes('--track-layout')) return dialogTrackLayout({ page, context, open, frames, out, report, PNG, screenshot, origin });
   const reference = process.env.ADMIN_DIALOG_REFERENCE === '1' ? await referenceAssets(out) : null; report.reference = reference;
   if (reference) await context.route('**/reference*', route => {
     const file = path.join(reference.dir, path.basename(new URL(route.request().url()).pathname));
@@ -43,8 +44,8 @@ export async function round3Dialogs({ page, context, open, frames, out, report, 
     const body = isRef ? section.querySelector('form') || section.children[1] : section.querySelector('.admin-dialog-body');
     const footer = section.querySelector(isRef ? '[data-slot=dialog-footer]' : 'footer');
     const r = e => { const b = e?.getBoundingClientRect(); return b && { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height }; };
-    const css = getComputedStyle(section), active = document.activeElement;
-    return { viewport: { height: visualViewport.height, top: visualViewport.offsetTop, width: visualViewport.width }, scheme: css.colorScheme, section: r(section), body: r(body), footer: r(footer), active: { tag: active.tagName, id: active.id, rect: r(active), value: active.value, start: active.selectionStart, end: active.selectionEnd }, bodyOverflow: getComputedStyle(body).overflowY, shellOverflow: css.overflowY, gutter: section.offsetWidth - section.clientWidth - section.clientLeft * 2, paddingLeft: parseFloat(css.paddingLeft), paddingRight: parseFloat(css.paddingRight), scrollTop: section.scrollTop, scrollHeight: section.scrollHeight, clientHeight: section.clientHeight, short: section.parentElement.classList.contains('admin-dialog-short') };
+    const owner = isRef ? section : section.querySelector('.admin-dialog-scroll'), css = getComputedStyle(owner), active = document.activeElement;
+    return { viewport: { height: visualViewport.height, top: visualViewport.offsetTop, width: visualViewport.width }, scheme: css.colorScheme, trackTop: parseFloat(getComputedStyle(owner, '::-webkit-scrollbar-track').marginTop) || 0, trackBottom: parseFloat(getComputedStyle(owner, '::-webkit-scrollbar-track').marginBottom) || 0, section: r(section), body: r(body), footer: r(footer), active: { tag: active.tagName, id: active.id, rect: r(active), value: active.value, start: active.selectionStart, end: active.selectionEnd }, bodyOverflow: getComputedStyle(body).overflowY, shellOverflow: css.overflowY, gutter: owner.offsetWidth - owner.clientWidth - owner.clientLeft * 2, paddingLeft: parseFloat(css.paddingLeft), paddingRight: parseFloat(css.paddingRight), scrollTop: owner.scrollTop, scrollHeight: owner.scrollHeight, clientHeight: owner.clientHeight, short: section.parentElement.classList.contains('admin-dialog-short') };
   }, isRef);
   const cdp = await context.newCDPSession(page), refCdp = ref ? await context.newCDPSession(ref) : null;
   const referenceShot = async file => { const image = await refCdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); fs.writeFileSync(file, Buffer.from(image.data, 'base64')); report.screenshots.push(file); };
@@ -129,16 +130,16 @@ export async function round3Dialogs({ page, context, open, frames, out, report, 
         await screenshot(`keyboard-restored-${width}-${dark}`);
       });
       await check(`${width}: edge paint and continuous CDP diagonal thumb drag`, async () => {
-        await metrics(cdp, width, 500); await openKind('edit'); const section = page.locator('.admin-dialog'); await section.evaluate(el => { el.scrollTop = 0; });
+        await metrics(cdp, width, 500); await openKind('edit'); const section = page.locator('.admin-dialog'); await section.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = 0; });
         const g = await sample(page), r = await section.boundingBox();
-        const x = r.x + r.width - 14, y = r.y + 1 + Math.max(24, g.clientHeight ** 2 / g.scrollHeight) / 2;
+        const x = r.x + r.width - 14, y = r.y + 1 + g.trackTop + Math.max(24, (g.clientHeight - g.trackTop - g.trackBottom) * g.clientHeight / g.scrollHeight) / 2;
         const capture = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, clip: { x: Math.round(r.x + r.width - g.gutter - 1), y: Math.round(y), width: Math.max(1, g.gutter), height: 1, scale: 1 } });
         const paintBuffer = Buffer.from(capture.data, 'base64'), paintPath = path.join(out, `edge-paint-${width}-${dark}.png`); fs.writeFileSync(paintPath, paintBuffer); report.screenshots.push(paintPath); const paint = PNG.sync.read(paintBuffer);
         const background = [...paint.data.subarray(0, 3)], columns = Array.from({ length: paint.width }, (_, n) => n).filter(n => background.some((v, c) => Math.abs(v - paint.data[n * 4 + c]) > 3));
         report.geometry.push({ kind: 'edge-paint', width, dark, g, columns });
-        assert.equal(columns.length, 3, 'real thumb paint remains 3px'); assert.ok(columns[0] >= g.gutter - 6, 'paint hugs border, not inner edge of 20px gutter');
+        assert.equal(columns.length, 3, 'real thumb paint remains 3px'); assert.ok(columns[0] <= 4, 'paint hugs border, not inner edge of 20px gutter');
         const trace = []; await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-        for (let n = 1; n <= 12; n++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - n, y: y + n * 8 }] }); await frames(); trace.push(await section.evaluate(el => el.scrollTop)); }
+        for (let n = 1; n <= 12; n++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - n, y: y + n * 8 }] }); await frames(); trace.push(await section.locator('.admin-dialog-scroll').evaluate(el => el.scrollTop)); }
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         report.geometry.push({ kind: 'edge-touch-drag', width, dark, g, columns, trace }); assert.ok(trace.at(-1) > 20); assert.ok(trace.every((v, n) => !n || v >= trace[n - 1])); await screenshot(`edge-touch-drag-${width}-${dark}`);
       });
@@ -198,4 +199,70 @@ export async function round3Dialogs({ page, context, open, frames, out, report, 
       });
     }
   } finally { await cdp.detach(); await refCdp?.detach(); await ref?.close(); }
+}
+
+export async function dialogTrackLayout({ page, context, open, frames, out, report, PNG, screenshot, origin }) {
+  const cdp = await context.newCDPSession(page);
+  const measure = section => {
+    const box = el => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, bottom: r.bottom, right: r.right }; };
+    const title = section.querySelector('h2'), close = section.querySelector('.admin-dialog-close'), body = section.querySelector('.admin-dialog-body'), footer = section.querySelector('footer');
+    const owner = section.querySelector('.admin-dialog-scroll') || section, css = getComputedStyle(owner), track = getComputedStyle(owner, '::-webkit-scrollbar-track'), coarse = matchMedia('(pointer:coarse)').matches;
+    const r = box(section), head = box(title), x = box(close), glyph=box(close.querySelector('svg')), gutter = owner.offsetWidth - owner.clientWidth - owner.clientLeft * 2;
+    return { r, head, close: x, glyphCenter:glyph.x+glyph.width/2, coarse, gutter, chromeEnd: Math.max(head.bottom, x.bottom) - r.y, trackTop: parseFloat(track.marginTop) || 0, trackBottom: parseFloat(track.marginBottom) || 0, scrollHeight: owner.scrollHeight, clientHeight: owner.clientHeight, body: box(body), footer: footer && box(footer), paddingLeft: parseFloat(css.paddingLeft), paddingRight: parseFloat(css.paddingRight), overflow: getComputedStyle(body).overflowY };
+  };
+  try {
+    for (const width of [360, 390, 1440, 1920]) for (const dark of [false, true]) {
+      await page.setViewportSize({ width, height: width < 640 ? 844 : 900 });
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: width < 640 });
+      await page.goto(`${origin}/admin?locale=${width < 640 ? 'zh' : 'en'}#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture);
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: width < 640 }); await frames();
+      for (const kind of ['group', 'notificationSmtp', 'edit', 'terminal']) {
+        const name = `track-${kind}-${width}-${dark}`;
+        try {
+          await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: width < 640 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 640 });
+          await open(kind); await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
+          if (kind === 'edit') await page.evaluate(() => { window.dialogFixture.state.props.currentServerName = 'Long dialog title with natural wrapping / 标题完整保留 '.repeat(3); });
+          await frames(); await page.locator('.admin-dialog').last().evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+          await page.locator('.admin-dialog-scroll').last().evaluate(el => { el.scrollTop = 0; }); await screenshot(`${name}-normal`);
+          await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: width < 640 ? 300 : 500, deviceScaleFactor: 1, mobile: width < 640 }); await frames();
+          await page.locator('.admin-dialog').last().evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+          const section = page.locator('.admin-dialog').last(); await section.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = 0; }); await frames();
+          const g = await section.evaluate(measure); await screenshot(name);
+          assert.equal(g.coarse, width < 640, 'desktop track checks must exercise actual fine-pointer mouse mode');
+          const captured = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, clip: { x: Math.round(g.r.right) - 21, y: Math.round(g.r.y) + 9, width: 6, height: Math.floor(g.r.height) - 18, scale: 1 } });
+          const png = PNG.sync.read(Buffer.from(captured.data, 'base64'));
+          const paintedRows = Array.from({ length: png.height }, (_, y) => y).filter(y => y + 9 >= g.chromeEnd + 8 && [2,3,4].some(x => [0,1,2].some(c => Math.abs(png.data[(y * png.width + x) * 4 + c] - png.data[y * png.width * 4 + c]) > 30)));
+          const firstPaint = paintedRows.length ? paintedRows[0] + 9 : null;
+          report.geometry.push({ kind: 'track-layout', name, g, firstPaint, paintedRows });
+          assert.ok(firstPaint !== null, 'scrollbar must remain visibly painted, not hidden');
+          assert.ok(firstPaint >= g.chromeEnd + 8, `${name}: actual thumb starts ${firstPaint}px, title/close ends ${g.chromeEnd}px`);
+          const paintedY = paintedRows[Math.min(5, paintedRows.length - 1)], paintedColumns = [1,2,3,4,5].filter(x => [0,1,2].some(c => Math.abs(png.data[(paintedY * png.width + x) * 4 + c] - png.data[paintedY * png.width * 4 + c]) > 30));
+          assert.equal(paintedColumns.length, 3, 'track margin must retain actual 3px thumb paint');
+          const paintCenter = Math.round(g.r.right) - 21 + paintedColumns.reduce((sum,x) => sum+x+.5,0)/paintedColumns.length;
+          report.geometry.push({kind:'horizontal-axis',name,paintCenter,glyphCenter:g.glyphCenter,delta:Math.abs(paintCenter-g.glyphCenter)});
+          assert.ok(Math.abs(paintCenter-g.glyphCenter) <= .75, 'actual painted thumb and X glyph must share the horizontal axis');
+          if (kind === 'edit') assert.ok(g.head.right <= g.close.x - 6, 'long title must not run underneath the close control');
+          assert.equal(g.overflow, 'visible'); assert.equal(g.paddingLeft, g.paddingRight + g.gutter);
+          if (g.footer) assert.ok(Math.abs(g.body.x - g.footer.x) < 1 && Math.abs(g.body.right - g.footer.right) < 1);
+          const length = g.clientHeight - g.trackTop - g.trackBottom, y = g.r.y + 1 + g.trackTop + Math.max(24, length * g.clientHeight / g.scrollHeight) / 2;
+          const x = g.r.right - (g.coarse ? 14 : 18), samples = [];
+          if (g.coarse) await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] }); else { await page.mouse.move(x,y); await page.mouse.down(); }
+          for (let n = 1; n <= 8; n++) {
+            if (g.coarse) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - n, y: y + n * 7 }] }); else await page.mouse.move(x,y+n*7);
+            await frames(); samples.push(await section.locator('.admin-dialog-scroll').evaluate(el => el.scrollTop));
+          }
+          if (g.coarse) await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); else await page.mouse.up();
+          if (g.coarse) await page.waitForTimeout(300); // Finish Chromium's native scrollbar gesture before the next tap.
+          report.geometry.push({ kind: 'track-drag', name, samples }); assert.ok(samples.at(-1) > 10 && samples.every((v,n) => !n || v >= samples[n-1]), JSON.stringify(samples));
+          await section.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = 0; }); await section.locator('.admin-dialog-close').scrollIntoViewIfNeeded();
+          const hit = await section.locator('.admin-dialog-close').evaluate(el => { const r = el.getBoundingClientRect(), radius = matchMedia('(pointer:coarse)').matches ? 21 : 14, x = r.x+r.width/2, y=r.y+r.height/2; return [[x-radius,y],[x+radius,y],[x,y-radius],[x,y+radius]].every(([px,py]) => el.contains(document.elementFromPoint(px,py))); });
+          assert.equal(hit,true,'X full independent hit region remains usable');
+          const closeBox = await section.locator('.admin-dialog-close').boundingBox(), closeX=closeBox.x+closeBox.width-1, closeY=closeBox.y+closeBox.height/2;
+          if (g.coarse) { await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:closeX,y:closeY}]}); await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]}); } else await page.mouse.click(closeX,closeY);
+          await section.waitFor({state:'hidden',timeout:1200});
+          report.checks.push({ name, pass: true }); console.log('PASS '+name);
+        } catch(error) { report.checks.push({ name, pass: false, error: error.stack }); console.error('FAIL '+name+'\n'+error.stack); }
+      }
+    }
+  } finally { await cdp.detach(); }
 }

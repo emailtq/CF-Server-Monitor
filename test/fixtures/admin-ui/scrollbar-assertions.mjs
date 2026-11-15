@@ -11,13 +11,15 @@ export async function nativeScrollbar({ page, out, report, PNG }, locator, axis,
     const r = element.getBoundingClientRect(), length = horizontal ? owner.clientWidth : owner.clientHeight;
     const total = horizontal ? owner.scrollWidth : owner.scrollHeight;
     const gutter = root ? innerWidth - document.documentElement.clientWidth : horizontal ? owner.offsetHeight - owner.clientHeight - owner.clientTop * 2 : owner.offsetWidth - owner.clientWidth - owner.clientLeft * 2;
-    const start = root ? 0 : horizontal ? r.left + owner.clientLeft : r.top + owner.clientTop;
+    const track = getComputedStyle(element, '::-webkit-scrollbar-track'), trackTop = horizontal ? 0 : parseFloat(track.marginTop) || 0, trackBottom = horizontal ? 0 : parseFloat(track.marginBottom) || 0;
+    const start = root ? 0 : horizontal ? r.left + owner.clientLeft : r.top + owner.clientTop + trackTop;
     const cross = root ? document.documentElement.clientWidth : horizontal ? r.top + owner.clientTop + owner.clientHeight : r.left + owner.clientLeft + owner.clientWidth;
-    return { horizontal, gutter, length, total, start, cross, middle: start + Math.max(20, length * length / total) / 2, dpr: devicePixelRatio, root, body: document.body.className, styles: [getComputedStyle(document.body, '::-webkit-scrollbar').width, getComputedStyle(document.documentElement, '::-webkit-scrollbar').width], hit: getComputedStyle(element).getPropertyValue('--admin-scrollbar-hit') };
+    return { horizontal, gutter, length, total, start, cross, middle: start + Math.max(20, (length - trackTop - trackBottom) * length / total) / 2, dpr: devicePixelRatio, root, body: document.body.className, styles: [getComputedStyle(document.body, '::-webkit-scrollbar').width, getComputedStyle(document.documentElement, '::-webkit-scrollbar').width], hit: getComputedStyle(element).getPropertyValue('--admin-scrollbar-hit') };
   }, horizontal);
   report.geometry.push({ kind: 'native-scrollbar-start', name, ...geometry });
   assert.ok(geometry.total > geometry.length, `${name} must really overflow`);
-  assert.equal(geometry.gutter, 8, `${name} preserves the 8px hit area without double gutter`);
+  const shell = await locator.evaluate(el => el.matches('.admin-dialog-scroll'));
+  assert.equal(geometry.gutter, shell ? 20 : 8, `${name} preserves native hit width without double gutter`);
   await page.mouse.move(0, 0); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const clip = horizontal ? { x: Math.round(geometry.middle), y: Math.round(geometry.cross) - 2, width: 1, height: 10 } : { x: Math.round(geometry.cross) - 2, y: Math.round(geometry.middle), width: 10, height: 1 };
   const shot = path.join(out, `${name}-paint.png`), png = PNG.sync.read(await page.screenshot({ path: shot, clip })); report.screenshots.push(shot);

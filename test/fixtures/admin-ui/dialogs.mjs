@@ -51,7 +51,7 @@ const inspect = async (kind, dimensions) => {
     // Native editable controls own their text scrolling, not modal layout scrolling.
     const structural = [...section.querySelectorAll('*'), section].filter(e => !e.matches('input,textarea,select,option') && e.getClientRects().length);
     const scrolls = structural.filter(e => ['auto', 'scroll'].includes(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight + 1);
-    const scroll = getComputedStyle(body).overflowY === 'visible' ? section : body;
+    const scroll = section.querySelector('.admin-dialog-scroll');
     return { group: section.classList.contains('admin-dialog-group'), scheme: getComputedStyle(section).colorScheme, box: { x: r.x, y: r.y, width: r.width, height: r.height }, gutter: scroll.offsetWidth - scroll.clientWidth - scroll.clientLeft * 2, body: { clientWidth: body.clientWidth, offsetWidth: body.offsetWidth, clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, padding: getComputedStyle(body).padding }, scrolls: scrolls.map(e => e.className), horizontal: structural.filter(e => e.clientWidth && (e === section || e === body || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)) && e.scrollWidth > e.clientWidth + 1).map(e => ({ name: e.className, width: e.clientWidth, scrollWidth: e.scrollWidth })) };
   });
   if (base.box.x < -.5 || base.box.x + base.box.width > dimensions.width + .5 || base.box.y < -.5 || base.box.y + base.box.height > dimensions.height + .5) problems.push('dialog outside viewport');
@@ -60,7 +60,7 @@ const inspect = async (kind, dimensions) => {
   if (base.body.clientHeight < 44) problems.push('dialog body collapsed below a usable control height');
   if (base.group) {
     // Actual minimal bounds its picker separately; the shell scrolls too in a short keyboard viewport.
-    if (base.scrolls.some(name => !/(?:admin-dialog-group|admin-group-picker-list)/.test(name))) problems.push(`unexpected group scroll owner ${base.scrolls}`);
+    if (base.scrolls.some(name => !/(?:admin-dialog-scroll|admin-group-picker-list)/.test(name))) problems.push(`unexpected group scroll owner ${base.scrolls}`);
   } else {
     if (base.gutter < 8) problems.push('scrollbar gutter not reserved');
     if (base.scrolls.length > 1) problems.push(`nested vertical scroll owners ${base.scrolls}`);
@@ -75,7 +75,7 @@ const inspect = async (kind, dimensions) => {
       if (!element.disabled && element.tagName !== 'PRE') element.focus();
       element.scrollIntoView({ block: 'center', inline: 'nearest' });
       const body = element.closest('.admin-dialog-body'), section = element.closest('.admin-dialog');
-      const scroll = getComputedStyle(body).overflowY === 'visible' ? section : body;
+      const scroll = section.querySelector('.admin-dialog-scroll');
       const e = element.getBoundingClientRect(), b = scroll.getBoundingClientRect(), style = getComputedStyle(element);
       const ring = style.outlineStyle !== 'none' ? Math.max(0, parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset)) : 0;
       const shadow = style.boxShadow !== 'none' ? 2 : 0;
@@ -88,7 +88,7 @@ const inspect = async (kind, dimensions) => {
     edges.push(edge);
   }
   const scrollEdges = await dialog.evaluate(section => {
-    const body = section.querySelector('.admin-dialog-body'), scroll = getComputedStyle(body).overflowY === 'visible' ? section : body;
+    const body = section.querySelector('.admin-dialog-body'), scroll = section.querySelector('.admin-dialog-scroll');
     scroll.scrollTop = 0;
     const top = scroll.scrollTop;
     scroll.scrollTop = scroll.scrollHeight;
@@ -116,7 +116,7 @@ const inspect = async (kind, dimensions) => {
   });
   if (!close.inside || !close.hit) problems.push('close button unreachable');
   if (['edit', 'group', 'download', 'terminal', 'notificationTemplate'].includes(kind)) {
-    await dialog.evaluate(section => { const body = section.querySelector('.admin-dialog-body'); (getComputedStyle(body).overflowY === 'visible' ? section : body).scrollTop = 0; });
+    await dialog.evaluate(section => { const body = section.querySelector('.admin-dialog-body'); (section.querySelector('.admin-dialog-scroll')).scrollTop = 0; });
     await screenshot(`${kind}-${dimensions.width}-${dimensions.height}-top`);
   }
   report.geometry.push({ kind, dimensions, base, edges, scrollEdges, hits, close, problems });
@@ -170,7 +170,7 @@ try {
     await page.setViewportSize({ width: 390, height }); await open('alert');
     const dialog = page.locator('.admin-dialog').last(), trigger = dialog.locator('.admin-picker-summary').first(), menu = dialog.locator('.admin-picker-menu');
     const sample = () => dialog.evaluate(section => {
-      const body = section.querySelector('.admin-dialog-body'), owner = getComputedStyle(body).overflowY === 'visible' ? section : body;
+      const body = section.querySelector('.admin-dialog-body'), owner = section.querySelector('.admin-dialog-scroll');
       const box = e => { if (!e) return null; const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
       return { owner: owner.className, scrollTop: owner.scrollTop, section: box(section), body: box(body), port: box(owner), trigger: box(section.querySelector('.admin-picker-summary')), menu: box(section.querySelector('.admin-picker-menu')) };
     });
@@ -186,7 +186,7 @@ try {
     await trigger.click(); await menu.waitFor(); const before = await sample();
     assert.equal(await menu.evaluate(el => el === document.activeElement), true, 'menu-container focus must not exempt active background scrolling');
     await page.mouse.move(before.port.right - 4, (before.port.top + before.port.bottom) / 2); await page.mouse.wheel(0, -2000);
-    await page.waitForFunction(() => { const section = document.querySelector('.admin-dialog'), body = section.querySelector('.admin-dialog-body'); return (getComputedStyle(body).overflowY === 'visible' ? section : body).scrollTop === 0; });
+    await page.waitForFunction(() => { const section = document.querySelector('.admin-dialog'), body = section.querySelector('.admin-dialog-body'); return (section.querySelector('.admin-dialog-scroll')).scrollTop === 0; });
     await frames(); const after = await sample(), outside = after.trigger.bottom <= after.port.top || after.trigger.top >= after.port.bottom;
     report.geometry.push({ kind: 'picker-scrollport', height, beforeMenuScroll, before, after, outside });
     await screenshot(`picker-scrollport-${height}`);
@@ -218,10 +218,11 @@ try {
     await page.setViewportSize({ width: kind === 'edit' ? 1440 : 390, height: kind === 'edit' ? 700 : 360 }); await open(kind);
     const scroller = page.locator('.admin-dialog').last();
     const geometry = await scroller.evaluate(section => {
-      const body = section.querySelector('.admin-dialog-body'), owner = getComputedStyle(body).overflowY === 'visible' ? section : body;
+      const body = section.querySelector('.admin-dialog-body'), owner = section.querySelector('.admin-dialog-scroll');
       owner.scrollTop = 0;
-      const r = owner.getBoundingClientRect(), gutter = owner.offsetWidth - owner.clientWidth - owner.clientLeft * 2, thumbHeight = Math.max(24, owner.clientHeight ** 2 / owner.scrollHeight);
-      return { owner: owner.className, gutter, barLeft: r.left + owner.clientLeft + owner.clientWidth, thumbY: r.top + owner.clientTop + thumbHeight / 2, clientHeight: owner.clientHeight, scrollHeight: owner.scrollHeight };
+      const r = owner.getBoundingClientRect(), gutter = owner.offsetWidth - owner.clientWidth - owner.clientLeft * 2, track = getComputedStyle(owner, '::-webkit-scrollbar-track');
+      const trackTop = parseFloat(track.marginTop) || 0, trackBottom = parseFloat(track.marginBottom) || 0, thumbHeight = Math.max(24, (owner.clientHeight - trackTop - trackBottom) * owner.clientHeight / owner.scrollHeight);
+      return { owner: owner.className, gutter, barLeft: r.left + owner.clientLeft + owner.clientWidth, thumbY: r.top + owner.clientTop + trackTop + thumbHeight / 2, clientHeight: owner.clientHeight, scrollHeight: owner.scrollHeight };
     });
     await page.mouse.move(0, 0); await frames();
     const shot = path.join(out, `scrollbar-${kind}.png`), buffer = await page.screenshot({ path: shot, clip: { x: Math.round(geometry.barLeft) - 2, y: Math.round(geometry.thumbY), width: geometry.gutter + 2, height: 1 } });
@@ -230,13 +231,13 @@ try {
     const visibleColumns = Array.from({ length: geometry.gutter }, (_, x) => x + 2).filter(x => background.some((value, channel) => Math.abs(value - pixels.data[x * 4 + channel]) > 3));
     const drags = [];
     for (const offset of [.5, 4]) {
-      await scroller.evaluate(section => { const body = section.querySelector('.admin-dialog-body'); (getComputedStyle(body).overflowY === 'visible' ? section : body).scrollTop = 0; });
+      await scroller.evaluate(section => { const body = section.querySelector('.admin-dialog-body'); (section.querySelector('.admin-dialog-scroll')).scrollTop = 0; });
       await page.mouse.move(geometry.barLeft + offset, geometry.thumbY); await page.mouse.down();
       await page.mouse.move(geometry.barLeft + offset, geometry.thumbY + Math.min(220, geometry.clientHeight * .55), { steps: 6 }); await page.mouse.up();
-      drags.push({ offset, scrollTop: await scroller.evaluate(section => { const body = section.querySelector('.admin-dialog-body'); return (getComputedStyle(body).overflowY === 'visible' ? section : body).scrollTop; }) });
+      drags.push({ offset, scrollTop: await scroller.evaluate(section => { const body = section.querySelector('.admin-dialog-body'); return (section.querySelector('.admin-dialog-scroll')).scrollTop; }) });
     }
     report.geometry.push({ kind: 'scrollbar-drag', consumer: kind, ...geometry, paintedWidth: visibleColumns.length, background, drags });
-    assert.equal(geometry.gutter, 8, 'keep the established drag region and separately reserved layout gutter');
+    assert.equal(geometry.gutter, 20, 'keep the established drag region and separately reserved layout gutter');
     assert.equal(visibleColumns.length, 3, 'the screenshot must actually paint the approved three-pixel thumb, not merely declare a thin width');
     assert.ok(drags.every(drag => drag.scrollTop > 0), 'native mouse drag must work at both the unpainted edge and thumb center');
     await screenshot(`scrollbar-${kind}-after-drag`);
@@ -250,7 +251,7 @@ try {
         await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture);
         await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
         await open('edit');
-        await nativeScrollbar({ page, report, out, PNG }, page.locator('.admin-dialog').last(), 'y', `modal-${dark}-${dpr}`);
+        await nativeScrollbar({ page, report, out, PNG }, page.locator('.admin-dialog-scroll').last(), 'y', `modal-${dark}-${dpr}`);
         await open('notificationTemplate');
         const textarea = page.locator('.admin-dialog textarea').last();
         await textarea.fill(Array.from({ length: 60 }, (_, i) => `preview ${i}`).join('\n')); await textarea.scrollIntoViewIfNeeded();

@@ -15,7 +15,7 @@ export async function assertNotificationLabelsVisible(dialog, labels) {
     await label.scrollIntoViewIfNeeded();
     const value = await label.evaluate(element => {
       const box = el => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom }; };
-      const body = element.closest('.admin-dialog-body'), port = getComputedStyle(body).overflowY === 'visible' ? body.closest('.admin-dialog') : body;
+      const body = element.closest('.admin-dialog-body'), port = body.closest('.admin-dialog-scroll');
       const rects = [], text = [...element.childNodes].filter(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
       for (const node of text) { const range = document.createRange(); range.selectNodeContents(node); rects.push(...[...range.getClientRects()].map(r => ({ x: r.x, y: r.y, right: r.right, bottom: r.bottom }))); }
       return { text: text.map(node => node.textContent).join('').trim(), rects, clip: box(port) };
