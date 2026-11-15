@@ -173,6 +173,8 @@ export function normalizeProbeMetricRow(metrics) {
 
 export function mergeMetricsIntoServer(server, metrics) {
   if (!metrics) return;
+  if (Object.hasOwn(metrics, 'extra_ping_nodes')) server.extra_ping_nodes = metrics.extra_ping_nodes;
+  if (Object.hasOwn(metrics, 'latency_tasks_active')) server.latency_tasks_active = metrics.latency_tasks_active;
 
   server.cpu = metrics.cpu || 0;
   server.load_avg = metrics.load ?? metrics.load_avg ?? '0 0 0';

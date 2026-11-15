@@ -502,8 +502,9 @@ const LEGACY_PING_FIELD_DEFS = [
   { field: 'ping_node_4', lossField: 'loss_node_4', labelKey: 'node4', className: 'ping-node-4', datasetIndex: 7 }
 ]
 const PROBE_COLORS = ['#00d4aa', '#ffb870', '#4da6ff', '#b392f0', '#ff7b72', '#79c0ff', '#7ee787', '#ffa657']
+const canonicalLatencyActive = computed(() => server.value?.latency_tasks_active ?? config.value?.latency_tasks_active ?? appConfig?.site_configs?.[apiIndex.value]?.latency_tasks_active ?? appConfig?.latency_tasks_active)
 const PING_FIELD_DEFS = computed(() => {
-  const nodes = config.value?.extra_ping_nodes || appConfig?.site_configs?.[apiIndex.value]?.extra_ping_nodes || appConfig?.extra_ping_nodes
+  const nodes = server.value?.extra_ping_nodes ?? config.value?.extra_ping_nodes ?? appConfig?.site_configs?.[apiIndex.value]?.extra_ping_nodes ?? appConfig?.extra_ping_nodes
   return [...LEGACY_PING_FIELD_DEFS, ...extraPingDefinitions(nodes).map((def, i) => ({
     ...def, color: 'var(--text-primary)', datasetIndex: i + 8
   }))]
@@ -779,6 +780,7 @@ const avgLossRefs = {
 }
 
 const visiblePingFields = computed(() => PING_FIELD_DEFS.value.filter(item => {
+  if (canonicalLatencyActive.value && item.datasetIndex < 8) return false
   const value = server.value[item.field]
   return value !== undefined && !isDisabledProbeMetric(value)
 }))
@@ -789,6 +791,7 @@ const visiblePingStats = computed(() => visiblePingFields.value.map(item => ({
   value: item.datasetIndex >= 8 ? (avgExtraProbes.value[item.field] ?? server.value[item.field] ?? null) : avgPingRefs[item.field].value
 })))
 const visibleLossFields = computed(() => PING_FIELD_DEFS.value.filter(item => (
+  (!canonicalLatencyActive.value || item.datasetIndex >= 8) &&
   server.value[item.field] !== undefined &&
   !isDisabledProbeMetric(server.value[item.field]) &&
   (lossHistoryFields.value[item.lossField] || isLossValid(server.value[item.lossField]))
@@ -1001,7 +1004,7 @@ const syncProbeChartVisibility = () => {
       const dataset = chart.data.datasets[item.datasetIndex]
       if (!dataset) continue
       const value = server.value[item.field]
-      const disabled = isDisabledProbeMetric(value)
+      const disabled = isDisabledProbeMetric(value) || (canonicalLatencyActive.value && item.datasetIndex < 8)
       // 与 WSS 保持一致：字段不存在(undefined)或为 false 时不显示；
       // null 表示超时，仍需保留在图表中，不能当作“无数据”隐藏。
       const noReport = value === undefined

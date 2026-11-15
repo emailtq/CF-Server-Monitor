@@ -150,6 +150,7 @@ async function fetchConfig() {
       node_3_name: data.node_3_name || 'Node 3',
       node_4_name: data.node_4_name || 'Node 4',
       extra_ping_nodes: data.extra_ping_nodes || [],
+      latency_tasks_active: !!data.latency_tasks_active,
       version,
       last_workers_version: lastWorkersVersion,
       last_agent_version: lastAgentVersion,

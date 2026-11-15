@@ -7,13 +7,15 @@ import { ensureTerminalSchema } from './terminal.js';
 import { ensureNodeCredentialSchema } from './nodeCredentials.js';
 import { ensureAgentRegistrationSchema } from './agentRegistration.js';
 import { normalizeExtraProbes } from '../shared/extraPing.js';
+import { withLegacyLatencyHistory } from '../shared/latencyTasks.js';
 import {
   buildSparseHistoryQuery,
   shouldUseSparseHistorySampling
 } from './historySampling.js';
 import {
   createHistoryTableSql,
-  HISTORY_INSERT_COLUMNS
+  HISTORY_INSERT_COLUMNS,
+  PROBE_METRIC_FIELDS
 } from '../utils/historyFields.js';
 import {
   DASHBOARD_LATENCY_WINDOW_CACHE_MAX_SERVERS,
@@ -186,7 +188,8 @@ export async function getMetricsHistory(
   hours,
   columns,
   server = null,
-  longHistoryPoints = DEFAULT_LONG_HISTORY_POINTS
+  longHistoryPoints = DEFAULT_LONG_HISTORY_POINTS,
+  latencyDocument = null
 ) {
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
@@ -224,6 +227,7 @@ export async function getMetricsHistory(
   const idRange = getHistoryIdRange(historyInfo.partitionId, queryStart);
 
   const columnList = columns.split(',').map(c => c.trim()).filter(c => c && c !== 'timestamp');
+  if (latencyDocument && columnList.includes('extra_probes')) for (const column of PROBE_METRIC_FIELDS) if (!columnList.includes(column)) columnList.push(column);
   const sourceColumns = columnList.join(', ');
   const lossColumns = columnList.filter(col => LOSS_AGG_COLUMNS.has(col));
   const lossWindowExpressions = lossColumns.map(col =>
@@ -327,10 +331,10 @@ export async function getMetricsHistory(
     `).bind(...bindValues).all();
   }
 
-  const result = rawResult.results.map(row => attachDiskMetricsObject(normalizeProbeMetricRow({
+  const result = rawResult.results.map(row => attachDiskMetricsObject(withLegacyLatencyHistory(normalizeProbeMetricRow({
     ...row,
     timestamp: Number(row.timestamp)
-  })));
+  }), serverId, latencyDocument)));
 
   result.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -399,7 +403,7 @@ function parseDashboardLatencySample(row) {
   }
 }
 
-function normalizeDashboardLatencyWindow(sampleRows, { queryStart, intervalMs, points }) {
+function normalizeDashboardLatencyWindow(sampleRows, { queryStart, intervalMs, points, mapRow = row => row }) {
   const rows = Array.from({ length: points }, (_, index) => {
     const bucketTimestamp = queryStart + index * intervalMs;
     const sample = parseDashboardLatencySample(sampleRows?.[index]);
@@ -408,7 +412,7 @@ function normalizeDashboardLatencyWindow(sampleRows, { queryStart, intervalMs, p
     }
 
     return {
-      ...sample,
+      ...mapRow(sample),
       sample_timestamp: Number(sample.timestamp),
       timestamp: bucketTimestamp
     };
@@ -475,7 +479,7 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
 
   // 结果落盘只有这两个出口：窗口 + 缓存，避免同样的样板散落在四条路径上
   const applyWindow = (serverId, rows) => {
-    const window = normalizeDashboardLatencyWindow(rows, { queryStart, intervalMs, points });
+    const window = normalizeDashboardLatencyWindow(rows, { queryStart, intervalMs, points, mapRow: row => withLegacyLatencyHistory(row, serverId, options.latencyDocument) });
     result.set(serverId, window);
     if (useCache) {
       dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window });
@@ -624,12 +628,15 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
     const diskMetrics = flattenDiskMetrics(metrics);
 
     await db.prepare(`
+    WITH report(extras,node) AS (SELECT ?, ?), catalog AS (SELECT value FROM settings WHERE key='latency_tasks' OR key GLOB 'latency_tasks:active:*' OR key GLOB 'latency_tasks:seen:*')
     INSERT INTO metrics_history (
       ${HISTORY_INSERT_COLUMNS.join(', ')}
     ) VALUES (
-      ${HISTORY_INSERT_COLUMNS.map(() => '?').join(', ')}
+      ${HISTORY_INSERT_COLUMNS.map(column => column === 'extra_probes' ? `(SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM catalog) THEN extras ELSE (SELECT json_group_object(key,json(value)) FROM json_each(extras) WHERE key IN (SELECT COALESCE(json_extract(task.value,'$.metric_id'),json_extract(task.value,'$.id')) FROM catalog,json_each(catalog.value,'$.tasks') task WHERE EXISTS(SELECT 1 FROM json_each(task.value,'$.nodes') WHERE value=report.node) OR (json_extract(task.value,'$.auto_join')=1 AND NOT EXISTS(SELECT 1 FROM catalog seen,json_each(seen.value,'$.seen_nodes') member WHERE member.value=report.node)))) END FROM report)` : '?').join(', ')}
     )
   `).bind(
+    JSON.stringify(normalizeExtraProbes(metrics.extra_probes || {}) || {}),
+    serverId,
     historyId,
     serverId,
     now,
@@ -682,8 +689,7 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
     metrics.ip_v6 || '0',
     metrics.boot_time || '',
     parseFloat(metrics.net_rx_monthly) || 0,
-    parseFloat(metrics.net_tx_monthly) || 0,
-    JSON.stringify(normalizeExtraProbes(metrics.extra_probes || {}) || {})
+    parseFloat(metrics.net_tx_monthly) || 0
     ).run();
   };
 

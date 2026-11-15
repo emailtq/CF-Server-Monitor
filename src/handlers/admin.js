@@ -12,7 +12,7 @@ import { getNotificationMessages } from '../services/notificationMessages.js';
 import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { validateExtraPingNodes } from '../shared/extraPing.js';
-import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
+import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged, scheduleLatencyTasksChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 import { getTerminalJwtPrincipal, getTerminalAdminPrincipal } from '../middleware/auth.js';
@@ -26,6 +26,8 @@ import { loadNotificationConfig, saveNotificationConfig, prepareNotificationChan
 import { assertNotificationObject, maskNotificationConfig, NOTIFICATION_CONFIG_MAX_BYTES, notificationConfigError, migrateLegacyNotifications } from '../shared/notificationConfig.js';
 import { LEGACY_NOTIFICATION_FIELDS } from '../utils/settings.js';
 import { checkAgentImage } from '../utils/agentImage.js';
+import { changeLatencyTasks, migrateLatencyConfig, loadLatencyTasks } from '../database/latencyTasks.js';
+import { validateLatencyBackup, withLegacyLatencyHistory } from '../shared/latencyTasks.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -281,6 +283,7 @@ async function deleteServer(db, id, env) {
         .bind(`deleted:${crypto.randomUUID()}`, Date.now(), id),
       db.prepare('DELETE FROM servers WHERE id = ?').bind(id)
     ]);
+    await loadLatencyTasks(db);
     clearServersListCache();
     clearNodeReportCache(id);
     try { await notifyNodeCredentialsInvalidated(env, id); }
@@ -667,7 +670,7 @@ async function handleSaveThemeOptionsAction({ env, sys, data }) {
   });
 }
 
-async function handleListAction({ env, data }) {
+async function handleListAction({ env, data, sys }) {
   // 管理后台「刷新缓存」会带 refresh: true，跳过本 isolate 的 120 秒列表缓存直接读 D1
   if (data?.refresh === true) {
     clearServersListCache();
@@ -695,7 +698,7 @@ async function handleListAction({ env, data }) {
 
     if (latestMetrics) {
       isOnline = (now - latestMetrics.timestamp) < ONLINE_THRESHOLD;
-      mergeMetricsIntoServer(item, latestMetrics);
+      mergeMetricsIntoServer(item, withLegacyLatencyHistory(latestMetrics, server.id, sys.latency_tasks));
     } else {
       item.last_updated = 0;
       item.is_online = false;
@@ -958,6 +961,18 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       return simpleAuthResponse();
     }
 
+    if (data.action?.startsWith('latency_')) {
+      const actions = { latency_list: 'reconcile', latency_save: 'save', latency_node: 'node', latency_order: 'order', latency_delete: 'delete' };
+      if (!actions[data.action]) return createBadRequestResponse('invalidAction');
+      const activated = !sys.latency_tasks;
+      const document = await changeLatencyTasks(env.DB, sys, actions[data.action], data.task || data);
+      clearAllCaches();
+      clearDashboardLatencyHistoryCache();
+      Object.assign(sys, { latency_tasks: document });
+      if (data.action !== 'latency_list' || activated) scheduleLatencyTasksChanged(env, ctx);
+      return createSuccessResponse({ tasks: document.tasks, revision: document.revision });
+    }
+
     if (data.action === 'node_prepare_registration') return handlePrepareRegistration(request, env, data);
 
     if (nodeCredentialAction) {
@@ -990,6 +1005,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
 
     if (data.action === 'save_settings') {
       const settings = data.settings || {};
+      if (sys?.latency_tasks && [...PING_NODE_FIELDS, 'extra_ping_nodes', ...PING_NODE_FIELDS.map(field => `${field}_name`)].some(field => Object.hasOwn(settings, field))) {
+        return new Response(JSON.stringify({ error: 'latency_tasks_authoritative', code: 409 }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+      }
       if (Object.keys(settings).some(field => LEGACY_NOTIFICATION_FIELDS.includes(field)) && await env.DB.prepare("SELECT 1 AS present FROM settings WHERE key = 'notification_config'").first()) {
         return new Response(JSON.stringify({ error: 'notification_config_authoritative', code: 409 }), { status: 409, headers: { 'Content-Type': 'application/json' } });
       }
@@ -1270,6 +1288,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       });
     }
     else if (data.action === 'edit') {
+      if (sys.latency_tasks && PING_NODE_FIELDS.some(field => Object.hasOwn(data, field))) throw new AppError('latency_tasks_authoritative', 409);
       const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, traffic_alert_percent, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
@@ -1321,11 +1340,13 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         currency,
         expire_date
       });
+      const editedPingFields = PING_NODE_FIELDS.filter(field => Object.hasOwn(data, field));
+      const pingAssignments = editedPingFields.map(field => `${field} = ?, `).join('');
       
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, node_1 = ?, node_2 = ?, node_3 = ?, node_4 = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, ${pingAssignments}rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -1348,14 +1369,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           normalizedAgentConfig.connection_mode,
           normalizedAgentConfig.ping_mode,
           normalizeBooleanFlag(auto_update),
-          pingNodes.values.custom_ct ?? null,
-          pingNodes.values.custom_cu ?? null,
-          pingNodes.values.custom_cm ?? null,
-          pingNodes.values.custom_bd ?? null,
-          pingNodes.values.node_1 ?? null,
-          pingNodes.values.node_2 ?? null,
-          pingNodes.values.node_3 ?? null,
-          pingNodes.values.node_4 ?? null,
+          ...editedPingFields.map(field => pingNodes.values[field] ?? null),
           safeRx,
           safeTx,
           normalizeBooleanFlag(offline_notify_disabled),
@@ -1410,7 +1424,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         return createSuccessResponse({
           success: true,
           servers: (servers.results || []).map(({terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at, ...server}) => server),
-          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
+          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), ...(siteSettings.latency_tasks ? { latency_tasks: siteSettings.latency_tasks } : {}), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
           ...(notificationConfig ? { notificationBackup: { sensitive: true, warning: 'notification_backup_contains_credentials' } } : {}),
           message: 'serversExported'
         });
@@ -1421,6 +1435,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     }
     else if (data.action === 'import_servers') {
       const { servers: importData, settings: importSettings } = data;
+      if (importSettings?.latency_tasks && !validateLatencyBackup(importSettings.latency_tasks, validatePingNode)) return createBadRequestResponse('invalidLatencyTask');
       let notificationConfig;
       try {
         if (importSettings && Object.hasOwn(importSettings, 'notification_config')) notificationConfig = validateNotificationBackup(importSettings.notification_config);
@@ -1551,6 +1566,15 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       let settingsResult;
       try { settingsResult = await applyImportedSettings({ env, sys, settings: importSettings, notificationConfig, serverIdMap }); }
       catch (_) { return createBadRequestResponse('notification_import_failed'); }
+      if (importSettings?.latency_tasks || (sys.latency_tasks && [...PING_NODE_FIELDS, 'extra_ping_nodes'].some(field => Object.hasOwn(importSettings?.site || {}, field)))) {
+        try {
+          const document = importSettings.latency_tasks || migrateLatencyConfig(sys, (await env.DB.prepare('SELECT * FROM servers').all()).results);
+          sys.latency_tasks = await changeLatencyTasks(env.DB, sys, 'import', { document, serverIdMap });
+          clearAllCaches();
+          clearDashboardLatencyHistoryCache();
+          scheduleLatencyTasksChanged(env, ctx);
+        } catch (_) { return createBadRequestResponse('invalidLatencyTask'); }
+      }
       // 上报开关/时段被覆盖后通知探针切换模式，与保存设置的行为保持一致。
       // 这里用原始输入判断，必须先确认 site 是对象：字符串用 in 会直接抛 TypeError。
       const importedSite = importSettings?.site;

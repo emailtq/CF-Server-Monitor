@@ -4,7 +4,7 @@
     <div v-if="activeTab === 'settings' && isMultipleMode" class="settings-section"><label class="form-label" for="admin-site">{{ trans.apiEndpoint }}</label><select id="admin-site" class="form-select" :value="selectedApiIndex" :disabled="siteLoading" @change="$emit('api-index-change', Number($event.target.value))"><option v-for="(base, index) in apiBases" :key="index" :value="index">{{ base }}</option></select></div>
     <fieldset class="settings-fieldset" :disabled="saving">
     <AppearanceSettings v-show="activeTab === 'themeStore'" v-bind="panelProps" @validate-csp="validateCspField" @upload-bg="$emit('upload-bg', $event)" @upload-bg-mobile="$emit('upload-bg-mobile', $event)" @upload-favicon="$emit('upload-favicon', $event)" />
-    <CollectionSettings v-show="activeTab === 'collection'" v-bind="panelProps" />
+    <CollectionSettings v-show="activeTab === 'settings'" v-bind="panelProps" />
     <SecuritySettings v-show="activeTab === 'security'" v-bind="panelProps" @toggle-password="$emit('toggle-password', $event)" @toggle-admin-password-change="$emit('toggle-admin-password-change')" />
     <SiteSettings v-show="activeTab === 'settings'" v-bind="panelProps" @toggle-password="$emit('toggle-password', $event)" @query-d1-usage="$emit('query-d1-usage')" />
     </fieldset>
@@ -13,8 +13,6 @@
 </template>
 <script setup>
 import { computed, reactive } from 'vue'
-import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
-import { validateExtraPingNodes } from '../../../../shared/extraPing.js'
 import AppearanceSettings from './AppearanceSettings.vue'
 import CollectionSettings from './CollectionSettings.vue'
 import SecuritySettings from './SecuritySettings.vue'
@@ -63,22 +61,9 @@ const canEditSiteSettings = computed(() =>
   isLocalHostname(props.selectedApiBase)
 )
 
-const settingsPages = ['collection', 'themeStore', 'security', 'settings']
+const settingsPages = ['themeStore', 'security', 'settings']
 const cspErrors = reactive({ csp_static: '', csp_api: '' })
-const panelProps = computed(() => ({ ...props, canEditSiteSettings: canEditSiteSettings.value, cspErrors, pingNodeErrors: pingNodeErrors.value, userAgentInvalid: userAgentInvalid.value }))
-const pingNodeErrorMessage = computed(() => (
-  props.trans.invalidPingNodeFormat || 'Use domain, IPv4, or host:port. Port must be 1-65535.'
-))
-
-const pingNodeErrors = computed(() => Object.fromEntries(
-  PING_NODE_FIELDS.map(field => [
-    field,
-    validatePingNode(props.settings[field]).valid ? '' : pingNodeErrorMessage.value
-  ]).concat((props.settings.extra_ping_nodes || []).map(node => [node.id, validateExtraPingNodes([node], validatePingNode).valid ? '' : pingNodeErrorMessage.value]))
-))
-
-const hasPingNodeErrors = computed(() => Object.values(pingNodeErrors.value).some(Boolean))
-
+const panelProps = computed(() => ({ ...props, canEditSiteSettings: canEditSiteSettings.value, cspErrors, userAgentInvalid: userAgentInvalid.value }))
 // 与服务端 settings.js / agent config.go 保持一致：只允许在请求头、config.conf、
 // 安装命令引号下都安全的字符；留空由服务端回退默认 cfsm。
 const USER_AGENT_ALLOWED_RE = /^[A-Za-z0-9 _.\-/,:;()+=@#*?~]*$/
@@ -87,7 +72,7 @@ const userAgentInvalid = computed(() => {
   return value.length > 100 || !USER_AGENT_ALLOWED_RE.test(value)
 })
 
-const validatePingNodes = () => !hasPingNodeErrors.value
+
 
 const isValidCspOrigin = (value) => {
   const raw = String(value || '').trim()
@@ -120,5 +105,5 @@ const validateCspField = (field) => {
   return true
 }
 
-defineExpose({ validateCspField, cspErrors, validatePingNodes, pingNodeErrors, userAgentInvalid })
+defineExpose({ validateCspField, cspErrors, userAgentInvalid })
 </script>

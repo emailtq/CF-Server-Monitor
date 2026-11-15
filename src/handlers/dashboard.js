@@ -18,6 +18,7 @@ import {
 
 const PROBE_FIELDS = ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 import { publicExtraPingNodes } from '../shared/extraPing.js';
+import { publicLatencyNodes, LEGACY_LATENCY_SLOTS, withLegacyLatencyHistory } from '../shared/latencyTasks.js';
 
 // REST 接口中，丢包值为 null 表示该探针没有可用样本；此时隐藏对应的延迟和丢包字段。
 export function omitNullLossProbeFields(item) {
@@ -58,6 +59,7 @@ function normalizePublicIpFields(item, ensureFields = true) {
 
 function withoutPrivateServerFields(server) {
   const item = { ...server };
+  for (const field of LEGACY_LATENCY_SLOTS) delete item[field];
   delete item.terminal_local_enabled;
   delete item.terminal_local_observed_at;
   delete item.terminal_local_report_at;
@@ -202,10 +204,12 @@ export async function handleServerAPI(request, env, sys) {
     getLatestMetrics(env.DB, id, server),
     getRealtimeStateForServers(env, [id])
   ]);
-  mergeMetricsIntoServer(server, latestMetrics);
+  mergeMetricsIntoServer(server, withLegacyLatencyHistory(latestMetrics, id, sys.latency_tasks));
+  if (sys.latency_tasks) server.extra_ping_nodes = publicLatencyNodes(sys.latency_tasks, id);
   server.latestReportUpdates = realtimeState.latestReportUpdates;
   server.sysConfig = {
-    extra_ping_nodes: publicExtraPingNodes(sys.extra_ping_nodes),
+    latency_tasks_active: !!sys.latency_tasks,
+    extra_ping_nodes: sys.latency_tasks ? publicLatencyNodes(sys.latency_tasks) : publicExtraPingNodes(sys.extra_ping_nodes),
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
   };
   
@@ -228,7 +232,7 @@ export async function handleServersAPI(request, env, sys) {
     getLatestMetricsForAllServers(env.DB),
     getRealtimeStateForServers(env, serverIds),
     shouldIncludeLatencyHistory
-      ? getDashboardLatencyHistory(env.DB, results)
+      ? getDashboardLatencyHistory(env.DB, results, { latencyDocument: sys.latency_tasks })
       : Promise.resolve(new Map())
   ]);
   attachLatencyHistoryToServers(results, latencyHistory);
@@ -240,12 +244,13 @@ export async function handleServersAPI(request, env, sys) {
   
   for (const server of results) {
     const latestMetrics = latestMetricsMap.get(server.id);
+    if (sys.latency_tasks) server.extra_ping_nodes = publicLatencyNodes(sys.latency_tasks, server.id);
     
     let isOnline = false;
     
     if (latestMetrics) {
       isOnline = (now - latestMetrics.timestamp) < 300000;
-      mergeMetricsIntoServer(server, latestMetrics);
+      mergeMetricsIntoServer(server, withLegacyLatencyHistory(latestMetrics, server.id, sys.latency_tasks));
     }
     normalizePublicIpFields(server);
     
@@ -280,6 +285,7 @@ export async function handleServersAPI(request, env, sys) {
     },
     regionStats,
     sysConfig: {
+      latency_tasks_active: !!sys.latency_tasks,
       show_price: sys.show_price === 'true',
       show_expire: sys.show_expire === 'true',
       show_tf: sys.show_tf === 'true',
@@ -292,7 +298,7 @@ export async function handleServersAPI(request, env, sys) {
       node_2_name: sys.node_2_name || 'Node 2',
       node_3_name: sys.node_3_name || 'Node 3',
       node_4_name: sys.node_4_name || 'Node 4',
-      extra_ping_nodes: publicExtraPingNodes(sys.extra_ping_nodes),
+      extra_ping_nodes: sys.latency_tasks ? publicLatencyNodes(sys.latency_tasks) : publicExtraPingNodes(sys.extra_ping_nodes),
       display_mode: sys.display_mode || 'bar',
       latency_window: {
         points: DASHBOARD_LATENCY_WINDOW_POINTS,

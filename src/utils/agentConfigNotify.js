@@ -48,3 +48,11 @@ export function scheduleAgentReportModeChanged(env, ctx) {
 
   return promise;
 }
+
+export function scheduleLatencyTasksChanged(env, ctx) {
+  if (!env?.METRICS_BROADCASTER) return null;
+  const stub = env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global'));
+  const promise = stub.fetch('http://internal/agent-config-changed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ latencyTasksChanged: true }) }).catch(error => console.warn('[latency-config]', error.message));
+  if (ctx?.waitUntil) ctx.waitUntil(promise);
+  return promise;
+}

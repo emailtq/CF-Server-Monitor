@@ -4,17 +4,32 @@ import fs from 'node:fs';
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc';
 import postcss from 'postcss';
 import { spawnSync } from 'node:child_process';
+import { createServer } from 'vite';
 
-test('collection settings remain editable on small and short screens in the complete admin', () => {
-  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/latency.mjs'], {
-    encoding: 'utf8', timeout: 360000, windowsHide: true, env: process.env
-  });
-  assert.equal(result.error, undefined);
-  assert.equal(result.status, 0, result.stdout + result.stderr);
+test('public cards keep each API site’s canonical or legacy latency mode', async () => {
+  const vite=await createServer({configFile:false,appType:'custom',logLevel:'silent',server:{middlewareMode:true}});
+  const previous=globalThis.localStorage;
+  globalThis.localStorage={getItem:()=>null};
+  try {
+    const {useServerCardData}=await vite.ssrLoadModule('/src/frontend/composables/useServerCardData.js');
+    const extra_ping_nodes=[{id:'p_task',name:'Canonical'}];
+    const canonical=useServerCardData({server:{latency_tasks_active:true,extra_ping_nodes,ping_ct:11,ping_extra_p_task:22},sysConfig:{latency_tasks_active:false}});
+    assert.deepEqual(canonical.pingList.value.map(item=>item.label),['Canonical']);
+    const legacy=useServerCardData({server:{latency_tasks_active:false,extra_ping_nodes:[],ping_ct:11},sysConfig:{latency_tasks_active:true}});
+    assert.ok(legacy.pingList.value.some(item=>item.label==='CT'));
+  } finally {globalThis.localStorage=previous;await vite.close();}
+});
+
+test('non-latency collection controls belong to Settings, not the task manager', () => {
+  const panel = fs.readFileSync('src/frontend/views/admin/components/SettingsPanel.vue', 'utf8');
+  const collection = fs.readFileSync('src/frontend/views/admin/components/CollectionSettings.vue', 'utf8');
+  assert.match(panel, /CollectionSettings v-show="activeTab === 'settings'"/);
+  assert.doesNotMatch(collection, /ping-node-grid|visiblePingFields|extra_ping_nodes/);
+  for (const field of ['wss_report_enabled', 'frontend_ws_timeout_minutes', 'long_history_points']) assert.ok(collection.includes(field));
 });
 
 const base = 'src/frontend/views/admin/components/';
-for (const name of ['AdminHeader', 'AdminLayout', 'AdminDialog', 'AdminMultiSelect']) {
+for (const name of ['AdminHeader', 'AdminLayout', 'AdminDialog', 'AdminMultiSelect', 'LatencyTasks', 'LatencyNotice']) {
   test(`${name} compiles as a real Vue component`, () => {
     const source = fs.readFileSync(`${base}${name}.vue`, 'utf8');
     const { descriptor, errors } = parse(source);

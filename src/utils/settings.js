@@ -5,6 +5,7 @@ import {
 } from './config.js';
 import { normalizePct } from './traffic.js';
 import { AppError } from './errors.js';
+import { loadLatencyTasks } from '../database/latencyTasks.js';
 import {
   AUTO_LANGUAGE,
   DEFAULT_NOTIFICATION_LANGUAGE,
@@ -95,6 +96,7 @@ export const RESOURCE_ALERT_METRICS = [
 ];
 const BYTES_PER_MEGABIT = 1000 * 1000 / 8;
 let cachedSiteSettings = null;
+let cachedSiteSettingsDb = null;
 let siteSettingsCacheExpiry = 0;
 let cachedAppearanceOptions = null;
 let appearanceOptionsCacheExpiry = 0;
@@ -696,7 +698,7 @@ async function ensurePersistedJwtSecret(db, result, siteOptions) {
 export async function loadSiteSettings(db, options = {}) {
   const forceRefresh = options === true || Boolean(options && options.forceRefresh);
   const now = Date.now();
-  if (!forceRefresh && cachedSiteSettings && now < siteSettingsCacheExpiry) {
+  if (!forceRefresh && cachedSiteSettingsDb === db && cachedSiteSettings && now < siteSettingsCacheExpiry) {
     debug('Settings缓存命中');
     return cachedSiteSettings;
   }
@@ -747,7 +749,7 @@ export async function loadSiteSettings(db, options = {}) {
     result.ua = sanitizeUserAgent(result.ua);
   } catch (e) {
     console.error('加载站点设置失败:', e);
-    if (cachedSiteSettings) {
+    if (cachedSiteSettingsDb === db && cachedSiteSettings) {
       // 保留上次配置，避免 D1 抖动把通知等设置重置为默认值。
       // 沿用 120s 刷新间隔，防止缓存过期后每次请求都重试 D1；强制刷新仍可提前恢复。
       siteSettingsCacheExpiry = now + SITE_SETTINGS_CACHE_TTL_MS;
@@ -755,13 +757,16 @@ export async function loadSiteSettings(db, options = {}) {
     }
   }
 
+  result.latency_tasks = await loadLatencyTasks(db);
   cachedSiteSettings = result;
+  cachedSiteSettingsDb = db;
   siteSettingsCacheExpiry = now + SITE_SETTINGS_CACHE_TTL_MS;
   return result;
 }
 
 export function clearSiteSettingsCache() {
   cachedSiteSettings = null;
+  cachedSiteSettingsDb = null;
   siteSettingsCacheExpiry = 0;
 }
 

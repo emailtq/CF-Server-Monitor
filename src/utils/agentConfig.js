@@ -1,8 +1,11 @@
+import { validatePingNode, sanitizePingNode } from '../shared/pingNode.js';
+export { validatePingNode, sanitizePingNode } from '../shared/pingNode.js';
 import { md5Hash } from './common.js';
 import { isWssReportConfigured, sanitizeUserAgent } from './settings.js';
 import { validateExtraPingNodes } from '../shared/extraPing.js';
+import { latencyTaskAssigned } from '../shared/latencyTasks.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 8;
+export const AGENT_CONFIG_SCHEMA_VERSION = 9;
 export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
 export const AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION = 4;
 export const AGENT_CONFIG_WSS_REPORT_INTERVAL_SCHEMA_VERSION = 5;
@@ -24,10 +27,6 @@ const ALLOWED_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
 const ALLOWED_WSS_REPORT_INTERVALS = new Set([1, 2, 3, 4, 5]);
 const ALLOWED_CONNECTION_MODES = new Set([CONNECTION_MODE_AUTO, CONNECTION_MODE_HTTP]);
 const ALLOWED_PING_MODES = new Set([PING_MODE_TCP, PING_MODE_ICMP]);
-const PING_NODE_HOST_PATTERN = /^[a-zA-Z0-9._-]+$/;
-const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
-const IPV4_LIKE_PATTERN = /^(?:\d+\.){3}\d+$/;
-const IPV6_PATTERN = /^(?:(?:[0-9a-f]{1,4}:){1,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:|(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}|[0-9a-f]{1,4}:(?:(?::[0-9a-f]{1,4}){1,6})|:(?:(?::[0-9a-f]{1,4}){1,7}|:))$/i;
 const NETWORK_INTERFACE_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 
 function normalizeSchemaVersion(value) {
@@ -130,73 +129,6 @@ export function normalizeWssReportInterval(value) {
   return storedInteger(value, ALLOWED_WSS_REPORT_INTERVALS, DEFAULT_WSS_REPORT_INTERVAL);
 }
 
-function isValidIpv4(host) {
-  if (!IPV4_PATTERN.test(host)) return false;
-  return host.split('.').every(part => {
-    const number = Number(part);
-    return Number.isInteger(number) && number >= 0 && number <= 255;
-  });
-}
-
-function isValidHostname(host) {
-  if (!PING_NODE_HOST_PATTERN.test(host) || host.length > 50) return false;
-  if (IPV4_LIKE_PATTERN.test(host)) return false;
-  if (host.startsWith('.') || host.endsWith('.') || host.includes('..')) return false;
-  return host.split('.').every(label => {
-    if (!label || label.length > 63) return false;
-    return /^[a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])?$/.test(label);
-  });
-}
-const isValidIpv6 = (host) => IPV6_PATTERN.test(host);
-
-export function validatePingNode(value) {
-  const raw = String(value ?? '').trim();
-  if (!raw) return { valid: true, value: '' };
-  if (raw.length > 60 || raw.includes('://') || /[\s/@?#\\]/.test(raw)) {
-    return { valid: false };
-  }
-
-  if (raw.startsWith('[')) {
-    const match = raw.match(/^\[([^\]]+)\](?::(\d{1,5}))?$/);
-    if (!match || !isValidIpv6(match[1])) return { valid: false };
-    const port = match[2] ? Number(match[2]) : null;
-    if (port !== null && (port < 1 || port > 65535)) return { valid: false };
-    return { valid: true, value: `[${match[1].toLowerCase()}]${port !== null ? `:${port}` : ''}` };
-  }
-
-  const colonCount = (raw.match(/:/g) || []).length;
-  if (colonCount > 1) {
-    const host = raw.toLowerCase();
-    return isValidIpv6(host) ? { valid: true, value: `[${host}]` } : { valid: false };
-  }
-
-  let host = raw;
-  let port = '';
-  if (colonCount === 1) {
-    const parts = raw.split(':');
-    host = parts[0];
-    port = parts[1];
-    if (!port || !/^\d{1,5}$/.test(port)) return { valid: false };
-    const portNumber = Number(port);
-    if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
-      return { valid: false };
-    }
-    port = String(portNumber);
-  }
-
-  host = host.toLowerCase();
-  if (!host) return { valid: false };
-  if (isValidIpv4(host) || isValidHostname(host)) {
-    return { valid: true, value: port ? `${host}:${port}` : host };
-  }
-  return { valid: false };
-}
-
-export function sanitizePingNode(value) {
-  const result = validatePingNode(value);
-  return result.valid ? result.value : '';
-}
-
 export function validateNetworkInterfaces(value) {
   const raw = String(value || '').trim();
   if (!raw) return { valid: true, value: '' };
@@ -281,6 +213,11 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
     : 1;
 
   const resolveNode = (field) => {
+    if (settings?.latency_tasks) {
+      if (version >= 9) return '';
+      const task = settings.latency_tasks.tasks.find(task => latencyTaskAssigned(task, server?.id, settings.latency_tasks) && task.legacy_slot === field);
+      return task?.target || '';
+    }
     const serverValue = server?.[field];
     const hasServerField = server && Object.prototype.hasOwnProperty.call(server, field);
     // A stored 0 explicitly disables this node; blank/null inherits the global node.
@@ -319,9 +256,22 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
     config.node_4 = node4;
   }
   if (version >= 8) {
-    const extra = validateExtraPingNodes(settings?.extra_ping_nodes || [], validatePingNode);
+    const legacySlots = new Set();
+    const extra = validateExtraPingNodes(settings?.latency_tasks
+      ? settings.latency_tasks.tasks.filter(task => {
+        if (!latencyTaskAssigned(task, server?.id, settings.latency_tasks)) return false;
+        if (version >= 9 || !task.legacy_slot || legacySlots.has(task.legacy_slot)) return true;
+        legacySlots.add(task.legacy_slot);
+        return false;
+      }).map(task => ({ id: task.metric_id || task.id, name: task.name, target: task.target }))
+      : settings?.extra_ping_nodes || [], validatePingNode);
     if (!extra.valid) throw new Error('Invalid extra_ping_nodes');
-    config.extra_ping_nodes = extra.value.map(({ id, target }) => ({ id, target }));
+    config.extra_ping_nodes = version >= 9 && settings?.latency_tasks ? [] : extra.value.map(({ id, target }) => ({ id, target }));
+  }
+  if (version >= 9) {
+    config.latency_tasks = settings?.latency_tasks
+      ? settings.latency_tasks.tasks.filter(task => latencyTaskAssigned(task, server?.id, settings.latency_tasks)).map(task => ({ id: task.metric_id || task.id, target: task.target, interval: task.interval }))
+      : null;
   }
 
   if (version >= AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION) {
@@ -374,6 +324,9 @@ export function serializeAgentConfig(config) {
   }
   if (Object.prototype.hasOwnProperty.call(config, 'extra_ping_nodes')) {
     serialized += `&extra_ping_nodes=${encodeURIComponent(JSON.stringify(config.extra_ping_nodes))}`;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, 'latency_tasks')) {
+    serialized += `&latency_tasks=${encodeURIComponent(JSON.stringify(config.latency_tasks))}`;
   }
   return serialized;
 }

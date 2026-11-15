@@ -126,7 +126,7 @@ test('real Worker config → Go local probes/report → authenticated HTTP/WSS �
     fs.writeFileSync(path.join(root, 'go-worker-bridge.txt'), result.output);
     assert.equal(result.code, 0, result.output);
     const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
-    assert.equal(report.config_schema, '8');
+    assert.equal(report.config_schema, '9');
     assert.equal(Object.keys(report.metrics.extra_probes).length, 24);
     assert.ok(Object.values(report.metrics.extra_probes).every(probe => Number(probe.ping) >= 1 && Number(probe.loss) === 0));
     assert.ok(['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'].every(field => Number(report.metrics[`ping_${field}`]) >= 1 && Number(report.metrics[`loss_${field}`]) === 0), 'all original eight targets also use real local TCP measurements');

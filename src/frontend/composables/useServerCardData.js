@@ -97,6 +97,7 @@ export const getUsageColor = (percent) => {
 
 export function useServerCardData(props) {
   const trans = useTranslation()
+  const canonicalLatencyActive = computed(() => props.server.latency_tasks_active ?? props.sysConfig?.latency_tasks_active)
 
   const currentTime = computed(() => {
     const ts = Number(props.server.current_timestamp)
@@ -438,7 +439,7 @@ export function useServerCardData(props) {
   const threeNetDetails = computed(() => {
     const enabled = []
     const disabled = []
-    for (const def of [...THREE_NET_DEFS, ...extraPingDefinitions(props.server.extra_ping_nodes || props.sysConfig?.extra_ping_nodes)]) {
+    for (const def of [...(canonicalLatencyActive.value ? [] : THREE_NET_DEFS), ...extraPingDefinitions(props.server.extra_ping_nodes || props.sysConfig?.extra_ping_nodes)]) {
       (isDisabledByLatestLoss(def.key) ? disabled : enabled).push(def)
     }
     // 启用的节点优先且保持原顺序；不足 3 个时用禁用节点按原顺序补位
@@ -448,6 +449,7 @@ export function useServerCardData(props) {
   const hasThreeNetDetails = computed(() => threeNetDetails.value.length > 0)
 
   const pingList = computed(() => [
+    ...(canonicalLatencyActive.value ? [] : [
     { label: 'CT', value: props.server.ping_ct },
     { label: 'CU', value: props.server.ping_cu },
     { label: 'CM', value: props.server.ping_cm },
@@ -455,7 +457,7 @@ export function useServerCardData(props) {
     { label: props.server.node_1_name || 'Node 1', value: props.server.ping_node_1 },
     { label: props.server.node_2_name || 'Node 2', value: props.server.ping_node_2 },
     { label: props.server.node_3_name || 'Node 3', value: props.server.ping_node_3 },
-    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4 },
+    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4 }]),
     ...extraPingDefinitions(props.server.extra_ping_nodes || props.sysConfig?.extra_ping_nodes).map(def => ({ key: def.key, label: def.label, value: props.server[def.field] }))
   ].filter(ping => !isPingDisabled(ping.value)))
 

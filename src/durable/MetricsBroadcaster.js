@@ -13,6 +13,7 @@
 // - Agent 上报连接使用标准 WebSocket API，避免高频指标消息计为 hibernation wakeup。
 
 import { saveMetricsHistory } from '../database/schema.js';
+import { projectLatencyMetrics } from '../shared/latencyTasks.js';
 import { authenticateNodeRequest, hasReportCredentials } from '../middleware/nodeAuth.js';
 import { validTerminalObservation, saveTerminalObservation, terminalObservationMaxAge } from '../database/terminal.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
@@ -1052,6 +1053,11 @@ export class MetricsBroadcaster {
       });
     }
 
+    if (body?.latencyTasksChanged === true) {
+      const nodes = [...new Set(this._getAgentReportWebSockets().map(ws => ws.deserializeAttachment()?.serverId).filter(Boolean))];
+      for (const serverId of nodes) await this._handleAgentConfigChanged(new Request('http://internal/agent-config-changed', { method: 'POST', body: JSON.stringify({ serverId }) }));
+      return Response.json({ ok: true, notified: nodes.length });
+    }
     if (body?.agentReportModeChanged === true) {
       const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
       const scheduleState = getWssReportScheduleState(settings);
@@ -1466,6 +1472,12 @@ export class MetricsBroadcaster {
     }
     const context = await this._resolveAgentContext(ws, attachment, data);
     if (!context) return;
+    const latencySettings = await loadSiteSettings(this.env.DB);
+    if (latencySettings.latency_tasks) {
+      const matches = context.agentConfig.schema < 9 && context.agentConfig.md5 === (await this._loadAgentConfigDescriptor(context.serverId, false, context.agentConfig.schema))?.md5;
+      for (const sample of samples) projectLatencyMetrics(sample.metrics, latencySettings.latency_tasks.tasks, context.serverId, matches, latencySettings.latency_tasks);
+      if (data.metrics) projectLatencyMetrics(data.metrics, latencySettings.latency_tasks.tasks, context.serverId, matches, latencySettings.latency_tasks);
+    }
 
     if (this._isCorrectionAck(data)) {
       const result = await this._ackTrafficCorrection(context.serverId, data);

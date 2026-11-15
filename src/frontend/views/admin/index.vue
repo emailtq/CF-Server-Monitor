@@ -62,6 +62,7 @@
           @terminal-access="terminalServer = $event"
         />
 
+        <LatencyTasks v-if="activeTab === 'collection'" :key="siteGeneration" :trans="trans" :servers="servers" :selected-api-index="selectedApiIndex" :site-generation="siteGeneration" @activated="settings.latency_tasks_active = true" />
         <SettingsPanel
           :api-bases="apiBases"
           :is-multiple-mode="isMultipleMode"
@@ -511,6 +512,7 @@ import HelpTooltip from '../../components/HelpTooltip.vue'
 import AdminLogin from './components/AdminLogin.vue'
 import ServerTable from './components/ServerTable.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
+import LatencyTasks from './components/LatencyTasks.vue'
 import DatabasePanel from './components/DatabasePanel.vue'
 import ThemeStorePanel from './components/ThemeStorePanel.vue'
 import DonationPanel from './components/DonationPanel.vue'
@@ -527,8 +529,8 @@ import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, fe
 import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
 import { normalizeLanguagePreference, t, useTranslation } from '../../utils/i18n'
-import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
-import { validateExtraPingNodes } from '../../../shared/extraPing.js'
+import { PING_NODE_FIELDS } from '../../utils/pingNode.js'
+
 import { AGENT_REPOSITORY, AGENT_INSTALL_REF, AGENT_RELEASE_URL } from '../../../shared/agentSource.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
 import { applyMikusThemeOptions } from '../../utils/themeOptions.js'
@@ -1023,15 +1025,6 @@ const reportInterval = ref(60)
 const wssReportInterval = ref(2)
 const connectionMode = ref('auto')
 const pingMode = ref('tcp')
-const customCt = ref('')
-const customCu = ref('')
-const customCm = ref('')
-const customBd = ref('')
-const node1 = ref('')
-const node2 = ref('')
-const node3 = ref('')
-const node4 = ref('')
-const explicitEmptyNodes = ref({})
 const networkInterface = ref('')
 const resetDay = ref(1)
 const rxCorrection = ref('')
@@ -1096,28 +1089,6 @@ watch(isWssReportEnabled, (enabled) => {
     connectionMode.value = 'http'
   }
 })
-
-const getPingNodeLabel = (field) => ({
-  custom_ct: settings.value.custom_ct_name || trans.value.customCt,
-  custom_cu: settings.value.custom_cu_name || trans.value.customCu,
-  custom_cm: settings.value.custom_cm_name || trans.value.customCm,
-  custom_bd: settings.value.custom_bd_name || trans.value.customBd
-  ,node_1: settings.value.node_1_name || 'Node 1', node_2: settings.value.node_2_name || 'Node 2', node_3: settings.value.node_3_name || 'Node 3', node_4: settings.value.node_4_name || 'Node 4'
-})[field] || field
-
-const getPingNodeValidation = (source) => {
-  const values = {}
-  for (const field of PING_NODE_FIELDS) {
-    const result = validatePingNode(source[field])
-    if (!result.valid) {
-      return { valid: false, field }
-    }
-    values[field] = result.value
-  }
-  return { valid: true, values }
-}
-
-const buildPingNodeError = (field) => `${getPingNodeLabel(field)}: ${trans.value.invalidPingNodeFormat}`
 
 const copyServerNote = async (server) => {
   const note = String(server?.note || '')
@@ -1304,10 +1275,7 @@ const resetAdminContext = () => {
   installMode.value = deleteInstallMode.value = autoDiscoveryInstallMode.value = 'current-user'
   installGhProxy.value = deleteGhProxy.value = autoDiscoveryGhProxy.value = ''
   installVersion.value = autoDiscoveryVersion.value = autoDiscoveryName.value = ''
-  customCt.value = customCu.value = customCm.value = customBd.value = ''
-  node1.value = node2.value = node3.value = node4.value = ''
   networkInterface.value = rxCorrection.value = txCorrection.value = ''
-  explicitEmptyNodes.value = {}
   collectInterval.value = 0
   reportInterval.value = 60
   wssReportInterval.value = 2
@@ -1409,6 +1377,7 @@ const loadSettings = async () => {
         custom_cm: settingsData.custom_cm || '',
         custom_bd: settingsData.custom_bd || '',
         extra_ping_nodes: Array.isArray(settingsData.extra_ping_nodes) ? settingsData.extra_ping_nodes.map(node => ({ ...node })) : [],
+        latency_tasks_active: !!settingsData.latency_tasks,
         node_1: settingsData.node_1 || '', node_2: settingsData.node_2 || '', node_3: settingsData.node_3 || '', node_4: settingsData.node_4 || '',
         custom_ct_name: settingsData.custom_ct_name || '电信',
         custom_cu_name: settingsData.custom_cu_name || '联通',
@@ -1479,7 +1448,7 @@ const saveSettings = async () => {
 
   const frontendWsTimeoutMinutes = Number(settings.value.frontend_ws_timeout_minutes)
   if (!Number.isInteger(frontendWsTimeoutMinutes) || frontendWsTimeoutMinutes < 0 || frontendWsTimeoutMinutes > FRONTEND_WS_TIMEOUT_MINUTES_MAX) {
-    invalidSettingsField(trans.value.invalidFrontendWsTimeoutMinutes, 'collection', 'frontend_ws_timeout_minutes')
+    invalidSettingsField(trans.value.invalidFrontendWsTimeoutMinutes, 'settings', 'frontend_ws_timeout_minutes')
     return
   }
 
@@ -1510,17 +1479,6 @@ const saveSettings = async () => {
       invalidSettingsField(trans.value.turnstileSecretKeyRequired, 'security', 'turnstile_secret_key')
       return
     }
-  }
-
-  const pingNodeValidation = getPingNodeValidation(settings.value)
-  if (!pingNodeValidation.valid) {
-    invalidSettingsField(buildPingNodeError(pingNodeValidation.field), 'collection', pingNodeValidation.field)
-    return
-  }
-  const extraPingValidation = validateExtraPingNodes(settings.value.extra_ping_nodes || [], validatePingNode)
-  if (!extraPingValidation.valid) {
-    invalidSettingsField(extraPingValidation.error === 'too_large' ? trans.value.pingConfigTooLarge : trans.value.invalidPingNodeFormat, 'collection', extraPingValidation.field || 'extra_ping_nodes')
-    return
   }
 
   const themeOptionsResult = parseThemeOptions(settings.value.theme_options)
@@ -1573,17 +1531,6 @@ const saveSettings = async () => {
       cloudflare_account_id: settings.value.cloudflare_account_id,
       cloudflare_token: settings.value.cloudflare_token,
       username: settings.value.username,
-      custom_ct: pingNodeValidation.values.custom_ct,
-      custom_cu: pingNodeValidation.values.custom_cu,
-      custom_cm: pingNodeValidation.values.custom_cm,
-      custom_bd: pingNodeValidation.values.custom_bd,
-      extra_ping_nodes: extraPingValidation.value,
-      node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
-      custom_ct_name: settings.value.custom_ct_name.trim(),
-      custom_cu_name: settings.value.custom_cu_name.trim(),
-      custom_cm_name: settings.value.custom_cm_name.trim(),
-      custom_bd_name: settings.value.custom_bd_name.trim(),
-      node_1_name: settings.value.node_1_name.trim(), node_2_name: settings.value.node_2_name.trim(), node_3_name: settings.value.node_3_name.trim(), node_4_name: settings.value.node_4_name.trim(),
       csp_static: settings.value.csp_static || '',
       csp_api: settings.value.csp_api || '',
       ua: String(settings.value.ua ?? '').trim()
@@ -1706,15 +1653,6 @@ const addServer = async () => {
   }
 }
 
-const resolveServerPingNode = (server, field) => {
-  const value = server?.[field]
-  const explicitEmpty = value === 0 || value === '0'
-  return {
-    value: explicitEmpty ? '' : (value || settings.value[field] || ''),
-    explicitEmpty
-  }
-}
-
 const getUninstallCommand = () => {
   const HOST = selectedApiBase.value
   const isGo = deleteVersion.value === 'go'
@@ -1753,28 +1691,6 @@ const copyCmd = (serverId) => {
   wssReportInterval.value = server?.wss_report_interval || 2
   connectionMode.value = getEffectiveConnectionMode(server?.connection_mode)
   pingMode.value = getEffectivePingMode(server?.ping_mode)
-  const customCtNode = resolveServerPingNode(server, 'custom_ct')
-  const customCuNode = resolveServerPingNode(server, 'custom_cu')
-  const customCmNode = resolveServerPingNode(server, 'custom_cm')
-  const customBdNode = resolveServerPingNode(server, 'custom_bd')
-  const node1Value = resolveServerPingNode(server, 'node_1')
-  const node2Value = resolveServerPingNode(server, 'node_2')
-  const node3Value = resolveServerPingNode(server, 'node_3')
-  const node4Value = resolveServerPingNode(server, 'node_4')
-  explicitEmptyNodes.value = {
-    custom_ct: customCtNode.explicitEmpty, custom_cu: customCuNode.explicitEmpty,
-    custom_cm: customCmNode.explicitEmpty, custom_bd: customBdNode.explicitEmpty,
-    node_1: node1Value.explicitEmpty, node_2: node2Value.explicitEmpty,
-    node_3: node3Value.explicitEmpty, node_4: node4Value.explicitEmpty
-  }
-  customCt.value = customCtNode.value
-  customCu.value = customCuNode.value
-  customCm.value = customCmNode.value
-  customBd.value = customBdNode.value
-  node1.value = node1Value.value
-  node2.value = node2Value.value
-  node3.value = node3Value.value
-  node4.value = node4Value.value
   networkInterface.value = server?.interface || ''
   resetDay.value = server?.reset_day ?? 1
   rxCorrection.value = server?.rx_correction ?? ''
@@ -2138,10 +2054,6 @@ const cancelAutoUpdateWarning = () => {
 }
 
 const buildEditPayloadFromForm = (form) => {
-  const pingNodeValidation = getPingNodeValidation(form)
-  if (!pingNodeValidation.valid) {
-    return { error: buildPingNodeError(pingNodeValidation.field) }
-  }
 
   const normalizedBillingCycle = normalizeBillingCycle(form.billing_cycle)
   const normalizedAutoRenewal = form.auto_renewal ? '1' : '0'
@@ -2177,11 +2089,6 @@ const buildEditPayloadFromForm = (form) => {
       wss_report_interval: form.wss_report_interval,
       connection_mode: getEffectiveConnectionMode(form.connection_mode),
       ping_mode: form.ping_mode === 'icmp' ? 'icmp' : 'tcp',
-      custom_ct: pingNodeValidation.values.custom_ct,
-      custom_cu: pingNodeValidation.values.custom_cu,
-      custom_cm: pingNodeValidation.values.custom_cm,
-      custom_bd: pingNodeValidation.values.custom_bd,
-      node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
       rx_correction: form.rx_correction,
       tx_correction: form.tx_correction,
       auto_update: form.auto_update ? '1' : '0',
@@ -2203,11 +2110,6 @@ const saveEdit = async () => {
   validationError.value = null
   validationField.value = ''
 
-  const pingNodeValidation = getPingNodeValidation(editForm.value)
-  if (!pingNodeValidation.valid) {
-    validationError.value = buildPingNodeError(pingNodeValidation.field)
-    return
-  }
 
   const normalizedBillingCycle = normalizeBillingCycle(editForm.value.billing_cycle)
   const normalizedAutoRenewal = editForm.value.auto_renewal ? '1' : '0'
@@ -2247,11 +2149,6 @@ const saveEdit = async () => {
     wss_report_interval: editForm.value.wss_report_interval,
     connection_mode: getEffectiveConnectionMode(editForm.value.connection_mode),
     ping_mode: editForm.value.ping_mode === 'icmp' ? 'icmp' : 'tcp',
-    custom_ct: pingNodeValidation.values.custom_ct,
-    custom_cu: pingNodeValidation.values.custom_cu,
-    custom_cm: pingNodeValidation.values.custom_cm,
-    custom_bd: pingNodeValidation.values.custom_bd,
-    node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
     rx_correction: editForm.value.rx_correction,
     tx_correction: editForm.value.tx_correction,
     auto_update: editForm.value.auto_update ? '1' : '0',

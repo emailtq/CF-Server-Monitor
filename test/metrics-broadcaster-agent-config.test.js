@@ -62,6 +62,7 @@ function makeSettingsDb(settingsSource) {
           return this;
         },
         async first() {
+          if (sql.includes("key = 'latency_tasks'")) return null;
           if (sql.includes('n.token_version')) return {server_id:'server-1', token_version:1, credential_version:1};
           return {
             value: JSON.stringify({
@@ -1271,9 +1272,9 @@ test('WSS history persistence carries pending history aggregates into next D1 wr
 
     assert.equal(persisted.persisted, true);
     assert.equal(savedRows.length, 1);
-    assert.equal(savedRows[0][4], 11);
-    assert.equal(savedRows[0][6], 40 * 1024 * 1024);
-    assert.equal(savedRows[0][7], 9 * 1024 * 1024);
+    assert.equal(savedRows[0][6], 11);
+    assert.equal(savedRows[0][8], 40 * 1024 * 1024);
+    assert.equal(savedRows[0][9], 9 * 1024 * 1024);
     assert.equal(
       Object.prototype.hasOwnProperty.call(
         broadcaster.agentHistoryWrites.get('server-1'),
@@ -1371,7 +1372,7 @@ test('WSS history persistence keeps samples received during a D1 flush for the n
     releaseFirstRun();
     const firstResult = await firstWrite;
     assert.equal(firstResult.persisted, true);
-    assert.equal(savedRows[0][6], 10 * 1024);
+    assert.equal(savedRows[0][8], 10 * 1024);
 
     now += 31_000;
     const secondResult = await broadcaster._persistAgentHistoryIfDue(ws, attachment, {
@@ -1390,7 +1391,7 @@ test('WSS history persistence keeps samples received during a D1 flush for the n
 
     assert.equal(secondResult.persisted, true);
     assert.equal(savedRows.length, 2);
-    assert.equal(savedRows[1][6], 5 * 1024 * 1024);
+    assert.equal(savedRows[1][8], 5 * 1024 * 1024);
   } finally {
     Date.now = originalNow;
   }

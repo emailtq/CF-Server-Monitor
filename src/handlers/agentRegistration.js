@@ -5,6 +5,7 @@ import { ensureAgentRegistrationSchema, REGISTRATION_DB_NOW_SQL, REGISTRATION_EN
 import { generateRandomSecret, isValidJwtSecret } from '../utils/settings.js';
 import { isAutoDiscoveryEnabled, resolveDiscoveredServerName } from '../utils/autoDiscovery.js';
 import { clearServersListCache } from '../utils/cache.js';
+import { clearSiteSettingsCache } from '../utils/settings.js';
 
 const MAX_BODY_BYTES = 4096;
 const response = (body, status = 200) => Response.json(body, {status, headers:{'Cache-Control':'no-store'}});
@@ -124,6 +125,7 @@ export async function handleAgentRegistration(request, env) {
       return current.failure || error('registration_unavailable', 503);
     }
     clearServersListCache();
+    clearSiteSettingsCache();
     return response({serverId, token:credential.token});
   } catch (_) { return error('registration_unavailable', 503); }
 }

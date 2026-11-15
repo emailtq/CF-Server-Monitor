@@ -1,6 +1,7 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { validTerminalObservation } from '../database/terminal.js';
 import { normalizeExtraProbes } from '../shared/extraPing.js';
+import { projectLatencyMetrics } from '../shared/latencyTasks.js';
 import { getServerDetail, clearServerDetailCache, patchServerDetailCache } from '../utils/cache.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
 import {
@@ -143,7 +144,7 @@ export function normalizeCorrectionValue(value) {
 
 export function normalizeMetricSamples(data) {
   const validateExtras = metrics => {
-    if (metrics && Object.hasOwn(metrics, 'extra_ping_nodes')) throw new AppError('Configuration targets are not metrics', 400);
+    if (metrics && ['extra_ping_nodes', 'latency_tasks', 'latency_tasks_active'].some(field => Object.hasOwn(metrics, field))) throw new AppError('Configuration is not metrics', 400);
     if (metrics && Object.hasOwn(metrics, 'extra_probes') && (
       !metrics.extra_probes || typeof metrics.extra_probes !== 'object' || Array.isArray(metrics.extra_probes) || !normalizeExtraProbes(metrics.extra_probes)
     )) {
@@ -678,6 +679,13 @@ async function handleUpdateCore(request, env, ctx, authState = null) {
     }
 
     const samples = normalizeMetricSamples(data);
+    const latencySettings = await loadSiteSettings(env.DB);
+    if (latencySettings.latency_tasks) {
+      const schema = normalizeAgentConfigSchemaVersion(request.headers.get(AGENT_CONFIG_SCHEMA_HEADER));
+      const matches = schema && schema < 9 && request.headers.get(AGENT_CONFIG_MD5_HEADER) === (await describeAgentConfig(serverDetail, latencySettings, schema)).md5;
+      for (const sample of samples) projectLatencyMetrics(sample.metrics, latencySettings.latency_tasks.tasks, id, matches, latencySettings.latency_tasks);
+      if (data.metrics) projectLatencyMetrics(data.metrics, latencySettings.latency_tasks.tasks, id, matches, latencySettings.latency_tasks);
+    }
     if (samples.length === 0) {
       logUpdateBadRequest('Missing metrics', {
         id,
