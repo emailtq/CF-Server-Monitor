@@ -1,3 +1,5 @@
+import { flushLoginEvents, recoverPanelLoginEvents } from './services/loginEvents.js';
+import { cleanupLoginEvents } from './database/loginEvents.js';
 import { publicExtraPingNodes } from './shared/extraPing.js';
 import { publicLatencyNodes } from './shared/latencyTasks.js';
 import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './database/schema.js';
@@ -485,6 +487,10 @@ export default {
     const minute = now.getUTCMinutes();
     
     if (cron === '*/1 * * * *') {
+      if (typeof ctx?.waitUntil === 'function') {
+        recoverPanelLoginEvents(env, ctx);
+        ctx.waitUntil(flushLoginEvents(env).catch(() => console.error('[Login events] delivery pending')));
+      }
       if (day === 0 && hour === 0 && minute < 5) {
         debug('[Cron] 每周日0:00-0:05表轮换期间，跳过离线节点检测');
       } else {
@@ -505,6 +511,7 @@ export default {
     } else if (cron === '0 * * * *') {
       try {
         await cleanupTerminalRecords(env.DB, now.getTime());
+        await cleanupLoginEvents(env.DB, now.getTime());
       } catch (error) {
         console.error('[Terminal] Retention cleanup failed:', error);
       }

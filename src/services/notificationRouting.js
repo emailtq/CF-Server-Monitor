@@ -20,11 +20,12 @@ export function routeNotificationEvents(config, events) {
   const deliveries = new Map();
   for (const event of Array.isArray(events) ? events : []) {
     const rule = rules.get(event?.ruleId);
-    if (!rule || !event.serverId || typeof event.eventKey !== 'string' || !event.eventKey || typeof event.msg !== 'string') continue;
+    if (!rule || typeof event.eventKey !== 'string' || !event.eventKey || typeof event.msg !== 'string') continue;
+    if (rule.scope.mode === 'site' ? event.scope !== 'site' || event.serverId != null : !event.serverId || event.scope === 'site') continue;
     if (rule.scope.mode === 'selected' && !selectedScopes.get(rule.id).has(String(event.serverId))) continue;
     for (const channelId of rule.targetIds) {
       if (!channels.has(channelId) || (event.targetIds && !event.targetIds.includes(channelId))) continue;
-      const key = notificationDeliveryKey(channelId, event.serverId, event.eventKey);
+      const key = notificationDeliveryKey(channelId, event.serverId ?? null, event.eventKey);
       const existing = deliveries.get(key);
       if (existing) {
         if (!existing.event.ruleIds.includes(rule.id)) existing.event.ruleIds.push(rule.id);

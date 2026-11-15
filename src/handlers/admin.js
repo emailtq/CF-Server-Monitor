@@ -9,6 +9,8 @@ import { AppError, createSuccessResponse, createBadRequestResponse, createUnauth
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
 import { getNotificationMessages } from '../services/notificationMessages.js';
+import { queuePanelLoginEvent, scheduleLoginDelivery } from '../services/loginEvents.js';
+import { loginEventDiagnostics } from '../database/loginEvents.js';
 import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { validateExtraPingNodes } from '../shared/extraPing.js';
@@ -506,7 +508,7 @@ async function getD1DailyUsage(token, accountId) {
   };
 }
 
-async function handleLoginAction({ request, env, sys, data }) {
+async function handleLoginAction({ request, env, sys, data, ctx }) {
   const { username, password } = data;
 
   if (!username || !password) {
@@ -546,6 +548,10 @@ async function handleLoginAction({ request, env, sys, data }) {
 
   try {
     const token = await generateToken(env, sys);
+    // Capture policy and durably enqueue; channel requests run in the background.
+    try {
+      await queuePanelLoginEvent(env, { type: 'panelLogin', id: `panel:${crypto.randomUUID()}`, occurredAt: Date.now() }, ctx);
+    } catch (_) { console.error('[Login events] panel enqueue unavailable'); }
     return createSuccessResponse({
       success: true,
       token: token,
@@ -819,6 +825,7 @@ async function handleSendTestNotificationAction({ env, data }) {
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   agent_install_image: async ({data}) => createSuccessResponse(await checkAgentImage(data.tag)),
   get_notification_config: handleNotificationConfigAction,
+  get_login_event_status: handleNotificationConfigAction,
   save_notification_config: handleNotificationConfigAction,
   test_notification_channel: handleNotificationConfigAction,
   get_settings: handleGetSettingsAction,
@@ -829,16 +836,23 @@ const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   send_test_notification: handleSendTestNotificationAction
 };
 
-async function handleNotificationConfigAction({ env, data }) {
+async function handleNotificationConfigAction({ env, data, ctx }) {
   try {
     if (new TextEncoder().encode(JSON.stringify(data)).length > NOTIFICATION_CONFIG_MAX_BYTES) throw notificationConfigError();
+    if (data.action === 'get_login_event_status') {
+      assertNotificationObject(data, ['action']);
+      return createSuccessResponse(await loginEventDiagnostics(env.DB));
+    }
     if (data.action === 'get_notification_config') {
       assertNotificationObject(data, ['action']);
       return createSuccessResponse(maskNotificationConfig(await loadNotificationConfig(env.DB)));
     }
     if (data.action === 'save_notification_config') {
       const { action, ...input } = data;
-      return createSuccessResponse(await saveNotificationConfig(env.DB, input));
+      const config = await saveNotificationConfig(env.DB, input);
+      scheduleLatencyTasksChanged(env, ctx);
+      if (config.rules.some(rule => ['sshLogin','panelLogin','terminalConnected'].includes(rule.type))) scheduleLoginDelivery(env, ctx);
+      return createSuccessResponse(config);
     }
     assertNotificationObject(data, ['action', 'channel']);
     const { channel, config } = await prepareNotificationChannel(env.DB, data.channel);

@@ -22,13 +22,15 @@ const server = {
   reset_day: 15,
   ping_mode: 'tcp'
 };
-const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=9&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=http&ping_mode=tcp&extra_ping_nodes=%5B%5D&latency_tasks=null';
-const expectedWssEnabled = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=9&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp&extra_ping_nodes=%5B%5D&latency_tasks=null';
+const expected9 = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=9&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=http&ping_mode=tcp&extra_ping_nodes=%5B%5D&latency_tasks=null';
+const expected = expected9.replace('schema_version=9','schema_version=10') + '&ssh_login_enabled=0';
+const expectedWssEnabled = expected.replace('connection_mode=http','connection_mode=auto&wss_report_interval=2');
 const expectedLegacy = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=3&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
 
 const config = buildAgentConfig(server);
 assert.equal(serializeAgentConfig(config), expected);
-assert.equal(serializeAgentConfig(buildAgentConfig(server, null, 8)), expected.replace('schema_version=9', 'schema_version=8').replace('&latency_tasks=null', ''), 'explicit schema8 keeps its original contract');
+assert.equal(serializeAgentConfig(buildAgentConfig(server, null, 9)), expected9, 'explicit schema9 keeps its original contract');
+assert.equal(serializeAgentConfig(buildAgentConfig(server, null, 8)), expected9.replace('schema_version=9', 'schema_version=8').replace('&latency_tasks=null', ''), 'explicit schema8 keeps its original contract');
 assert.equal(serializeAgentConfig(buildAgentConfig(server, { wss_report_enabled: 'true' })), expectedWssEnabled);
 assert.equal(serializeAgentConfig(buildAgentConfig(server, { wss_report_enabled: 'true', wss_report_hours: [] })), expectedWssEnabled);
 assert.equal(serializeAgentConfig(buildAgentConfig(server, null, AGENT_CONFIG_LEGACY_SCHEMA_VERSION)), expectedLegacy);
@@ -102,6 +104,7 @@ assert.deepEqual(buildAgentConfig({}), {
   node_4: '',
   extra_ping_nodes: [],
   latency_tasks: null,
+  ssh_login_enabled: 0,
   connection_mode: 'http',
   ping_mode: 'tcp'
 });

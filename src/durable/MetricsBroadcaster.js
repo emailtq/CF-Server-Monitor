@@ -1,3 +1,4 @@
+import { acceptSshEvents, validateSshEventReport, scheduleLoginDelivery, sshLoginEnabled, queueLoginEvent } from '../services/loginEvents.js';
 // Durable Object: 服务器监控指标广播中心
 // 负责维护 WebSocket 连接并在收到新指标时向订阅者实时推送
 //
@@ -607,6 +608,7 @@ export class MetricsBroadcaster {
     if (message.type === 'update' && message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload)) {
       const payload = { ...message.payload };
       const inheritedFields = [
+        'ssh_events',
         'terminal_enabled',
         'time',
         'config_md5',
@@ -843,7 +845,7 @@ export class MetricsBroadcaster {
       loadSiteSettings(this.env.DB, { forceRefresh })
     ]);
     if (!serverDetail) return null;
-    return describeAgentConfig(serverDetail, settings, schemaVersion);
+    return describeAgentConfig({ ...serverDetail, ssh_login_enabled: await sshLoginEnabled(this.env.DB, serverId, schemaVersion) }, settings, schemaVersion);
   }
 
   _buildAgentConfigFrame(descriptor) {
@@ -1441,6 +1443,9 @@ export class MetricsBroadcaster {
       this._closeWsWithError(ws, 'Invalid terminal_enabled', 400);
       return;
     }
+    let sshReport;
+    try { sshReport = validateSshEventReport(data.ssh_events); }
+    catch (_) { this._closeWsWithError(ws, 'Invalid SSH events', 400); return; }
 
     const scheduleCheckAfter = Number(attachment.wssScheduleCheckAfter);
     if (Number.isFinite(scheduleCheckAfter) && Date.now() >= scheduleCheckAfter) {
@@ -1528,6 +1533,8 @@ export class MetricsBroadcaster {
     });
 
     const configAck = await this._buildAgentConfigAck(context);
+    const sshAck = await acceptSshEvents(this.env, { serverId: context.serverId, tokenVersion: context.attachment.tokenVersion }, sshReport);
+    if (sshAck) scheduleLoginDelivery(this.env, this.state);
     if (!this._hasAgentLease(ws)) return;
     const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(
       context.wssReportIntervalMs,
@@ -1540,6 +1547,7 @@ export class MetricsBroadcaster {
       persisted: persisted.persisted,
       nextD1WriteAfterMs: persisted.nextD1WriteAfterMs,
       nextWssReportAfterMs,
+      ...(sshAck ? { ssh_ack: sshAck } : {}),
       ...(configAck || {})
     });
   }
@@ -1664,6 +1672,17 @@ export class MetricsBroadcaster {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    if (method === 'POST' && url.origin === 'https://metrics.internal' && path === '/panel-login-event') {
+      const event = await request.json();
+      if (!event || Object.keys(event).some(key => !['id','occurredAt','policyRevision','targets'].includes(key)) || typeof event.id !== 'string' || !/^panel:[A-Za-z0-9-]{1,128}$/.test(event.id) || !Number.isSafeInteger(event.occurredAt) || event.occurredAt <= 0 || event.occurredAt > 8640000000000000 || !Number.isSafeInteger(event.policyRevision) || event.policyRevision < 0 || !Array.isArray(event.targets) || event.targets.length > 64) return new Response('Invalid event', { status: 400 });
+      await this.state.storage.put(`panel-login:${event.id}`, { ...event, type: 'panelLogin' });
+      this.state.waitUntil(this.flushPanelLogins());
+      return Response.json({ queued: true });
+    }
+    if (method === 'POST' && url.origin === 'https://metrics.internal' && path === '/panel-login-recovery') {
+      await this.flushPanelLogins();
+      return Response.json({ ok: true });
+    }
 
     if (method === 'POST' && path === '/node-invalidated' && url.origin === 'https://metrics.internal') {
       const data = await request.json();
@@ -1954,6 +1973,17 @@ export class MetricsBroadcaster {
         this.latestReportUpdates.delete(serverId);
       }
     }
+  }
+
+  async flushPanelLogins() {
+    if (this.flushingPanelLogins) return;
+    this.flushingPanelLogins = true;
+    try {
+      const pending = await this.state.storage.list({ prefix: 'panel-login:', limit: 32 });
+      for (const [key, event] of pending) { await queueLoginEvent(this.env, event); await this.state.storage.delete(key); }
+      if (pending.size) scheduleLoginDelivery(this.env, this.state);
+    } catch (_) { console.error('[Login events] panel enqueue pending'); }
+    finally { this.flushingPanelLogins = false; }
   }
 
   _cacheLatestReportUpdates(updates, reportTs = Date.now()) {

@@ -1,3 +1,4 @@
+import { ensureLoginEventSchema } from './loginEvents.js';
 import { getAllServers, getLatestMetricsCache, setLatestMetricsCache, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration, clearAllCaches } from '../utils/cache.js';
 import { saveSiteOptions, debug, normalizeLongHistoryPoints, DEFAULT_LONG_HISTORY_POINTS } from '../utils/settings.js';
 import { attachDiskMetricsObject, flattenDiskMetrics, isDisabledProbeMetric, normalizeProbeMetricRow } from '../utils/metrics.js';
@@ -133,6 +134,7 @@ export async function initDatabase(db) {
     if (!historyColumns.success) throw new Error(historyColumns.error);
     await ensureNodeCredentialSchema(db);
     await ensureTerminalSchema(db);
+    await ensureLoginEventSchema(db);
 
     debug('✅ 数据库初始化完成');
     dbInitialized = true;

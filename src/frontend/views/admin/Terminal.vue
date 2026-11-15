@@ -88,7 +88,7 @@ const dismissedNotice = ref('')
 const pasteInput = ref(null)
 const pasteOwner = ref('')
 const pasteDraft = ref('')
-const noticeCode = computed(() => connected.value ? uiError.value || errorCode.value : '')
+const noticeCode = computed(() => uiError.value || errorCode.value)
 const notice = computed(() => noticeCode.value || (connected.value && ['disconnected', 'exited'].includes(status.value) ? status.value : ''))
 const noticeText = computed(() => noticeCode.value ? trans.value[noticeCode.value] || trans.value.terminalRequestFailed : trans.value['terminalState_' + status.value])
 const ctrl = ref(false)
@@ -99,24 +99,6 @@ let compositionOwner = ''
 let live = true
 let themeObserver
 let pendingAccess = false
-let connection = null
-const updateConnection = () => {
-  if (connected.value || !host.value) return
-  if (!connection) {
-    connection = document.createElement('pre')
-    connection.className = 'terminal-connection'
-    connection.setAttribute('role', 'status')
-    connection.setAttribute('aria-live', 'polite')
-    host.value.prepend(connection)
-  }
-  connection.textContent = trans.value['terminalState_' + status.value]
-  if (errorCode.value) {
-    const message = document.createElement('span')
-    message.className = 'terminal-error'
-    message.textContent = '\n' + (trans.value[errorCode.value] || trans.value.terminalRequestFailed)
-    connection.append(message)
-  }
-}
 
 const back = () => router.push({ path: '/admin', query: { apiIndex: String(apiIndex) } })
 const openAccess = () => {
@@ -151,7 +133,7 @@ const copySelection = async () => {
   try { if (await terminal.copySelection()) { if (live && owner === sessionId.value) clearUiError() } }
   catch (_) { if (live && owner === sessionId.value) uiError.value = 'terminal_clipboard_denied' }
 }
-const open = async () => { clearPasteDraft(); clearUiError(); connected.value = false; ctrl.value = alt.value = false; await nextTick(); await terminal.open(host.value); await refreshStatus() }
+const open = async () => { clearPasteDraft(); clearUiError(); connected.value = false; ctrl.value = alt.value = false; await nextTick(); await terminal.open(host.value); if (live) await refreshStatus() }
 const pasteClipboard = async () => {
   const owner = terminal.sessionId.value
   if (!owner || terminal.status.value !== 'running') return
@@ -200,11 +182,8 @@ watch(showMenu, open => { if (open) pendingAccess = false }, { flush: 'sync' })
 watch(sessionId, () => { ctrl.value = alt.value = false; clearPasteDraft() }, { flush: 'sync' })
 watch([status, errorCode, trans], ([state]) => {
   if (state === 'running') {
-    // This leaf is locally owned like xterm, not Vue-patched or part of remote scrollback/ACK.
-    connection?.remove()
-    connection = null
     connected.value = true
-  } else { clearPasteDraft(); updateConnection() }
+  } else clearPasteDraft()
   dismissedNotice.value = ''
 }, { flush: 'sync' })
 onMounted(() => {
@@ -239,8 +218,6 @@ onBeforeUnmount(() => {
 .terminal-workspace { position: relative; flex: 1; min-height: 0; display: flex; }
 .terminal-screen { --terminal-font: ui-monospace, monospace; flex: 1; min-width: 0; padding: 4px; background: var(--cf-panel); color: var(--cf-text); overflow: hidden; }
 .terminal-final-output { margin: 0; height: 100%; overflow: auto; white-space: pre-wrap; font-family: var(--terminal-font); }
-.terminal-screen :deep(.terminal-connection) { margin: 0; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.5 var(--terminal-font); color: var(--cf-muted); }
-.terminal-screen :deep(.terminal-error) { color: var(--cf-red); }
 .terminal-error { color: var(--cf-red); }
 .terminal-notice { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-height: 44px; flex-shrink: 0; font-size: 12px; line-height: 1.4; color: var(--cf-muted); }
 .terminal-notice > div { min-width: 0; overflow-wrap: anywhere; }

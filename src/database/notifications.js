@@ -4,6 +4,8 @@ import {
 } from '../shared/notificationConfig.js';
 import { LEGACY_NOTIFICATION_FIELDS } from '../utils/settings.js';
 import { validateNotificationTransport } from '../services/notification.js';
+import { createNotificationRuleIdentity } from '../services/notificationState.js';
+import { LOGIN_NOTIFICATION_EVENTS } from '../shared/notificationConfig.js';
 
 const KEY = 'notification_config';
 
@@ -113,7 +115,10 @@ export async function saveNotificationConfig(db, input) {
     if (r.enabled && !old?.enabled && r.scope.serverIds.some(id => !state.serverIds.has(id))) throw notificationConfigError();
   }
   for (const c of config.channels) if (c.enabled) notificationChannelSettings(c, config);
-  await persistNotificationConfig(db, config, state.value);
+  if ([...state.config.rules, ...config.rules].some(rule => LOGIN_NOTIFICATION_EVENTS.includes(rule.type))) {
+    const results = await db.batch([notificationConfigStatement(db, config, state.value), ...await loginCancellationStatements(db, state.config, config)]);
+    if (Number(results[0]?.meta?.changes ?? 0) !== 1) throw notificationConfigError('notification_revision_conflict', 409);
+  } else await persistNotificationConfig(db, config, state.value);
   return maskNotificationConfig(config);
 }
 
@@ -127,6 +132,32 @@ function notificationConfigStatement(db, config, previousValue) {
   return db.prepare(`INSERT INTO settings (key, value) SELECT ?, ?
     WHERE ? IS NULL OR EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE settings.value = ?`).bind(KEY, JSON.stringify(config), previousValue, KEY, previousValue, previousValue);
+}
+
+async function loginCancellationStatements(db, previous, config) {
+  const enabledChannels = new Set(config.channels.filter(channel => channel.enabled).map(channel => channel.id));
+  const allowed = await Promise.all(config.rules.filter(rule => rule.enabled && LOGIN_NOTIFICATION_EVENTS.includes(rule.type)).map(async rule => ({
+    id: rule.id, signature: (await createNotificationRuleIdentity(rule)).signature, targets: rule.targetIds.filter(id => enabledChannels.has(id))
+  })));
+  const invalidated = [];
+  const previouslyEnabledChannels = new Set(previous.channels.filter(channel => channel.enabled).map(channel => channel.id));
+  for (const rule of previous.rules.filter(rule => rule.enabled && LOGIN_NOTIFICATION_EVENTS.includes(rule.type))) {
+    const signature = (await createNotificationRuleIdentity(rule)).signature;
+    for (const channelId of rule.targetIds.filter(id => previouslyEnabledChannels.has(id))) {
+      if (!allowed.some(next => next.id === rule.id && next.signature === signature && next.targets.includes(channelId))) invalidated.push({ ruleId: rule.id, channelId });
+    }
+  }
+  return [db.prepare(`INSERT INTO login_event_policy_invalidations(rule_id,channel_id,revision)
+    SELECT json_extract(i.value,'$.ruleId'),json_extract(i.value,'$.channelId'),? FROM json_each(?) i
+    WHERE EXISTS (SELECT 1 FROM settings WHERE key=? AND value=?)
+    ON CONFLICT(rule_id,channel_id) DO UPDATE SET revision=MAX(revision,excluded.revision)`)
+    .bind(config.revision, JSON.stringify(invalidated), KEY, JSON.stringify(config)),
+    db.prepare(`UPDATE login_event_deliveries SET state='cancelled',updated_at=? WHERE state='pending'
+    AND EXISTS (SELECT 1 FROM settings WHERE key=? AND value=?)
+    AND NOT EXISTS (SELECT 1 FROM json_each(login_event_deliveries.rules) saved,json_each(?) allowed
+      WHERE json_extract(saved.value,'$.id')=json_extract(allowed.value,'$.id') AND json_extract(saved.value,'$.signature')=json_extract(allowed.value,'$.signature')
+      AND EXISTS (SELECT 1 FROM json_each(json_extract(allowed.value,'$.targets')) t WHERE t.value=login_event_deliveries.channel_id))`)
+    .bind(Date.now(), KEY, JSON.stringify(config), JSON.stringify(allowed))];
 }
 
 export function validateNotificationBackup(raw) {
@@ -151,6 +182,7 @@ export async function importNotificationConfig(db, raw, serverIdMap = new Map())
     }) };
   validateNotificationBackup(config);
   const statements = [notificationConfigStatement(db, config, state.value)];
+  if ([...state.config.rules, ...config.rules].some(rule => LOGIN_NOTIFICATION_EVENTS.includes(rule.type))) statements.push(...await loginCancellationStatements(db, state.config, config));
   // The unique imported channel ID identifies the winning CAS without rebinding 256 KiB per node.
   const importChannelId = config.channels[0]?.id;
   const scoped = rule => [...state.serverIds].filter(id => rule.scope.mode === 'all' || rule.scope.serverIds.includes(id));

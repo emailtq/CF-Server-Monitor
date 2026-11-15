@@ -17,9 +17,9 @@ export const channelPayload = draft => {
   if (prefix && replacements.token && !replacements.token.startsWith(prefix)) replacements.token = prefix + replacements.token
   return { ...channel, ...(Object.keys(replacements).length ? { secrets: replacements } : {}), ...(clearSecrets?.length ? { clearSecrets } : {}) }
 }
-export const alertEvents = ['offline', 'traffic', 'expiry', 'cpu', 'ram', 'disk', 'netIn', 'netOut']
+export const alertEvents = ['offline', 'traffic', 'expiry', 'cpu', 'ram', 'disk', 'netIn', 'netOut', 'sshLogin', 'panelLogin', 'terminalConnected']
 export const eventLabel = (event, t) => t['adminEvent' + event[0].toUpperCase() + event.slice(1)]
-export const ruleOptions = type => ({ offline: { minutes: 5 }, traffic: { threshold: 80 }, expiry: { days: 7, hour: 9 }, resource: { metric: 'cpu', threshold: 80, intervalMinutes: 5, mode: 'average' } }[type])
+export const ruleOptions = type => ({ offline: { minutes: 5 }, traffic: { threshold: 80 }, expiry: { days: 7, hour: 9 }, resource: { metric: 'cpu', threshold: 80, intervalMinutes: 5, mode: 'average' } }[type] || {})
 export const missingServers = (rule, servers) => rule.scope.serverIds.filter(id => !servers.some(s => String(s.id) === id))
 export const ruleReady = (rule, channels, servers, previous) => (!rule.enabled || (
   (!missingServers(rule, servers).length || previous?.enabled) &&

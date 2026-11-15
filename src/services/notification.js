@@ -472,10 +472,10 @@ async function evaluateResourceAlertRules(stub, ruleRequests) {
   return resultMap;
 }
 
-async function fetchWithRetry(url, options, retries = NOTIFICATION_MAX_RETRIES) {
+async function fetchWithRetry(url, options, retries = NOTIFICATION_MAX_RETRIES, signal) {
   for (let i = 0; i < retries; i++) {
     try {
-      const response = await fetch(url, options);
+      const response = await fetch(url, signal ? { ...options, signal } : options);
       if (response.ok) return response;
       
       if (i < retries - 1) {
@@ -638,7 +638,7 @@ function buildWebhookBody(settings, context, format) {
   return renderTemplate(rawBody, context);
 }
 
-async function sendCustomWebhookNotification(settings, context) {
+async function sendCustomWebhookNotification(settings, context, attempts, signal) {
   const method = normalizeNotificationWebhookMethod(settings.notification_webhook_method);
   const format = normalizeNotificationWebhookFormat(settings.notification_webhook_format);
   const endpoint = buildWebhookUrl(settings, context, method);
@@ -655,7 +655,7 @@ async function sendCustomWebhookNotification(settings, context) {
     options.body = buildWebhookBody(settings, context, format);
   }
 
-  await fetchWithRetry(endpoint, options);
+  await fetchWithRetry(endpoint, options, attempts, signal);
 }
 
 // SMTP 通知复用 tg_bot_token 字段，配置以 "smtp:" 前缀协议存储（方案 A）。
@@ -847,7 +847,7 @@ async function withSmtpRetry(task, retries = NOTIFICATION_MAX_RETRIES) {
   throw lastError || new Error('Max retries exceeded');
 }
 
-async function sendSmtpNotification(settings, context, formattedMsg) {
+async function sendSmtpNotification(settings, context, formattedMsg, attempts = NOTIFICATION_MAX_RETRIES) {
   let config;
   try {
     config = parseSmtpNotificationConfig(settings.tg_bot_token);
@@ -870,7 +870,7 @@ async function sendSmtpNotification(settings, context, formattedMsg) {
         secureTransport: config.secureTransport
       },
       { subject, text }
-    ));
+    ), attempts);
     return;
   } catch (e) {
     return `SMTP 邮件通知发送失败: ${e.message}`;
@@ -890,7 +890,7 @@ export function validateNotificationTransport(settings) {
   }
 }
 
-export async function sendNotification(settings, msg, notificationContext = {}) {
+export async function sendNotification(settings, msg, notificationContext = {}, { attempts = NOTIFICATION_MAX_RETRIES, signal } = {}) {
   const context = buildNotificationContext(settings || {}, msg, notificationContext);
   const formattedMsg = formatNotificationMessage(settings || {}, msg, context);
   context.notification = formattedMsg;
@@ -899,7 +899,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
   if (normalizeBooleanSetting(settings?.notification_webhook_enabled) === 'true') {
     if (!String(settings?.notification_webhook_url || '').trim()) return "自定义 Webhook 通知失败: 缺少 URL";
     try {
-      await sendCustomWebhookNotification(settings, context);
+      await sendCustomWebhookNotification(settings, context, attempts, signal);
       return;
     } catch (e) {
       return "自定义 Webhook 通知发送失败: " + e.message;
@@ -910,7 +910,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
   const provider = identifyNotificationProvider(settings.tg_bot_token);
   if (provider === 'smtp') {
     // SMTP 邮件通知（前缀协议: smtp://...），置于内置渠道分发链最前
-    return await sendSmtpNotification(settings, context, formattedMsg);
+    return await sendSmtpNotification(settings, context, formattedMsg, attempts);
   }
   if(provider === 'onebot') {
     // OneBot 协议 (QQ 等)，私聊格式: onebot:http://127.0.0.1:3000/send_private_msg?access_token=xxx
@@ -938,7 +938,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      });
+      }, attempts, signal);
     } catch (e) {
       return "OneBot 通知发送失败: " + e.message;
     }
@@ -956,7 +956,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
             body: { elements: [{ tag: "markdown", content: formattedMsg }] }
           }
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "飞书通知发送失败: " + e.message;
     }
@@ -970,7 +970,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
           msgtype: "markdown",
           markdown: { title: title, text: formattedMsg }
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "钉钉通知发送失败: " + e.message;
     }
@@ -988,7 +988,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
           markdown: formattedMsg,
           group: "Cloudflare Server Monitor"
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "Bark通知发送失败: " + e.message;
     }
@@ -1003,7 +1003,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
             content: formattedMsg.replace(/\*/g, '')
           }
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "企业微信通知发送失败: " + e.message;
     }
@@ -1021,7 +1021,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
           title: title,
           desp: formattedMsg
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "Server酱通知发送失败: " + e.message;
     }
@@ -1039,7 +1039,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
           "contentType":3,
           "spt": spt,
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "WxPusher通知发送失败: " + e.message;
     }
@@ -1056,7 +1056,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
             "client::display": { "contentType": "text/markdown" }
           }
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "Gotify通知发送失败: " + e.message;
     }
@@ -1070,7 +1070,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
           chat_id: settings.tg_chat_id,
           text: formattedMsg
         })
-      });
+      }, attempts, signal);
     } catch (e) {
       return "Telegram 通知发送失败: " + e.message;
     }

@@ -1,3 +1,4 @@
+import { acceptSshEvents, validateSshEventReport, scheduleLoginDelivery, sshLoginEnabled } from '../services/loginEvents.js';
 import { saveMetricsHistory } from '../database/schema.js';
 import { validTerminalObservation } from '../database/terminal.js';
 import { normalizeExtraProbes } from '../shared/extraPing.js';
@@ -144,7 +145,7 @@ export function normalizeCorrectionValue(value) {
 
 export function normalizeMetricSamples(data) {
   const validateExtras = metrics => {
-    if (metrics && ['extra_ping_nodes', 'latency_tasks', 'latency_tasks_active'].some(field => Object.hasOwn(metrics, field))) throw new AppError('Configuration is not metrics', 400);
+    if (metrics && ['extra_ping_nodes', 'latency_tasks', 'latency_tasks_active', 'ssh_events'].some(field => Object.hasOwn(metrics, field))) throw new AppError('Configuration is not metrics', 400);
     if (metrics && Object.hasOwn(metrics, 'extra_probes') && (
       !metrics.extra_probes || typeof metrics.extra_probes !== 'object' || Array.isArray(metrics.extra_probes) || !normalizeExtraProbes(metrics.extra_probes)
     )) {
@@ -594,9 +595,10 @@ export async function handleUpdate(request, env, ctx) {
 
   // 自定义 UA 只下发给已认证且本次请求成功的 agent，401/400/404 一律不带，避免暴露。
   const attachUa = authState.ok && authState.ua && response.ok;
-  if (!attachUa) return response;
+  if (!attachUa && !(authState.sshAck && response.ok)) return response;
 
   const headers = new Headers(response.headers);
+  if (authState.sshAck && response.ok) { headers.set('X-CFSM-Ssh-Ack', JSON.stringify(authState.sshAck)); headers.set('Cache-Control', 'no-store'); }
   if (attachUa) {
     headers.set(AGENT_UA_HEADER, authState.ua);
     headers.set('Cache-Control', 'no-store');
@@ -628,6 +630,7 @@ async function handleUpdateCore(request, env, ctx, authState = null) {
     if (!node) return createUnauthorizedResponse('Invalid node token');
     if (authState) authState.ok = true;
     if (!validTerminalObservation(data)) return createBadRequestResponse('Invalid terminal_enabled');
+    const sshReport = validateSshEventReport(data.ssh_events);
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
     const agentVersion = normalizeAgentVersion(request.headers.get('X-Agent-Version'));
@@ -726,6 +729,8 @@ async function handleUpdateCore(request, env, ctx, authState = null) {
       agentVersion
     );
 
+    const sshAck = await acceptSshEvents(env, node, sshReport);
+    if (sshAck) { authState.sshAck = sshAck; scheduleLoginDelivery(env, ctx); }
     const broadcastSamples = toBroadcastSamples(id, samples, regionCode, agentVersion, latestMetrics);
     cacheLatestReportUpdate(id, broadcastSamples, Date.now());
     // 加入批量队列，由后台定时任务统一推送到 DO
@@ -748,7 +753,7 @@ async function handleUpdateCore(request, env, ctx, authState = null) {
       const settings = await loadSiteSettings(env.DB);
       if (authState) authState.ua = settings.ua;
       const wssStateHeaders = buildAgentWssStateHeaders(settings);
-      const descriptor = await describeAgentConfig(serverDetail, settings, clientConfigSchema);
+      const descriptor = await describeAgentConfig({ ...serverDetail, ssh_login_enabled: await sshLoginEnabled(env.DB, id, clientConfigSchema) }, settings, clientConfigSchema);
       const clientConfigMd5 = (request.headers.get(AGENT_CONFIG_MD5_HEADER) || '').trim().toLowerCase();
       const hasCorrection = descriptor.correction !== null;
       const md5Changed = clientConfigMd5 !== descriptor.md5;

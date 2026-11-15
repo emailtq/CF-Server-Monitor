@@ -5,7 +5,7 @@ import { isWssReportConfigured, sanitizeUserAgent } from './settings.js';
 import { validateExtraPingNodes } from '../shared/extraPing.js';
 import { latencyTaskAssigned } from '../shared/latencyTasks.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 9;
+export const AGENT_CONFIG_SCHEMA_VERSION = 10;
 export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
 export const AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION = 4;
 export const AGENT_CONFIG_WSS_REPORT_INTERVAL_SCHEMA_VERSION = 5;
@@ -275,6 +275,7 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
   }
 
   if (version >= AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION) {
+    if (version >= 10) config.ssh_login_enabled = server?.ssh_login_enabled === true ? 1 : 0;
     const connectionMode = normalizeConnectionMode(server?.connection_mode) || CONNECTION_MODE_AUTO;
     const wssEnabled = isWssReportConfigured(settings);
     config.connection_mode = wssEnabled ? connectionMode : CONNECTION_MODE_HTTP;
@@ -328,6 +329,7 @@ export function serializeAgentConfig(config) {
   if (Object.prototype.hasOwnProperty.call(config, 'latency_tasks')) {
     serialized += `&latency_tasks=${encodeURIComponent(JSON.stringify(config.latency_tasks))}`;
   }
+  if (Object.prototype.hasOwnProperty.call(config, 'ssh_login_enabled')) serialized += `&ssh_login_enabled=${config.ssh_login_enabled}`;
   return serialized;
 }
 

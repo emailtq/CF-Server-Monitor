@@ -1,8 +1,10 @@
 import { TERMINAL_LIMITS, parseTerminalControl, validateTerminalDataFrame, validateTerminalSize } from '../shared/terminalProtocol.js';
 import { generateRandomSecret } from '../utils/settings.js';
 import { writeTerminalAudit, verifyTerminalAuthority, revokeTerminalNode } from '../database/terminal.js';
+import { captureLoginEvent, queueLoginEvent, scheduleLoginDelivery } from '../services/loginEvents.js';
 
 const isId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+const LOGIN_SUCCESS_PREFIX = 'login-success:';
 const denied = (code, status = 409) => Response.json({error:code, code:status}, {status});
 const emptyMetadata = () => ({serverId:null, generation:0, credentialVersion:0, sessions:[], closed:[]});
 const validFlow = a => ['forwarded','acked','progressAt'].every(key => Number.isSafeInteger(a[key]) && a[key] >= 0) &&
@@ -18,6 +20,7 @@ export class TerminalBroker {
     this.state = state;
     this.env = env;
     this.jobs = new Map();
+    this.readyTransitions = new Map();
     this.disables = new Map();
     this.mustClose = new Set();
     this.tail = Promise.resolve();
@@ -26,6 +29,7 @@ export class TerminalBroker {
       this.meta = await state.storage.get('terminal') || emptyMetadata();
       this.alarmAt = await state.storage.getAlarm();
       this.restorePeers('stale_connection');
+      if (this.meta.loginEventsPending) this.state.waitUntil(this.flushLoginSuccesses());
       // A reservation has no surviving create operation after a cold construction.
       for (const s of this.meta.sessions) if (s.status === 'reserved') this.mustClose.add(s.id);
       if (this.meta.sessions.some(s => this.needsClosure(s))) await this.recover();
@@ -45,8 +49,11 @@ export class TerminalBroker {
       const effects = [];
       try {
         const result = await operation(effects, draft);
+        const loginEvent = draft.loginEventToQueue;
+        delete draft.loginEventToQueue;
         const changed = JSON.stringify(draft) !== JSON.stringify(this.meta);
-        if (changed) await this.state.storage.put('terminal', draft);
+        if (loginEvent) await this.state.storage.put({ terminal: draft, [LOGIN_SUCCESS_PREFIX + loginEvent.id]: loginEvent });
+        else if (changed) await this.state.storage.put('terminal', draft);
         this.meta = draft;
         if (changed) await this.scheduleAlarm();
         // No socket acceptance, notification or close precedes its durable transition.
@@ -109,6 +116,7 @@ export class TerminalBroker {
 
   async scheduleAlarm() {
     const deadlines = this.meta.sessions.map(s => this.sessionDeadline(s));
+    if (this.meta.loginEventsPending) deadlines.push(Date.now() + 60000);
     const nearest = deadlines.length ? Math.min(...deadlines) : null;
     // Keep an earlier safe wakeup rather than rewriting the alarm on every ACK/renewal.
     if (nearest === this.alarmAt || (nearest !== null && this.alarmAt !== null && this.alarmAt <= nearest)) return;
@@ -472,7 +480,7 @@ export class TerminalBroker {
   async webSocketMessage(ws, message) {
     await this.ready;
     if (this.blocked) { try { ws.close(1000, 'storage_error'); } catch (_) {} return; }
-    const a = ws.deserializeAttachment();
+    let a = ws.deserializeAttachment();
     const disable = this.disables.get(a?.connectionId);
     if (disable?.ws === ws) {
       try {
@@ -519,6 +527,20 @@ export class TerminalBroker {
       }
       return;
     }
+    const pendingReady = this.readyTransitions.get(a.sessionId);
+    if (pendingReady) {
+      let bytes;
+      try {
+        if (typeof message === 'string') { parseTerminalControl(message, a.role); bytes = new TextEncoder().encode(message).byteLength; }
+        else { if (!validateTerminalDataFrame(message)) throw new Error('invalid_data'); bytes = Math.max(1, message.byteLength); }
+        if (pendingReady.bytes + bytes > TERMINAL_LIMITS.creditBytes) throw new Error('credit_exceeded');
+      } catch (_) { await this.closeSession(a.sessionId, 'protocol_error'); return; }
+      pendingReady.bytes += bytes;
+      try { await pendingReady.done; } catch (_) { await this.closeSession(a.sessionId, 'protocol_error'); return; }
+      finally { pendingReady.bytes -= bytes; }
+      // Concurrent frames must consume the latest persisted credit, not their pre-ready attachment copy.
+      a = ws.deserializeAttachment();
+    }
     const s = this.meta.sessions.find(s => s.id === a.sessionId);
     if (!this.live(s) || s[a.role] !== a.connectionId || s.owner !== a.owner || !validFlow(a)) { await this.closeSession(a.sessionId, s ? this.expirationReason(s) || 'session_expired' : 'session_expired'); return; }
     try {
@@ -546,14 +568,23 @@ export class TerminalBroker {
       if (frame.type === 'pong') return;
       if (frame.type === 'ready') {
         if (s.status !== 'starting') throw new Error('invalid_ready');
-        await this.mutate((effects, meta) => {
-          const current = meta.sessions.find(s => s.id === a.sessionId);
-          if (!this.live(current) || current.status !== 'starting' || current.agent !== a.connectionId) throw new Error('invalid_ready');
-          const browser = this.peer(current, 'browser');
-          if (!browser) throw new Error('peer_lost');
-          current.status = 'running';
-          effects.push(() => browser.send('{"type":"ready"}'));
-        });
+        const transition = (async () => {
+          const success = await captureLoginEvent(this.env, { id: `terminal:${s.id}`, type: 'terminalConnected', serverId: this.meta.serverId,
+            credentialVersion: s.credentialVersion, occurredAt: Date.now() });
+          await this.mutate((effects, meta) => {
+            const current = meta.sessions.find(s => s.id === a.sessionId);
+            if (!this.live(current) || current.status !== 'starting' || current.agent !== a.connectionId) throw new Error('invalid_ready');
+            const browser = this.peer(current, 'browser');
+            if (!browser) throw new Error('peer_lost');
+            current.status = 'running';
+            meta.loginEventsPending = true;
+            meta.loginEventToQueue = success;
+            effects.push(() => browser.send('{"type":"ready"}'));
+            effects.push(() => this.state.waitUntil(this.flushLoginSuccesses()));
+          });
+        })();
+        this.readyTransitions.set(s.id, { done: transition, bytes: 0 });
+        try { await transition; } finally { this.readyTransitions.delete(s.id); }
         return;
       }
       if (frame.type === 'exit' || frame.type === 'error') {
@@ -599,6 +630,24 @@ export class TerminalBroker {
     this.alarmAt = null;
     const expired = this.meta.sessions.map(s => ({id:s.id, reason:this.expirationReason(s)})).filter(s => s.reason);
     await Promise.all(expired.map(s => this.closeSession(s.id, s.reason)));
+    await this.flushLoginSuccesses();
     await this.scheduleAlarm();
+  }
+
+  async flushLoginSuccesses() {
+    if (this.flushingLogins || !this.meta.loginEventsPending) return;
+    this.flushingLogins = true;
+    try {
+      const pending = await this.state.storage.list({ prefix: LOGIN_SUCCESS_PREFIX, limit: 32 });
+      for (const [key, event] of pending) {
+        const node = await this.env.DB.prepare(`SELECT n.token_version FROM terminal_nodes n JOIN servers s ON s.id=n.server_id
+          WHERE n.server_id=? AND n.credential_version=?`).bind(event.serverId, event.credentialVersion).first();
+        if (node) await queueLoginEvent(this.env, { ...event, tokenVersion: node.token_version });
+        await this.state.storage.delete(key);
+      }
+      await this.mutate(async (effects, meta) => { meta.loginEventsPending = (await this.state.storage.list({ prefix: LOGIN_SUCCESS_PREFIX, limit: 1 })).size > 0; });
+      scheduleLoginDelivery(this.env, this.state);
+    } catch (_) { console.error('[Login events] terminal enqueue pending'); }
+    finally { this.flushingLogins = false; }
   }
 }

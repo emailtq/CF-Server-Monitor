@@ -1,3 +1,4 @@
+import { ensureLoginEventSchema } from './loginEvents.js';
 import { debug } from '../utils/settings.js';
 import {
   detectBillingCycle,
@@ -40,6 +41,7 @@ export async function updateDatabase(db) {
     await ensureNodeCredentialSchema(db);
     await ensureAgentRegistrationSchema(db);
     await ensureTerminalSchema(db);
+    await ensureLoginEventSchema(db);
     
     debug('✅ 数据库更新完成');
     

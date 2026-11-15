@@ -49,39 +49,82 @@ export async function actualThumbChecks({ page, context, report, check, state, o
   });
 }
 
-export async function connectionChecks({ page, check, releaseCreating, releaseStarting, out, report }) {
-  await check('actual creating transcript occupies the terminal content, not an overlay card', async () => {
-    await page.waitForTimeout(80);
-    const transcript = page.locator('.terminal-screen .terminal-connection');
-    assert.equal(await transcript.count(), 1);
-    const css = await transcript.evaluate(el => { const s = getComputedStyle(el); return { position: s.position, align: s.textAlign, font: s.fontFamily, border: s.borderTopWidth }; });
-    assert.equal(css.position, 'static'); assert.equal(css.align, 'left'); assert.match(css.font, /mono/i); assert.equal(css.border, '0px');
-    assert.match(await transcript.innerText(), /Checking access/);
-    await page.screenshot({ path: path.join(out, 'creating.png') });
-  });
+async function coreTranscriptShots(page,out,report,prefix){
+  for(const width of [360,390,1440,1920]) for(const theme of ['light','dark']){
+    await page.setViewportSize({width,height:width<400?844:1000});
+    await page.evaluate(theme=>document.body.classList.toggle('light',theme==='light'),theme);
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await page.screenshot({path:path.join(out,`${prefix}-${width}-${theme}.png`)});
+    report.transcriptViewports ||= [];report.transcriptViewports.push({prefix,width,theme});
+  }
+  await page.setViewportSize({width:390,height:844});await page.evaluate(()=>document.body.classList.add('light'));
+}
+export async function connectionChecks({ page, check, releaseCreating, releaseStarting, out, report, socket, output, menu, firstRemote }) {
   releaseCreating();
   await page.waitForFunction(() => !!window.fixtureScreen);
-  await check('actual starting transcript is removed before FIRST remote bytes are written', async () => {
-    await page.waitForTimeout(80);
-    assert.match(await page.locator('.terminal-screen').innerText(), /Waiting for PTY/);
-  });
-  await page.evaluate(() => {
-    window.firstWrite = [];
-    const screen = window.fixtureScreen, original = screen.write;
-    screen.write = function (...args) { window.firstWrite.push({ local: document.querySelector('.terminal-connection')?.textContent || '', data: new TextDecoder().decode(args[0]) }); return original.apply(this, args); };
+  await check('waiting is an actual xterm line before remote ready and never remote input or ACK', async () => {
+    await page.waitForFunction(() => window.fixtureScreen.buffer.active.getLine(0)?.translateToString().includes('waiting for agent...'));
+    assert.equal(await page.locator('.terminal-connection').count(), 0);
+    assert.equal(report.ack, 0); assert.deepEqual(report.inputs, []);
+    await page.screenshot({ path: path.join(out, 'starting.png') });
+    await coreTranscriptShots(page,out,report,'waiting');
   });
   releaseStarting();
   await page.waitForFunction(() => !window.fixtureScreen.options.disableStdin);
-  await page.waitForFunction(() => window.firstWrite.length > 0);
-  await check('first welcome retained, no permanent shell-ready label or remote ACK pollution', async () => {
-    report.firstWrite = await page.evaluate(() => window.firstWrite);
-    assert.equal(report.firstWrite[0].local, '');
-    assert.equal(report.firstWrite[0].data, 'FIRST REMOTE LINE\r\n');
-    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('FIRST REMOTE LINE'));
-    assert.equal(await page.locator('.terminal-connection,.terminal-status').count(), 0);
+  await check('real remote welcome follows waiting and both remain in scrollback with exact remote ACK', async () => {
+    const marker = firstRemote.toString().includes('Welcome to Alpine!') ? '/opt/komari # ' : 'FIRST REMOTE LINE';
+    await page.waitForFunction(marker => Array.from({length:window.fixtureScreen.buffer.active.length},(_,n)=>window.fixtureScreen.buffer.active.getLine(n)?.translateToString()).join('\n').includes(marker),marker);
+    const lines = await page.evaluate(() => Array.from({length:window.fixtureScreen.buffer.active.length},(_,n)=>window.fixtureScreen.buffer.active.getLine(n)?.translateToString(true)));
+    assert.match(lines[0], /等待被控端连接 waiting for agent\.\.\./);
+    if(marker!=='FIRST REMOTE LINE') assert.ok(lines.join('\n').includes('Welcome to Alpine!'));
+    await page.waitForFunction(bytes => window.fixtureAck === bytes, firstRemote.length);
+    assert.equal(report.ack, report.outputBytes); assert.deepEqual(report.inputs, []);
+    await page.screenshot({ path: path.join(out, 'first-remote.png') });
+    await coreTranscriptShots(page,out,report,'remote');
+  });
+  await check('reopen retains actual old text but a delayed old render callback cannot ACK the new session', async () => {
+    await page.evaluate(() => {
+      window.oldRenderer = window.fixtureScreen;
+      const screen = window.fixtureScreen, original = screen.write;
+      let hold = true;
+      screen.write = function(data, callback) {
+        if (hold && callback && data instanceof Uint8Array) { hold = false; window.oldRenderCallback = callback; return original.call(this, data); }
+        return original.call(this, data, callback);
+      };
+    });
+    const old = Buffer.from('\x1b[?2004h\x1b[?1h\r\nOLD SESSION RETAINED\r\n'); report.outputBytes += old.length; socket().send(old);
+    await page.waitForFunction(() => !!window.oldRenderCallback);
+    await menu(); await page.locator('[data-terminal-disconnect]').click();
+    await page.waitForFunction(() => window.fixtureScreen.options.disableStdin);
+    await menu(); await page.getByRole('button', { name: en.terminalReopen, exact: true }).click();
+    await page.waitForFunction(() => !window.fixtureScreen.options.disableStdin);
+    assert.equal(report.preOpenModes.at(-1).bracketedPasteMode, false);
+    assert.equal(report.preOpenModes.at(-1).applicationCursorKeysMode, false);
+    await page.evaluate(() => { window.oldRenderCallback(); window.fixtureScreen.scrollToBottom(); });
+    await output('\r\nNEW SESSION OUTPUT\r\n');
+    assert.equal(report.ack, report.outputBytes);
+    const text = await page.evaluate(() => Array.from({length:window.fixtureScreen.buffer.active.length},(_,n) => window.fixtureScreen.buffer.active.getLine(n)?.translateToString(true)).join('\n'));
+    assert.match(text, /OLD SESSION RETAINED/); assert.match(text, /NEW SESSION OUTPUT/);
+    assert.equal((text.match(/waiting for agent/g) || []).length, 2);
+    assert.equal(await page.evaluate(() => window.oldRenderer === window.fixtureScreen), true);
+    await page.screenshot({ path: path.join(out, 'reopened.png') });
+  });
+  await check('reopen exits the old alternate application without clearing normal history or inheriting mouse modes', async () => {
+    await output('\x1b[?1049hALT APPLICATION\r\n\x1b[?1000h');
+    assert.equal(await page.evaluate(() => window.fixtureScreen.buffer.active.type), 'alternate');
+    await menu(); await page.locator('[data-terminal-disconnect]').click();
+    await page.waitForFunction(() => window.fixtureScreen.options.disableStdin);
+    await menu(); await page.getByRole('button', { name: en.terminalReopen, exact: true }).click();
+    await page.waitForFunction(() => !window.fixtureScreen.options.disableStdin);
+    await output('\r\nNORMAL SESSION RESTORED\r\n');
+    assert.equal(await page.evaluate(() => window.fixtureScreen.buffer.active.type), 'normal');
+    assert.equal(await page.evaluate(() => window.fixtureScreen.modes.mouseTrackingMode), 'none');
+    const text = await page.evaluate(() => Array.from({length:window.fixtureScreen.buffer.active.length},(_,n) => window.fixtureScreen.buffer.active.getLine(n)?.translateToString(true)).join('\n'));
+    assert.match(text, /OLD SESSION RETAINED/); assert.match(text, /NORMAL SESSION RESTORED/);
+    assert.equal(report.ack, report.outputBytes);
   });
 }
-
 export async function refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, socket, PNG }) {
   await check('leaving and reversed real menu reclaim outside focus and block remote keyboard input', async () => {
     const inputs = report.inputs.length;
@@ -411,7 +454,8 @@ export async function refinementChecks({ page, context, report, check, state, ou
       await page.evaluate(dark => { document.body.classList.toggle('light', !dark); window.fixtureScreen.scrollToLine(400); }, dark);
       await page.locator('.xterm').hover(); await page.waitForTimeout(120);
       const slider = page.locator('.scrollbar.vertical .slider'), b = await slider.boundingBox();
-      const png = PNG.sync.read(await page.screenshot({ path: path.join(out, `custom-paint-${dark}-${dpr}.png`), clip: { x: b.x, y: b.y + b.height / 2, width: b.width, height: 1 } }));
+      // The native track edge can have a shadow; measure thumb paint inside the independently checked hit box.
+      const png = PNG.sync.read(await page.screenshot({ path: path.join(out, `custom-paint-${dark}-${dpr}.png`), clip: { x: b.x + 2, y: b.y + b.height / 2, width: b.width - 4, height: 1 } }));
       const background = [...png.data.subarray(0, 3)];
       const contrast = Array.from({ length: png.width }, (_, i) => Math.max(...background.map((value, c) => Math.abs(value - png.data[i * 4 + c]))));
       const painted = Array.from({ length: png.width }, (_, i) => i).filter(i => background.some((value, c) => Math.abs(value - png.data[i * 4 + c]) > 3));

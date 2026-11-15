@@ -3,6 +3,7 @@ import { normalizeNotificationLanguage } from '../utils/settings.js';
 const NOTIFICATION_MESSAGES = {
   zh: {
     events: {
+      sshLogin: 'SSH 成功登录', panelLogin: '面板成功登录', terminalConnected: '终端成功连接',
       notification: '通知',
       offline: '节点离线告警',
       recovered: '节点恢复通知',
@@ -25,6 +26,7 @@ const NOTIFICATION_MESSAGES = {
   },
   'zh-TW': {
     events: {
+      sshLogin: 'SSH 成功登入', panelLogin: '面板成功登入', terminalConnected: '終端成功連線',
       notification: '通知',
       offline: '節點離線告警',
       recovered: '節點恢復通知',
@@ -47,6 +49,7 @@ const NOTIFICATION_MESSAGES = {
   },
   en: {
     events: {
+      sshLogin: 'SSH login succeeded', panelLogin: 'Panel login succeeded', terminalConnected: 'Terminal connected',
       notification: 'Notification',
       offline: 'Node Offline Alert',
       recovered: 'Node Recovered',
@@ -69,6 +72,7 @@ const NOTIFICATION_MESSAGES = {
   },
   ja: {
     events: {
+      sshLogin: 'SSH ログイン成功', panelLogin: '管理画面ログイン成功', terminalConnected: 'ターミナル接続成功',
       notification: '通知',
       offline: 'ノードオフラインアラート',
       recovered: 'ノード復旧通知',
@@ -91,6 +95,7 @@ const NOTIFICATION_MESSAGES = {
   },
   id: {
     events: {
+      sshLogin: 'Login SSH berhasil', panelLogin: 'Login panel berhasil', terminalConnected: 'Terminal terhubung',
       notification: 'Notifikasi',
       offline: 'Peringatan Node Offline',
       recovered: 'Node Pulih',
@@ -113,6 +118,7 @@ const NOTIFICATION_MESSAGES = {
   },
   fr: {
     events: {
+      sshLogin: 'Connexion SSH réussie', panelLogin: 'Connexion au panneau réussie', terminalConnected: 'Terminal connecté',
       notification: 'Notification',
       offline: 'Alerte hors ligne',
       recovered: 'Nœud rétabli',
@@ -135,6 +141,7 @@ const NOTIFICATION_MESSAGES = {
   },
   es: {
     events: {
+      sshLogin: 'Inicio SSH correcto', panelLogin: 'Inicio de panel correcto', terminalConnected: 'Terminal conectado',
       notification: 'Notificación',
       offline: 'Alerta de nodo fuera de línea',
       recovered: 'Nodo recuperado',

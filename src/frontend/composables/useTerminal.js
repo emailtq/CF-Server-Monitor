@@ -8,6 +8,7 @@ const TRANSPORT_BYTES = 65536
 const RENDER_DRAIN_MS = 5000
 const FINAL_SNAPSHOT_BYTES = 16384
 const encoder = new TextEncoder()
+const WAITING_LINE = '等待被控端连接 waiting for agent...\r\n'
 
 // Count before encoding: a paste must not allocate a second, unbounded UTF-8 copy.
 function inputBytes(text, limit) {
@@ -47,6 +48,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
   let lastMessage = 0
   let channel = null
   let historyDispose = null
+  let rendererDrain = null
   const timers = new Map()
   const subscriptions = []
 
@@ -109,6 +111,8 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     return new TextDecoder().decode(bytes.subarray(0, written))
   }
   const stop = (nextStatus = 'disconnected', reason = '', notify = true, keepScreen = false) => {
+    rendererDrain?.(false)
+    rendererDrain = null
     epoch++
     for (const name of [...timers.keys()]) cancelTimer(name)
     host?.removeEventListener('paste', onPaste, true)
@@ -371,7 +375,9 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
 
   const open = async container => {
     if (disposed || ['creating', 'starting', 'running'].includes(status.value)) return false
-    stop('creating')
+    stop('creating', '', true, true)
+    cancelTimer('drain')
+    drainUntil = 0
     const current = epoch
     try {
       getTerminalBase(apiIndex)
@@ -386,19 +392,41 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       if (current !== epoch) return false
       host = container
       const style = getComputedStyle(container)
-      screen = new Terminal({
-        cursorBlink: true, disableStdin: true, scrollback: 1000, screenReaderMode: true,
-        overviewRuler: { width: parseFloat(style.getPropertyValue('--terminal-scrollbar-hit')) || 14 },
-        fontFamily: style.getPropertyValue('--terminal-font').trim() || 'Consolas, "Liberation Mono", monospace', fontSize: 14,
-        theme: { background: style.getPropertyValue('--bg-primary').trim() || '#0d1117', foreground: style.getPropertyValue('--text-primary').trim() || '#c9d1d9' }
-      })
-      fit = new FitAddon()
-      screen.loadAddon(fit)
-      screen.open(container)
-      historyDispose = attachHistory()
+      const retained = !!screen
+      if (retained) {
+        const drained = await new Promise(resolve => {
+          rendererDrain = resolve
+          later('reopenDrain', () => { rendererDrain = null; resolve(false) }, RENDER_DRAIN_MS)
+          // A local parser fence follows all old bytes, independent of their consumption callbacks.
+          screen.write('\x1b[0m', () => {
+            if (rendererDrain !== resolve) return
+            const reset = (screen.buffer.active.type === 'alternate' ? '\x1b[?1049l' : '') + '\x1b[!p\x1b[?1;1000;1002;1003;1006;2004l\r\n'
+            screen.write(reset + WAITING_LINE, () => {
+              if (rendererDrain === resolve) { rendererDrain = null; cancelTimer('reopenDrain'); screen.scrollToBottom(); resolve(true) }
+            })
+          })
+        })
+        if (current !== epoch) return false
+        if (!drained) throw new Error('terminal_ack_timeout')
+      }
+      if (!screen) {
+        screen = new Terminal({
+          cursorBlink: true, disableStdin: true, scrollback: 1000, screenReaderMode: true,
+          overviewRuler: { width: parseFloat(style.getPropertyValue('--terminal-scrollbar-hit')) || 14 },
+          fontFamily: style.getPropertyValue('--terminal-font').trim() || 'Consolas, "Liberation Mono", monospace', fontSize: 14,
+          theme: { background: style.getPropertyValue('--bg-primary').trim() || '#0d1117', foreground: style.getPropertyValue('--text-primary').trim() || '#c9d1d9' }
+        })
+        fit = new FitAddon()
+        screen.loadAddon(fit)
+        screen.open(container)
+        historyDispose = attachHistory()
+      }
+      if (retained) { renderEpoch++; cancelTimer('drain'); drainUntil = 0 }
       refreshTheme()
       const rendering = renderEpoch
       fitScreen()
+      // Local transcript is ordinary xterm output, never binary output credit or remote input.
+      if (!retained) screen.write(WAITING_LINE)
       input = new Uint8Array(TERMINAL_LIMITS.dataFrameBytes)
       sentInput = ackedInput = receivedOutput = consumedOutput = ackedOutput = pendingInput = 0
       bufferSince = 0
@@ -415,6 +443,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
         }
         return true
       })
+      observer?.disconnect()
       observer = new ResizeObserver(() => {
         if (rendering !== renderEpoch) return
         if (!timers.has('resize')) later('resize', fitScreen, BATCH_MS)
@@ -450,6 +479,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
               cancelTimer('start')
               status.value = 'running'
               screen.options.disableStdin = false
+              screen.options.cursorBlink = true
               fitScreen()
               screen.focus()
             } else if (frame.type === 'ack') {

@@ -8,6 +8,7 @@ import {
 export const NOTIFICATION_TYPES = Object.freeze(['telegram', 'smtp', 'webhook', 'onebot', 'feishu', 'dingtalk', 'bark', 'wecom', 'serverchan', 'wxpusher', 'gotify', 'legacy']);
 export const NOTIFICATION_TEMPLATE_FIELDS = Object.freeze(['event', 'message', 'time', 'emoji', 'client', 'clients', 'count', 'notification', 'title']);
 export const NOTIFICATION_CONFIG_MAX_BYTES = 256 * 1024;
+export const LOGIN_NOTIFICATION_EVENTS = Object.freeze(['sshLogin', 'panelLogin', 'terminalConnected']);
 const ID = /^[A-Za-z0-9._:-]{1,64}$/;
 const CONFIG_FIELDS = {
   telegram: ['chatId'], smtp: ['host', 'port', 'username', 'from', 'to', 'secure'],
@@ -141,6 +142,7 @@ function channel(raw) {
 }
 
 function options(type, raw) {
+  if (LOGIN_NOTIFICATION_EVENTS.includes(type)) { assertNotificationObject(raw, []); return {}; }
   if (!['offline', 'traffic', 'expiry', 'resource'].includes(type)) throw notificationConfigError();
   const fields = { offline: ['minutes'], traffic: ['threshold'], expiry: ['days', 'hour'], resource: ['metric', 'threshold', 'intervalMinutes', 'mode'] }[type];
   if (!fields) throw notificationConfigError();
@@ -168,7 +170,7 @@ export function validateNotificationConfig(raw, { serverIds = new Set(), previou
     assertNotificationObject(r.scope, ['mode', 'serverIds']);
     const scopeIds = ids(r.scope.serverIds, 1000);
     const previous = previousConfig?.rules?.find(old => old.id === r.id && old.type === r.type);
-    if (!['all', 'selected'].includes(r.scope.mode) || (r.scope.mode === 'all' && scopeIds.length) || (r.scope.mode === 'selected' && !scopeIds.length)) throw notificationConfigError();
+    if (r.type === 'panelLogin' ? r.scope.mode !== 'site' || scopeIds.length : !['all', 'selected'].includes(r.scope.mode) || (r.scope.mode === 'all' && scopeIds.length) || (r.scope.mode === 'selected' && !scopeIds.length)) throw notificationConfigError();
     if (validateServerReferences) {
       const historicalIds = previous?.scope?.mode === 'selected' ? previous.scope.serverIds : [];
       const retainedMissing = scopeIds.some(s => !serverIds.has(s));

@@ -13,7 +13,7 @@ export async function issueTestTerminalToken(db, serverId, now = Date.now()) {
   return {...issued, enabled:true};
 }
 
-export async function harness({apiSecret = 'test-report-secret', traceD1 = false} = {}) {
+export async function harness({apiSecret = 'test-report-secret', traceD1 = false, outboundService} = {}) {
   const source = `
     import worker from './src/index.js';
     import { TerminalBroker } from './src/durable/TerminalBroker.js';
@@ -23,7 +23,7 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
     const nativeError = console.error;
     console.error = (...args) => {counts.errors.push(args.map(value=>value instanceof Error ? value.message : String(value))); nativeError(...args);};
     const nativeTimeout = globalThis.setTimeout, nativeInterval = globalThis.setInterval;
-    const nativeNow = Date.now; let clockOffset = 0;
+    const nativeNow = Date.now; let clockOffset = 0; let failSshPersistence = false;
     Date.now = () => nativeNow() + clockOffset;
     globalThis.setTimeout = (...args) => {counts.timeouts++; return nativeTimeout(...args);};
     globalThis.setInterval = (...args) => {counts.intervals++; return nativeInterval(...args);};
@@ -48,7 +48,7 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
         return typeof target[key] === 'function' ? target[key].bind(target) : target[key];
       }});}
       const counted = new Proxy(db, {get(target,key) {
-        if (key === 'prepare') return sql => statement(target.prepare(sql), sql);
+        if (key === 'prepare') return sql => {if(failSshPersistence && /INSERT.*(ssh_event|login_events)/s.test(sql)) throw new Error('test SSH persistence unavailable');return statement(target.prepare(sql), sql);};
         if (key === 'batch' && ${JSON.stringify(traceD1)}) return async (...args) => {
           const started = performance.now(); const result = await target.batch(...args);
           counts.queryTrace.push({sql:'<atomic batch>', operation:'batch', statements:result.length, startedMs:started, elapsedMs:performance.now()-started, sqlMs:result.reduce((sum,value)=>sum+(value.meta?.duration || 0),0)});
@@ -76,6 +76,7 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
         const db=this.env.DB,self=this;
         this.env.DB=new Proxy(db,{get(target,key) {
           if(key==='prepare') return sql=> {
+            if(self.failPanelEvents && sql.includes('INSERT OR IGNORE INTO login_events')) throw new Error('test panel-event D1 outage');
             if(sql.includes('n.token_version') && self.failNodeAuth) throw new Error('test node authority outage');
             const statement=target.prepare(sql);
             if(sql.includes('n.token_version') && self.delayAuthMs) return {bind(...args) {
@@ -96,6 +97,8 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
         }})};
       }
       async fetch(request) {
+        if (new URL(request.url).pathname === '/test/report-panel-db-fail') {this.failPanelEvents=new URL(request.url).searchParams.get('enabled')!=='0';return new Response('OK');}
+        if (new URL(request.url).pathname === '/test/report-panel-spool') return Response.json({count:(await this.state.storage.list({prefix:'panel-login:'})).size,flushing:this.flushingPanelLogins===true});
         if (new URL(request.url).pathname === '/test/report-alarm-missing') {this.missingReportStorage=new URL(request.url).searchParams.get('storage')==='1';this.missingReportSetAlarm=!this.missingReportStorage;return new Response('OK');}
         if (new URL(request.url).pathname === '/test/report-alarm-fail') {this.failReportAlarm=true;return new Response('OK');}
         if (new URL(request.url).pathname === '/test/report-auth-delay') {this.delayAuthMs=Number(new URL(request.url).searchParams.get('advance'));return new Response('OK');}
@@ -156,8 +159,15 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
         this.env = {...env, DB: new Proxy(env.DB, {get(target, key) {
           if (key === 'prepare') return sql => {
             stats.d1++;
+            if (self.failLoginEvents && sql.includes('INSERT OR IGNORE INTO login_events')) throw new Error('test login-event D1 outage');
             if (self.failAudit && sql.includes('INSERT INTO terminal_audit')) throw new Error('test audit outage');
             const statement = target.prepare(sql);
+            if (sql === 'SELECT value FROM settings WHERE key = ?' && self.loginPolicyDelay) return { bind(...values) {
+              const bound = statement.bind(...values);
+              if (values[0] !== 'notification_config') return bound;
+              const delay = self.loginPolicyDelay; self.loginPolicyDelay = 0;
+              return { first: async () => { await new Promise(resolve => setTimeout(resolve, delay)); return bound.first(); } };
+            } };
             if (sql.includes('SELECT terminal_local_enabled') && self.pauseLocalObservation) return {bind(...values) {
               const bound=statement.bind(...values);return {async first() {
                 const result=await bound.first();self.localObservationPending=true;
@@ -191,6 +201,9 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
       }
       async fetch(request) {
         const path = new URL(request.url).pathname;
+        if (path === '/test/fail-login-events') {this.failLoginEvents=new URL(request.url).searchParams.get('enabled')!=='0';return new Response('OK');}
+        if (path === '/test/delay-login-policy') {this.loginPolicyDelay=200;return new Response('OK');}
+        if (path === '/test/login-spool') return Response.json({count:(await this.state.storage.list({prefix:'login-success:'})).size,pending:this.broker.meta.loginEventsPending===true,flushing:this.broker.flushingLogins===true});
         if (path === '/test/stats') return Response.json(this.stats);
         if (path === '/test/pause-local-observation') {this.pauseLocalObservation=true;return new Response('OK');}
         if (path === '/test/local-observation-pending') return Response.json({pending:!!this.localObservationPending});
@@ -226,6 +239,7 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
     }
     export default {async fetch(request, env, ctx) {
       const url = new URL(request.url);
+      if (url.pathname === '/test/ssh-db-fail') {failSshPersistence=url.searchParams.get('enabled')!=='0';return new Response('OK');}
       if (url.pathname === '/test/worker-stats') return Response.json(counts);
       if (url.pathname === '/test/report-stats') return env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global')).fetch(request);
       if (url.pathname.startsWith('/test/report-')) return env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global')).fetch(request);
@@ -238,7 +252,7 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
     }};
   `;
   const output = await build({ stdin: { contents: source, resolveDir: process.cwd(), sourcefile: 'terminal-test.js' }, bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*'] });
-  const mf = new Miniflare({ modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: apiSecret ? {API_SECRET:apiSecret} : {} });
+  const mf = new Miniflare({ ...(outboundService ? {outboundService} : {}), modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: apiSecret ? {API_SECRET:apiSecret} : {} });
   const db = await mf.getD1Database('DB');
   const { initDatabase } = await import('../src/database/schema.js?fixture=' + crypto.randomUUID());
   await initDatabase(db);

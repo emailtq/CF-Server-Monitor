@@ -18,6 +18,8 @@ const report = { checks: [], errors: [], actions: [], inputs: [], resizes: [], s
 let server, browser, page, context, socket, session = 0;
 const refinement = process.env.TERMINAL_REFINEMENT === '1';
 const thumbOnly = process.env.TERMINAL_THUMB_ONLY === '1';
+const firstRemote = process.env.TERMINAL_REMOTE_OUTPUT_FILE ? fs.readFileSync(process.env.TERMINAL_REMOTE_OUTPUT_FILE) : Buffer.from('FIRST REMOTE LINE\r\n');
+report.remoteSource = process.env.TERMINAL_REMOTE_OUTPUT_FILE ? 'actual Go Linux PTY stdout probe; not an Alpine SSH login' : 'synthetic peer transcript';
 let releaseCreating, releaseStarting;
 const creatingGate = refinement ? new Promise(resolve => { releaseCreating = resolve; }) : Promise.resolve();
 const startingGate = refinement ? new Promise(resolve => { releaseStarting = resolve; }) : Promise.resolve();
@@ -59,7 +61,11 @@ try {
     if (url.pathname === '/admin/api') {
       const data = req.postDataJSON(); report.actions.push(data.action);
       if (data.action === 'terminal_status') { await creatingGate; return route.fulfill({ json: { enabled: true, connected: true, supported: true, protocol: 1, platform: 'linux' } }); }
-      if (data.action === 'terminal_open') { session++; report.outputBytes = report.ack = 0; return route.fulfill({ json: { sessionId: `session-${session}`, browserPath: `/admin/api/terminal/node-a/session-${session}/ws` } }); }
+      if (data.action === 'terminal_open') {
+        (report.preOpenModes ||= []).push(await page.evaluate(() => ({ ...window.fixtureScreen.modes })));
+        session++; report.outputBytes = report.ack = 0;
+        return route.fulfill({ json: { sessionId: `session-${session}`, browserPath: `/admin/api/terminal/node-a/session-${session}/ws` } });
+      }
       return route.fulfill({ json: { servers: [{ id: 'node-a', name: 'Hong Kong production node with a long name', region: 'HK', os: 'Debian 12' }], success: true } });
     }
     if (url.pathname === '/api/config' || url.pathname === '/theme') return route.fulfill({ json: {} });
@@ -69,6 +75,7 @@ try {
   await context.routeWebSocket('**/admin/api/terminal/**', async ws => {
     report.sockets++;
     socket = ws;
+    await page.evaluate(() => { window.fixtureAck = 0; });
     let consumed = 0;
     ws.onMessage(async data => {
       if (typeof data !== 'string') { consumed += data.length; report.inputs.push(Buffer.from(data).toString()); ws.send(JSON.stringify({ type: 'ack', bytes: consumed })); return; }
@@ -80,13 +87,13 @@ try {
     ws.send('{"type":"start","cols":80,"rows":24}');
     await startingGate;
     ws.send('{"type":"ready"}');
-    if (refinement) { const first = Buffer.from('FIRST REMOTE LINE\r\n'); report.outputBytes += first.length; ws.send(first); }
+    if (refinement) { report.outputBytes += firstRemote.length; ws.send(firstRemote); }
   });
   page = await context.newPage();
   page.on('console', message => { if (message.type() === 'error' || message.type() === 'warning') (report.console || (report.console = [])).push({ type: message.type(), text: message.text() }); });
   page.on('pageerror', error => report.errors.push({ name: 'pageerror', error: error.stack }));
   await page.goto(`${origin}/admin#/admin/terminal/node-a?apiIndex=0`);
-  if (refinement) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report });
+  if (refinement) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report, socket: () => socket, output, menu, firstRemote });
   await page.waitForFunction(() => window.fixtureScreen && !window.fixtureScreen.options.disableStdin);
   if (thumbOnly) {
     await actualThumbChecks({ page, context, report, check, state, output, out, PNG });
