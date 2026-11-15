@@ -1,5 +1,13 @@
 import { findOSConfig, getOSName } from '../../../utils/osIcon.js'
 
+export const formatAdminAddress = address => {
+  const groups = [...address.matchAll(/[^:]+/g)]
+  if (address.length <= 22 || groups.length < 5) return address
+  // Keep the provider prefix and distinguishing suffix exactly as reported, including ::.
+  const head = groups[1], tail = groups[groups.length - 2]
+  return `${address.slice(0, head.index + head[0].length)}…${address.slice(tail.index)}`
+}
+
 export const formatAdminOS = value => {
   const raw = String(value || '').trim(), name = getOSName(raw)
   if (findOSConfig(raw).name === 'Unknown') return name

@@ -242,7 +242,10 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui .server-secondary { display: block; font-size: 12px; color: var(--cf-muted); font-weight: 400; white-space: normal; }
 .admin-ui .server-name-link { border: 0; background: none; color: var(--cf-text); padding: 0; font-weight: 500; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .admin-ui .admin-copy-value { border: 0; background: none; color: inherit; padding: 0; text-align: left; }
-.admin-ui .server-ip-list { max-width: 200px; display: flex; flex-direction: column; align-items: flex-start; }
+.admin-ui .admin-node-table .server-ip-list { display: grid; width: fit-content; max-width: none; gap: 2px; }
+.admin-ui .admin-node-table .server-ip-list .admin-copy-value { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.admin-ui .admin-node-table .admin-address-copy-icon { flex-shrink: 0; opacity: 0; transition: opacity 150ms; }
+.admin-ui .admin-node-table .admin-copy-value:is(:hover, :focus-visible, .spec-copied) .admin-address-copy-icon { opacity: 1; }
 .admin-ui .admin-check-target { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 28px; min-height: 28px; cursor: pointer; }
 .admin-ui .admin-node-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .admin-ui .admin-node-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--cf-text); }
@@ -293,6 +296,8 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 }
 @media (pointer: coarse) {
   .admin-ui.admin-ui.admin-ui :is(.btn, .form-input, .form-select, .toolbar-input, .toolbar-select, .admin-copy-value, .server-name-link) { min-height: 44px; }
+  /* Inline table text keeps distinct minimum touch targets without inflating each address to a toolbar button. */
+  .admin-ui.admin-ui.admin-ui .admin-node-table :is(.admin-copy-value, .server-name-link) { min-height: 24px; }
   .admin-ui .admin-search { height: 44px; }
   .admin-ui.admin-ui.admin-ui .btn-icon { min-width: 44px; }
   .admin-ui .admin-check-target { min-width: 44px; min-height: 44px; }
