@@ -614,6 +614,7 @@ export default {
   adminGroupDescription: "ノードを選んで同じグループに設定します。名前の変更や解散は、グループを絞り込んで全選択し、新しい名前を入力するか空欄にします。",
   adminGroupName: "グループ名",
   adminGroupNameHint: "公開ページに表示。空欄にするとグループから外します。",
+  invalidGroupName: "グループ名の形式が無効です",
   adminUngrouped: "未分類",
   adminChooseGroup: "グループを選択",
   adminExistingGroups: "既存のグループ",

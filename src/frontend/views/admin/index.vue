@@ -2344,12 +2344,24 @@ const handleSelectAll = (e) => {
 }
 
 const saveGroup = async (group) => {
-  batchEditForm.value = createBatchEditDefaults()
-  batchEditForm.value.server_group = group
-  batchEditEnabled.value = Object.fromEntries(Object.keys(createBatchEditDefaults()).map(field => [field, field === 'server_group']))
-  await saveBatchEdit()
-  if (!saveResult.value?.success) return
-  showGroupModal.value = false
+  if (batchEditing.value) return
+  const ids = getSelectedServerRows().map(server => server.id)
+  if (!ids.length) return
+  const generation = siteGeneration.value
+  batchEditing.value = true
+  try {
+    const result = await adminApiForSite({ action: 'batch_group', ids, server_group: group })
+    if (generation !== siteGeneration.value) return
+    if (result.error) { saveResult.value = { success: false, error: getMessage(result.error) || result.error }; return }
+    saveResult.value = { success: true, message: trans.value.batchEditSuccess.replace('{count}', ids.length) }
+    selectedServers.value = []
+    showGroupModal.value = false
+    await loadServers()
+  } catch (e) {
+    if (generation === siteGeneration.value) saveResult.value = { success: false, error: e.message }
+  } finally {
+    if (generation === siteGeneration.value) batchEditing.value = false
+  }
 }
 
 const toggleSelectAll = () => {

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 
 // Rebuild the audited actual React/Radix fixture after direct source comparison.
-async function referenceAssets(out) {
+export async function referenceAssets(out) {
   const source = path.resolve('../monitor/web-admin');
   const audit = path.resolve('.planning/2026-11-13-admin-ui-refinement/round2/reference-audit');
   const fixture = path.join(audit, 'dialogs/reference');
@@ -155,6 +155,7 @@ export async function round3Dialogs({ page, context, open, frames, out, report, 
         const input = page.locator('#group-name'); await input.click(); await input.fill('Keyboard'); await input.evaluate(el => el.setSelectionRange(1, 4));
         await page.locator('.admin-group-options').waitFor();
         await page.locator('.admin-group-options').evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+        const beforePan = await sample(page);
         await page.evaluate(() => {
           window.nativeDialogViewport = visualViewport;
           window.dialogViewportSeam = new EventTarget(); Object.assign(window.dialogViewportSeam, { height: 300, width: 390, offsetTop: 90, offsetLeft: 0 });
@@ -164,7 +165,7 @@ export async function round3Dialogs({ page, context, open, frames, out, report, 
         try {
           await frames(); await frames(); const g = await sample(page), menu = await page.locator('.admin-group-options').boundingBox();
           report.geometry.push({ kind: 'visual-only-API-seam', boundary: 'synthetic height/offset on real mounted components; unchanged 844px layout viewport, not physical IME', g, menu });
-          assert.equal(g.viewport.top, 90); assert.ok(g.section.top >= 90 && g.section.bottom <= 390.5);
+          assert.equal(g.viewport.top, 90); assert.deepEqual(g.section, beforePan.section, 'minimal keeps the CSS layout viewport dialog stable during native visual-only keyboard panning');
           assert.equal(g.active.start, 1); assert.equal(g.active.end, 4);
           assert.ok(menu.y >= 98 && menu.y + menu.height <= 382, 'group popup must follow the usable visual viewport');
           assert.ok(Math.min(Math.abs(menu.y + menu.height + 4 - g.active.rect.top), Math.abs(menu.y - 4 - g.active.rect.bottom)) < 1, 'group menu must stay attached to its input after shell layout changes');
@@ -174,7 +175,7 @@ export async function round3Dialogs({ page, context, open, frames, out, report, 
       if (width === 360 && !dark) await check('provider select survives visual-only viewport pan and remains attached without refocusing input', async () => {
         await metrics(cdp, width, 500); await openKind('notificationCreate');
         const trigger = page.locator('.admin-toolbar-group-trigger'); await trigger.click(); await page.locator('.admin-toolbar-group-menu').waitFor();
-        await page.locator('.admin-toolbar-group-menu').evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+        await page.waitForFunction(() => { const menu = document.querySelector('.admin-toolbar-group-menu'); return menu && menu.getAnimations().every(a => a.playState === 'finished'); });
         await page.evaluate(() => {
           window.nativeDialogViewport = visualViewport;
           window.dialogViewportSeam = new EventTarget(); Object.assign(window.dialogViewportSeam, { height: 500, width: 360, offsetTop: 90, offsetLeft: 0 });
@@ -222,22 +223,36 @@ export async function dialogTrackLayout({ page, context, open, frames, out, repo
           await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: width < 640 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 640 });
           await open(kind); await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
           if (kind === 'edit') await page.evaluate(() => { window.dialogFixture.state.props.currentServerName = 'Long dialog title with natural wrapping / 标题完整保留 '.repeat(3); });
-          await frames(); await page.locator('.admin-dialog').last().evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+          await frames(); await page.waitForFunction(() => { const overlays = [...document.querySelectorAll('.admin-dialog-overlay')]; return overlays.length === 1 && overlays.every(el => el.getAnimations({ subtree: true }).every(a => a.playState === 'finished')); });
           await page.locator('.admin-dialog-scroll').last().evaluate(el => { el.scrollTop = 0; }); await screenshot(`${name}-normal`);
+          const normal = await page.locator('.admin-dialog').last().evaluate(measure);
+          if (normal.scrollHeight <= normal.clientHeight) {
+            const capture = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, clip: { x: Math.round(normal.r.right) - 21, y: Math.ceil(normal.r.y + normal.chromeEnd + 8), width: 6, height: Math.max(1, Math.floor(normal.r.height - normal.chromeEnd - 32)), scale: 1 } });
+            const pixels = PNG.sync.read(Buffer.from(capture.data, 'base64'));
+            const painted = Array.from({ length: pixels.height }, (_, y) => y).filter(y => [2,3,4].some(x => [0,1,2].some(c => Math.abs(pixels.data[(y * pixels.width + x) * 4 + c] - pixels.data[y * pixels.width * 4 + c]) > 3)));
+            report.geometry.push({ kind: 'no-overflow-no-thumb', name, normal, painted });
+            assert.deepEqual(painted, [], 'normal non-overflowing shell must not paint an unnecessary scrollbar');
+          }
           await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: width < 640 ? 300 : 500, deviceScaleFactor: 1, mobile: width < 640 }); await frames();
-          await page.locator('.admin-dialog').last().evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+          await page.waitForFunction(() => [...document.querySelectorAll('.admin-dialog-overlay')].every(el => el.getAnimations({ subtree: true }).every(a => a.playState === 'finished')));
           const section = page.locator('.admin-dialog').last(); await section.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = 0; }); await frames();
           const g = await section.evaluate(measure); await screenshot(name);
           assert.equal(g.coarse, width < 640, 'desktop track checks must exercise actual fine-pointer mouse mode');
           const captured = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, clip: { x: Math.round(g.r.right) - 21, y: Math.round(g.r.y) + 9, width: 6, height: Math.floor(g.r.height) - 18, scale: 1 } });
           const png = PNG.sync.read(Buffer.from(captured.data, 'base64'));
-          const paintedRows = Array.from({ length: png.height }, (_, y) => y).filter(y => y + 9 >= g.chromeEnd + 8 && [2,3,4].some(x => [0,1,2].some(c => Math.abs(png.data[(y * png.width + x) * 4 + c] - png.data[y * png.width * 4 + c]) > 30)));
+          const paintedRows = Array.from({ length: png.height }, (_, y) => y).filter(y => y + 9 >= g.chromeEnd + 8 && [2,3,4].some(x => [0,1,2].some(c => Math.abs(png.data[(y * png.width + x) * 4 + c] - png.data[y * png.width * 4 + c]) > 3)));
           const firstPaint = paintedRows.length ? paintedRows[0] + 9 : null;
           report.geometry.push({ kind: 'track-layout', name, g, firstPaint, paintedRows });
           assert.ok(firstPaint !== null, 'scrollbar must remain visibly painted, not hidden');
           assert.ok(firstPaint >= g.chromeEnd + 8, `${name}: actual thumb starts ${firstPaint}px, title/close ends ${g.chromeEnd}px`);
-          const paintedY = paintedRows[Math.min(5, paintedRows.length - 1)], paintedColumns = [1,2,3,4,5].filter(x => [0,1,2].some(c => Math.abs(png.data[(paintedY * png.width + x) * 4 + c] - png.data[paintedY * png.width * 4 + c]) > 30));
+          const paintedY = paintedRows[Math.min(5, paintedRows.length - 1)], paintedColumns = [1,2,3,4,5].filter(x => [0,1,2].some(c => Math.abs(png.data[(paintedY * png.width + x) * 4 + c] - png.data[paintedY * png.width * 4 + c]) > 3));
           assert.equal(paintedColumns.length, 3, 'track margin must retain actual 3px thumb paint');
+          const pixelAt = x => [...png.data.subarray((paintedY * png.width + x) * 4, (paintedY * png.width + x) * 4 + 3)];
+          const background = pixelAt(0), thumb = pixelAt(paintedColumns[1]), contrast = Math.max(...thumb.map((v,c) => Math.abs(v-background[c])));
+          report.geometry.push({ kind: 'faint-thumb-color', name, background, thumb, contrast });
+          // CDP mobile captures shift both panel and thumb by up to four channel levels.
+          assert.ok(thumb.every(value => Math.abs(value - (dark ? 51 : 228)) <= 4) && Math.max(...thumb) === Math.min(...thumb), 'actual paint stays neutral and near the chosen Codex gray/dark adaptation');
+          assert.ok(contrast >= 15 && contrast <= 50, 'thumb stays visible but faint against the effective panel, not the previous high-contrast gray');
           const paintCenter = Math.round(g.r.right) - 21 + paintedColumns.reduce((sum,x) => sum+x+.5,0)/paintedColumns.length;
           report.geometry.push({kind:'horizontal-axis',name,paintCenter,glyphCenter:g.glyphCenter,delta:Math.abs(paintCenter-g.glyphCenter)});
           assert.ok(Math.abs(paintCenter-g.glyphCenter) <= .75, 'actual painted thumb and X glyph must share the horizontal axis');

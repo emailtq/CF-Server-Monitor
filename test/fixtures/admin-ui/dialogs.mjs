@@ -6,6 +6,7 @@ import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import { nativeScrollbar } from './scrollbar-assertions.mjs';
 import { round3Dialogs } from './round3-dialogs.mjs';
+import { round4Dialogs } from './round4-dialogs.mjs';
 
 const playwrightPath = createRequire(import.meta.url).resolve(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const runtimeRequire = createRequire(playwrightPath);
@@ -150,7 +151,7 @@ try {
   };
   await context.route('**/*', serveFixture);
   page = await context.newPage(); page.setDefaultTimeout(5000); page.on('pageerror', error => report.errors.push(error.stack));
-  if (edgeKeyboardOnly) await round3Dialogs({ page, context, open, frames, out, report, PNG, screenshot, origin });
+  if (edgeKeyboardOnly) await (process.argv.includes('--ime-layout') ? round4Dialogs : round3Dialogs)({ page, context, open, frames, out, report, PNG, screenshot, origin });
   const kinds = ['add', 'group', 'delete', 'edit', 'batch', 'renew', 'download', 'downloadConfirm', 'autoDiscovery', 'notificationCreate', 'notificationSmtp', 'notificationWebhook', 'notificationTemplate', 'alert', 'alertEdit', 'revoke', 'terminal', 'database', 'notificationRemoval', 'autoUpdateWarning', 'databaseClear', 'databaseUpgrade', 'd1Usage', 'validation', 'saveResult', 'message'];
   const matrix = viewportScrollbarOnly || pickerScrollportOnly || edgeKeyboardOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 1920, height: 1080, locale: 'ja', dark: true }, { width: 360, height: 780, locale: 'zh', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
   if (viewportScrollbarOnly || pickerScrollportOnly) { await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture); }
@@ -194,9 +195,10 @@ try {
     assert.equal(await menu.count(), outside ? 0 : 1, 'a fully clipped trigger must close its popup instead of leaving it over the header');
     if (!outside) { await page.keyboard.press('Escape'); assert.equal(await trigger.evaluate(e => e === document.activeElement), true); }
   });
-  await check('visualViewport-only keyboard shrink keeps actual forms, footer and close inside 300px', async () => {
+  await check('visualViewport-only keyboard shrink leaves modal layout to the browser as in minimal', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await open('edit');
+    const before = await page.locator('.admin-dialog').evaluate(el => { const r = el.getBoundingClientRect(); return { top: r.top, height: r.height, width: r.width }; });
     await page.evaluate(() => {
       window.actualViewport = visualViewport;
       const viewport = new EventTarget(); Object.assign(viewport, { height: 300, width: 390, offsetTop: 0, offsetLeft: 0 });
@@ -204,10 +206,9 @@ try {
       window.actualViewport.dispatchEvent(new Event('resize'));
     });
     try {
-      for (const kind of ['edit', 'add', 'group', 'delete', 'notificationTemplate', 'download']) {
-        if (kind !== 'edit') await open(kind);
-        await frames(); await inspect(`keyboard-${kind}`, { width: 390, height: 300, locale: 'en', keyboardBoundary: 'visualViewport API resize only; layout viewport remains 844px' });
-      }
+      await frames();
+      const after = await page.locator('.admin-dialog').evaluate(el => { const r = el.getBoundingClientRect(); return { top: r.top, height: r.height, width: r.width }; });
+      assert.deepEqual(after, before, 'native keyboard panning must not trigger app modal recentering; continuous focus/selection cases live in the registered --ime-layout regression');
     } finally {
       await page.evaluate(() => { window.dialogFixture.state.open = false; }); await frames();
       await page.evaluate(() => { Object.defineProperty(window, 'visualViewport', { configurable: true, value: window.actualViewport }); visualViewport.dispatchEvent(new Event('resize')); });

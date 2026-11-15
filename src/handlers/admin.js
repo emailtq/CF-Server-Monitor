@@ -1389,6 +1389,21 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         message: 'serverUpdated'
       });
     }
+    else if (data.action === 'batch_group') {
+      const { ids, server_group } = data;
+      if (!Array.isArray(ids) || !ids.length) return createBadRequestResponse('selectServersToEdit');
+      if (new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string' || !isValidUUID(id))) return createBadRequestResponse('invalidServerIdInList');
+      if (typeof server_group !== 'string') return createBadRequestResponse('invalidGroupName');
+      const selected = JSON.stringify(ids);
+      // One statement is atomic; a deleted/stale selected node must prevent every update.
+      const result = await env.DB.prepare(`UPDATE servers SET server_group = ?
+        WHERE id IN (SELECT value FROM json_each(?))
+        AND (SELECT COUNT(*) FROM servers WHERE id IN (SELECT value FROM json_each(?))) = ?`)
+        .bind(server_group.trim(), selected, selected, ids.length).run();
+      if (result.meta.changes !== ids.length) return createBadRequestResponse('invalidServerIdInList');
+      clearServersListCache();
+      return createSuccessResponse({ success: true, updated: ids.length });
+    }
     else if (data.action === 'batch_delete') {
       const { ids } = data;
       if (!ids || !Array.isArray(ids) || ids.length === 0) {

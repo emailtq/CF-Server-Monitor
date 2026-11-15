@@ -614,6 +614,7 @@ export default {
   adminGroupDescription: "Selecciona los nodos para agruparlos. Para cambiar el nombre o disolver un grupo, fíltralo, selecciona todos e introduce un nombre nuevo o déjalo vacío.",
   adminGroupName: "Nombre del grupo",
   adminGroupNameHint: "Visible en la página pública; déjalo vacío para quitar del grupo.",
+  invalidGroupName: "Nombre de grupo no válido",
   adminUngrouped: "Sin grupo",
   adminChooseGroup: "Elegir grupo",
   adminExistingGroups: "Grupos existentes",

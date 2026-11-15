@@ -560,6 +560,7 @@ export default {
   operationSuccess: 'Operation successful',
   operationFailed: 'Operation failed',
   invalidServerName: 'Invalid server name',
+  invalidGroupName: 'Invalid group name',
   invalidPingNodeFormat: 'Use domain, IPv4, IPv6, or host:port. IPv6 with a port must use [address]:port; port must be 1-65535.',
   invalidNetworkInterface: 'Network interface names are invalid. Use comma-separated names, for example eth0,ens3.',
   invalidThemeOptionsFormat: 'Theme options must be a valid JSON object, for example {"a":1,"b":2}.',

@@ -1,8 +1,8 @@
 <template>
   <Teleport to="body">
     <Transition :name="size === 'terminal' ? 'terminal-menu' : size === 'group' ? 'admin-group-dialog' : undefined" :css="size === 'terminal' || size === 'group'" @before-leave="retainLeavingDialog" @after-leave="finishLeave">
-    <div v-if="open" class="admin-ui admin-dialog-overlay" :style="viewportStyle" @click.self="requestClose">
-      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" :style="size === 'terminal' ? { height: viewportHeight } : undefined" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || ($slots.description ? `${titleId}-description` : undefined)" :aria-busy="busy" tabindex="-1">
+    <div v-if="open" class="admin-ui admin-dialog-overlay" @click.self="requestClose">
+      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || ($slots.description ? `${titleId}-description` : undefined)" :aria-busy="busy" tabindex="-1">
         <button type="button" class="admin-dialog-close" :disabled="busy" :aria-label="t('close')" @click="requestClose"><AdminIcon name="x" /></button>
         <div class="admin-dialog-scroll">
         <header class="admin-dialog-head">
@@ -27,15 +27,14 @@ import AdminIcon from './AdminIcon.vue'
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { t } from '../../../utils/i18n.js'
 import '../../../styles/admin.css'
-const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'group', 'edit', 'download', 'download-confirm', 'terminal'].includes(value) }, viewportHeight: { type: String, default: '100dvh' }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
+const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'group', 'edit', 'download', 'download-confirm', 'terminal'].includes(value) }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
 const emit = defineEmits(['close', 'after-leave'])
 const dialog = ref(null)
-const viewportStyle = ref({})
 const titleId = `admin-dialog-${++nextId}`
 let previousFocus = null
 let registered = false
-let observedViewport = null
 let headerObserver
+let layoutWidth = 0, layoutHeight = 0
 // Vue clears the section ref before an animated leave removes its DOM.
 let leavingDialog = null
 const retainLeavingDialog = element => { if (['terminal', 'group'].includes(props.size)) leavingDialog = element.querySelector('.admin-dialog') }
@@ -55,16 +54,14 @@ watch(dialog, section => {
   headerObserver.observe(section.querySelector('.admin-dialog-close'))
   updateTrackStart()
 })
-const updateViewport = async () => {
-  const height = window.visualViewport?.height || window.innerHeight
-  const top = window.visualViewport?.offsetTop || 0
-  viewportStyle.value = { top: `${top}px`, height: `${height}px`, '--admin-dialog-viewport': `${height}px`, '--admin-dialog-offset': `${top}px` }
-  await nextTick()
-  updateTrackStart()
+// Match minimal: CSS owns the layout viewport; the browser owns soft-keyboard panning.
+const revealOnLayoutResize = () => {
+  if (layoutWidth === window.innerWidth && layoutHeight === window.innerHeight) return
+  layoutWidth = window.innerWidth; layoutHeight = window.innerHeight
   const section = dialogElement(), active = document.activeElement
   if (!topmost() || !section?.contains(active) || !active.matches('input,textarea')) return
   const field = active.getBoundingClientRect(), port = section.getBoundingClientRect()
-  // Reveal text entry without refocusing it or disturbing its selection/IME owner.
+  // Keep CF's focused-field reachability on a real window resize, never on visual-only IME panning.
   if (field.top < port.top + 4 || field.bottom > port.bottom - 4) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
 const topmost = () => dialogs.at(-1) === titleId
@@ -93,10 +90,7 @@ const release = () => {
   leavingDialog = null
   document.removeEventListener('keydown', keydown, true)
   document.removeEventListener('focusin', focusin)
-  observedViewport?.removeEventListener('resize', updateViewport)
-  observedViewport?.removeEventListener('scroll', updateViewport)
-  window.removeEventListener('resize', updateViewport)
-  observedViewport = null
+  window.removeEventListener('resize', revealOnLayoutResize)
   if (!dialogs.length) document.body.classList.remove('admin-dialog-open')
   if (wasTop && previousFocus?.isConnected) previousFocus.focus()
 }
@@ -111,11 +105,8 @@ watch(() => props.open, async open => {
   previousFocus = document.activeElement
   dialogs.push(titleId); registered = true
   document.body.classList.add('admin-dialog-open')
-  updateViewport()
-  observedViewport = window.visualViewport
-  observedViewport?.addEventListener('resize', updateViewport)
-  observedViewport?.addEventListener('scroll', updateViewport)
-  window.addEventListener('resize', updateViewport)
+  layoutWidth = window.innerWidth; layoutHeight = window.innerHeight
+  window.addEventListener('resize', revealOnLayoutResize)
   await nextTick()
   if (!registered) return
   document.addEventListener('keydown', keydown, true)

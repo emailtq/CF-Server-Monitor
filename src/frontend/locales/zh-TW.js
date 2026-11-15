@@ -614,6 +614,7 @@ export default {
   adminGroupDescription: "勾選節點，設為同一個分組。改名或解散：先篩選出這個分組、全選，再填新名字或清空。",
   adminGroupName: "分組名",
   adminGroupNameHint: "公開頁可見；留空為移出分組",
+  invalidGroupName: "分組名格式無效",
   adminUngrouped: "未分組",
   adminChooseGroup: "選擇分組",
   adminExistingGroups: "已有分組",

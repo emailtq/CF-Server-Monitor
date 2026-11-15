@@ -2,6 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 
+test('group assignment is one atomic group-only mutation, including rename, dissolve and stale IDs', async () => {
+  const { Miniflare } = await import('miniflare');
+  const { handleAdminAPI } = await import('../src/handlers/admin.js');
+  const { generateToken } = await import('../src/middleware/auth.js');
+  const mf = new Miniflare({ modules: true, script: 'export default { fetch() { return new Response("OK"); } }', d1Databases: { DB: 'groups' } });
+  try {
+    const db = await mf.getD1Database('DB');
+    await db.prepare('CREATE TABLE servers (id TEXT PRIMARY KEY, server_group TEXT, note TEXT, node_token TEXT, expire_date TEXT)').run();
+    const ids = [1, 2, 3].map(i => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+    for (const [i, id] of ids.entries()) await db.prepare('INSERT INTO servers VALUES (?, ?, ?, ?, ?)').bind(id, i < 2 ? 'Asia' : 'Europe', `note-${i}`, `token-${i}`, '2027-01-01').run();
+    const env = { DB: db }, sys = { password: 'fixture-hash', jwt_secret: 'x'.repeat(32) }, token = await generateToken(env, sys);
+    const post = (data, authenticated = true) => handleAdminAPI(new Request('https://fixture.invalid/admin/api', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(authenticated ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ action: 'batch_group', ...data }) }), env, sys);
+    const rows = async () => (await db.prepare('SELECT * FROM servers ORDER BY id').all()).results;
+    const original = await rows();
+    assert.equal((await post({ ids: ids.slice(0, 2), server_group: 'New Asia' }, false)).status, 401);
+    const rename = await post({ ids: ids.slice(0, 2), server_group: '  New Asia  ' });
+    assert.equal(rename.status, 200, 'the real authenticated batch action exists');
+    assert.equal((await rename.json()).updated, 2);
+    assert.deepEqual(await rows(), original.map((row, i) => ({ ...row, server_group: i < 2 ? 'New Asia' : 'Europe' })), 'only selected group fields change, no credential/billing round trip');
+    const beforeInvalid = await rows();
+    for (const data of [{ ids: [], server_group: '' }, { ids: ['bad'], server_group: '' }, { ids: [ids[0], ids[0]], server_group: '' }, { ids: [ids[0], '00000000-0000-4000-8000-999999999999'], server_group: '' }, { ids: [ids[0]], server_group: {} }]) {
+      assert.equal((await post(data)).status, 400); assert.deepEqual(await rows(), beforeInvalid, 'rejected or stale selection must change no rows');
+    }
+    await db.prepare("CREATE TRIGGER group_failure BEFORE UPDATE ON servers WHEN NEW.id = '" + ids[1] + "' AND NEW.server_group = 'fail' BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END").run();
+    const failed = await post({ ids: ids.slice(0, 2), server_group: 'fail' }); assert.equal(failed.status, 500);
+    assert.deepEqual(await rows(), beforeInvalid, 'a database failure on the second selected row rolls back the first');
+    assert.equal((await post({ ids: ids.slice(0, 2), server_group: '' })).status, 200);
+    assert.deepEqual((await rows()).map(r => r.server_group), ['', '', 'Europe'], 'dissolve stores genuine ungrouped values, not a new Default group');
+    const existingLongName = '已有分组'.repeat(30);
+    assert.equal((await post({ ids: [ids[0]], server_group: existingLongName })).status, 200, 'CF existing long group names remain valid');
+  } finally { await mf.dispose(); }
+});
+
 test('real get_settings distinguishes persisted ping slots without changing settings defaults', async () => {
   const { Miniflare } = await import('miniflare');
   const { handleAdminAPI } = await import('../src/handlers/admin.js');

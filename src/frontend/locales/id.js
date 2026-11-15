@@ -614,6 +614,7 @@ export default {
   adminGroupDescription: "Pilih node untuk satu grup. Untuk mengganti nama atau membubarkan grup, filter grup, pilih semua, lalu masukkan nama baru atau kosongkan.",
   adminGroupName: "Nama grup",
   adminGroupNameHint: "Terlihat di halaman publik; kosongkan untuk mengeluarkan dari grup.",
+  invalidGroupName: "Nama grup tidak valid",
   adminUngrouped: "Tanpa grup",
   adminChooseGroup: "Pilih grup",
   adminExistingGroups: "Grup yang ada",

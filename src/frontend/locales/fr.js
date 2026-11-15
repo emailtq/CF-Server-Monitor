@@ -614,6 +614,7 @@ export default {
   adminGroupDescription: "Sélectionnez les nœuds à regrouper. Pour renommer ou dissoudre un groupe, filtrez-le, sélectionnez tout, puis saisissez un nouveau nom ou laissez le champ vide.",
   adminGroupName: "Nom du groupe",
   adminGroupNameHint: "Visible sur la page publique ; laissez vide pour retirer du groupe.",
+  invalidGroupName: "Nom de groupe invalide",
   adminUngrouped: "Sans groupe",
   adminChooseGroup: "Choisir un groupe",
   adminExistingGroups: "Groupes existants",
