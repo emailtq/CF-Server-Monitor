@@ -6,7 +6,7 @@ WSS 总开关、时段、自动发现、前端连接超时和历史点数位于�
 
 ## 升级 Worker 后，再升级 Agent
 
-本次源码没有发布新二进制，不会自动重装节点。
+支持 schema 9 的 [Agent v1.3.0](https://github.com/emailtq/cfsm-agent/releases/tag/v1.3.0) 已发布。已启用自动更新的节点按既有更新周期升级；其他节点可从后台安装入口指定 v1.3.0。本轮发布不会主动重装节点。
 
 - 新 Go Agent 声明配置 schema **9**。Worker 下发该节点已关联任务的 `{id,target,interval}`；单个网络 worker 串行运行到期任务，报告只有指标 ID 与数值。未激活统一任务的站点下发 `latency_tasks=null`，继续原采集合同。
 - 已发布的 v1.2.0/schema **8** Agent 保持可用：从当前任务生成固定槽与额外 ID 的兼容目标配置，节点关联和目标修改能生效，仍按原约 **20 秒**周期探测，不能执行每任务间隔。
