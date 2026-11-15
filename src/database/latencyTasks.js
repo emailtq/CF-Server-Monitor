@@ -46,7 +46,7 @@ async function readDocument(db) {
 
 export async function loadLatencyTasks(db) {
   const row = await readDocument(db);
-  return row ? changeLatencyTasks(db, null, 'reconcile') : null;
+  return row ? reconcileLatencyTasks(db, row, 'reconcile') : null;
 }
 
 async function writeDocument(db, previous, document, purge = []) {
@@ -93,21 +93,25 @@ async function writeDocument(db, previous, document, purge = []) {
 }
 
 export async function ensureLatencyTasks(db, settings) {
-  let row = await readDocument(db);
-  if (!row) {
-    const { results } = await db.prepare('SELECT id, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4 FROM servers').all();
-    const document = migrateLatencyConfig(settings, results);
-    await writeDocument(db, null, document);
-    row = await readDocument(db);
-  }
+  const row = await readDocument(db) || await createLatencyDocument(db, settings);
   return row.document;
+}
+
+async function createLatencyDocument(db, settings) {
+  const { results } = await db.prepare('SELECT id, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4 FROM servers').all();
+  await writeDocument(db, null, migrateLatencyConfig(settings, results));
+  return readDocument(db);
 }
 
 // Register/delete and edits reconcile against the same CAS row, including auto-join.
 export async function changeLatencyTasks(db, settings, action, input = {}) {
-  await ensureLatencyTasks(db, settings);
+  const row = await readDocument(db) || await createLatencyDocument(db, settings);
+  return reconcileLatencyTasks(db, row, action, input);
+}
+
+async function reconcileLatencyTasks(db, row, action, input = {}) {
   for (let attempt = 0; attempt < 8; attempt++) {
-    const row = await readDocument(db), document = row.document;
+    const document = row.document;
     let purge = [];
     const { results } = await db.prepare('SELECT id FROM servers').all();
     const nodes = results.map(node => node.id), fresh = nodes.filter(id => !document.seen_nodes.includes(id));
@@ -182,6 +186,7 @@ export async function changeLatencyTasks(db, settings, action, input = {}) {
     if (JSON.stringify(document) === row.serialized) return document;
     document.revision++;
     if (await writeDocument(db, row.raw, document, purge)) return document;
+    row = await readDocument(db);
   }
   throw new AppError('latency_config_conflict', 409);
 }

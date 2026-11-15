@@ -1,4 +1,6 @@
 export default {
+  latencyLoading: "Chargement des moniteurs…",
+  latencyRefreshing: "Actualisation des moniteurs…",
   latencyMissing: "Le moniteur a été supprimé. Rechargez la page.",
   latencySaved: "Enregistré, configuration en cours de diffusion",
   latencyDeleted: "Moniteur supprimé",

@@ -966,10 +966,13 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       if (!actions[data.action]) return createBadRequestResponse('invalidAction');
       const activated = !sys.latency_tasks;
       const document = await changeLatencyTasks(env.DB, sys, actions[data.action], data.task || data);
-      clearAllCaches();
-      clearDashboardLatencyHistoryCache();
+      const changed = activated || document.revision !== sys.latency_tasks.revision;
+      if (data.action !== 'latency_list' || changed) {
+        clearAllCaches();
+        clearDashboardLatencyHistoryCache();
+      }
       Object.assign(sys, { latency_tasks: document });
-      if (data.action !== 'latency_list' || activated) scheduleLatencyTasksChanged(env, ctx);
+      if (data.action !== 'latency_list' || changed) scheduleLatencyTasksChanged(env, ctx);
       return createSuccessResponse({ tasks: document.tasks, revision: document.revision });
     }
 

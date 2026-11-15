@@ -24,7 +24,7 @@
       <template #header>
         <AdminHeader :site-title="settings.site_title || DEFAULT_SITE_TITLE" :trans="trans" @logout="logout" />
       </template>
-      <div v-if="adminSiteLoading" class="admin-loading-overlay" role="status" aria-live="polite" :aria-label="trans.switchingSite">
+      <div v-if="adminSiteLoading && activeTab !== 'collection'" class="admin-loading-overlay" role="status" aria-live="polite" :aria-label="trans.switchingSite">
         <div class="loading-content"><div class="loading-spinner"></div><div class="loading-text">{{ trans.switchingSite }}</div></div>
       </div>
         <ServerTable
@@ -1172,6 +1172,7 @@ const handleLogin = async () => {
 
 const logout = async () => {
   terminalStatusLogout()
+  isLoggedIn.value = false
   siteGeneration.value++
   const generation = siteGeneration.value
   terminalServer.value = null
@@ -1292,10 +1293,10 @@ const switchAdminSite = async () => {
   resetAdminContext()
   adminSiteLoading.value = true
   try {
+    void loadLatestAgentVersion()
     await Promise.all([
       loadSettings(),
-      loadServers(),
-      loadLatestAgentVersion()
+      loadServers()
     ])
   } finally {
     if (generation === siteGeneration.value) adminSiteLoading.value = false

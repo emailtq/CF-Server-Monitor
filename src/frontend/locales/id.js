@@ -1,4 +1,6 @@
 export default {
+  latencyLoading: "Memuat monitor…",
+  latencyRefreshing: "Memperbarui monitor…",
   latencyMissing: "Monitor telah dihapus. Muat ulang dan coba lagi.",
   latencySaved: "Disimpan, konfigurasi sedang dikirim",
   latencyDeleted: "Monitor dihapus",

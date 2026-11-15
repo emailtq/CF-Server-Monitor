@@ -1,4 +1,6 @@
 export default {
+  latencyLoading: "監視を読み込み中…",
+  latencyRefreshing: "監視を更新中…",
   latencyMissing: "監視は削除されました。再読み込みしてください。",
   latencySaved: "保存しました。設定を配信中",
   latencyDeleted: "監視を削除しました",

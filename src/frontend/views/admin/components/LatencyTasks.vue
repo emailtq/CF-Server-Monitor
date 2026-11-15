@@ -1,17 +1,15 @@
 <template>
   <div class="latency-page">
-    <div class="latency-toolbar"><div role="group" :aria-label="trans.latencyView" class="latency-views"><button v-for="mode in ['task', 'node']" :key="mode" type="button" :aria-pressed="view === mode" @click="view = mode">{{ mode === 'task' ? trans.latencyByTask : trans.latencyByNode }}</button></div><button class="btn btn-primary" :disabled="busy" @click="editTask()"><AdminIcon name="plus" />{{ trans.latencyAdd }}</button></div>
-    <p v-if="error" class="admin-notification-error" role="alert">{{ error }} <button class="btn" :disabled="busy" @click="load">{{ trans.refresh }}</button></p>
-    <p v-if="tasks === null" role="status">{{ trans.loading }}</p>
-    <template v-else>
+    <div class="latency-toolbar"><div role="group" :aria-label="trans.latencyView" class="latency-views"><button v-for="mode in ['task', 'node']" :key="mode" type="button" :aria-pressed="view === mode" @click="view = mode">{{ mode === 'task' ? trans.latencyByTask : trans.latencyByNode }}</button></div><div class="latency-toolbar-actions"><button class="btn" :disabled="busy || loading" @click="load">{{ trans.refresh }}</button><button class="btn btn-primary" :disabled="busy" @click="editTask()"><AdminIcon name="plus" />{{ trans.latencyAdd }}</button></div></div>
       <div v-if="view === 'node'" class="latency-node-toolbar"><label class="admin-search"><AdminIcon name="search" /><input v-model="nodeQuery" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes"></label><ToolbarGroupSelect v-model="nodeGroup" :groups="groups" :all-label="trans.adminAllGroups" :label="trans.adminFilterGroup" :active="true" /></div>
-      <div class="table-wrapper" tabindex="0"><table class="terminal-table latency-table">
-        <template v-if="view === 'task'"><thead><tr><th>{{ trans.latencyName }}</th><th>{{ trans.latencyTarget }}</th><th>{{ trans.latencyInterval }}</th><th>{{ trans.adminNodes }}</th><th>{{ trans.actions }}</th></tr></thead><tbody ref="body" @lostpointercapture="cancel"><tr v-for="task in orderedServers" :key="task.id" :data-server-id="task.id" :data-lifted="lifted === task.id ? '' : undefined" :data-reordering="dragging === task.id ? '' : undefined"><td><div class="latency-task-name"><button class="drag-handle" :disabled="busy" :aria-label="trans.dragSort + ': ' + task.name" @pointerdown="handlePointerDown($event, task.id)" @keydown="handleKeyDown($event, task.id)"><AdminIcon name="grip-vertical" /></button>{{ task.name }}</div></td><td class="latency-target">{{ task.target }}</td><td>{{ task.interval }}s</td><td class="latency-node-count">{{ task.nodes.length === servers.length && servers.length ? trans.adminAllServersLabel : task.nodes.length }}<span v-if="task.auto_join" class="latency-badge">{{ trans.latencyAutoJoinBadge }}</span></td><td><div class="action-btns"><button class="btn btn-icon" :disabled="busy" :aria-label="trans.latencyEdit + ': ' + task.name" @click="editTask(task)"><AdminIcon name="pencil" /></button><button class="btn btn-icon btn-red" :disabled="busy" :aria-label="trans.latencyDelete + ': ' + task.name" @click="deleting = task"><AdminIcon name="trash-2" /></button></div></td></tr><tr v-if="!tasks.length"><td colspan="5" class="empty-state">{{ trans.latencyEmpty }}</td></tr></tbody></template>
-        <template v-else><thead><tr><th>{{ trans.adminNodes }}</th><th>{{ trans.latencyMonitors }}</th><th>{{ trans.actions }}</th></tr></thead><tbody><tr v-for="node in visibleNodes" :key="node.id"><td><b>{{ node.name }}</b><div class="server-secondary">{{ node.server_group }}</div></td><td class="latency-owned" :title="owned(node.id).map(task => task.name).join(' · ')"><span>{{ owned(node.id).length }} · {{ owned(node.id).map(task => task.name).join(' · ') || trans.latencyUnassigned }}</span></td><td><button class="btn btn-icon" :aria-label="trans.latencySelect + ': ' + node.name" @click="editNode(node)"><AdminIcon name="pencil" /></button></td></tr><tr v-if="!visibleNodes.length"><td colspan="3" class="empty-state">{{ trans.noServers }}</td></tr></tbody></template>
+      <div class="table-wrapper" tabindex="0"><table class="terminal-table latency-table" :aria-busy="loading">
+        <thead><tr v-if="view === 'task'"><th>{{ trans.latencyName }}</th><th>{{ trans.latencyTarget }}</th><th>{{ trans.latencyInterval }}</th><th>{{ trans.adminNodes }}</th><th>{{ trans.actions }}</th></tr><tr v-else><th>{{ trans.adminNodes }}</th><th>{{ trans.latencyMonitors }}</th><th>{{ trans.actions }}</th></tr></thead>
+        <tbody v-if="loading || error" class="latency-status"><tr><td :colspan="view === 'task' ? 5 : 3"><span :role="error ? 'alert' : 'status'" :class="{ 'admin-notification-error': error }">{{ error || (tasks === null ? trans.latencyLoading : trans.latencyRefreshing) }}</span></td></tr></tbody>
+        <tbody v-if="view === 'task' && tasks !== null" ref="body" @lostpointercapture="cancel"><tr v-for="task in orderedServers" :key="task.id" :data-server-id="task.id" :data-lifted="lifted === task.id ? '' : undefined" :data-reordering="dragging === task.id ? '' : undefined"><td><div class="latency-task-name"><button class="drag-handle" :disabled="busy || loading" :aria-label="trans.dragSort + ': ' + task.name" @pointerdown="handlePointerDown($event, task.id)" @keydown="handleKeyDown($event, task.id)"><AdminIcon name="grip-vertical" /></button>{{ task.name }}</div></td><td class="latency-target">{{ task.target }}</td><td>{{ task.interval }}s</td><td class="latency-node-count">{{ task.nodes.length === servers.length && servers.length ? trans.adminAllServersLabel : task.nodes.length }}<span v-if="task.auto_join" class="latency-badge">{{ trans.latencyAutoJoinBadge }}</span></td><td><div class="action-btns"><button class="btn btn-icon" :disabled="busy" :aria-label="trans.latencyEdit + ': ' + task.name" @click="editTask(task)"><AdminIcon name="pencil" /></button><button class="btn btn-icon btn-red" :disabled="busy" :aria-label="trans.latencyDelete + ': ' + task.name" @click="deleting = task"><AdminIcon name="trash-2" /></button></div></td></tr><tr v-if="!tasks.length && !error"><td colspan="5" class="empty-state">{{ trans.latencyEmpty }}</td></tr></tbody>
+        <tbody v-else-if="view === 'node' && tasks !== null"><tr v-for="node in visibleNodes" :key="node.id"><td><b>{{ node.name }}</b><div class="server-secondary">{{ node.server_group }}</div></td><td class="latency-owned" :title="owned(node.id).map(task => task.name).join(' · ')"><span>{{ owned(node.id).length }} · {{ owned(node.id).map(task => task.name).join(' · ') || trans.latencyUnassigned }}</span></td><td><button class="btn btn-icon" :disabled="busy" :aria-label="trans.latencySelect + ': ' + node.name" @click="editNode(node)"><AdminIcon name="pencil" /></button></td></tr><tr v-if="!visibleNodes.length && !error"><td colspan="3" class="empty-state">{{ trans.noServers }}</td></tr></tbody>
       </table></div>
-      <p v-if="tasks.length > 8" class="server-secondary" data-ping-resource-warning role="status">{{ trans.adminPingResourceWarning }}</p>
+      <p v-if="tasks?.length > 8" class="server-secondary" data-ping-resource-warning role="status">{{ trans.adminPingResourceWarning }}</p>
       <p class="server-secondary">{{ trans.latencyUpgrade }}</p>
-    </template>
     <AdminDialog v-if="draft" :open="true" :title="nodeDraft ? nodeDraft.name + ' · ' + trans.latencyMonitors : draft.id ? trans.latencyEdit : trans.latencyAdd" size="edit" :busy="busy" @close="closeEditor">
       <template #body><form :id="formId" novalidate @submit.prevent="save"><fieldset class="settings-fieldset" :disabled="busy">
         <section v-if="!nodeDraft" class="latency-task-fields"><label class="admin-field latency-name">{{ trans.latencyName }}<input ref="nameInput" v-model="draft.name" class="form-input" :aria-label="trans.latencyName" placeholder="Cloudflare"></label><label class="admin-field">{{ trans.latencyTarget }}<input v-model="draft.target" class="form-input" :aria-label="trans.latencyTarget" placeholder="1.1.1.1:443"><small>{{ trans.latencyTargetHint }}</small></label><label class="admin-field">{{ trans.latencyInterval }}<input v-model="every" class="form-input" :aria-label="trans.latencyInterval" type="number" min="5" max="3600"><small>5–3600</small></label></section>
@@ -39,24 +37,34 @@ import { useServerReorder } from '../composables/useServerReorder.js'
 const props = defineProps({ trans: Object, servers: Array, selectedApiIndex: Number, siteGeneration: Number })
 const emit = defineEmits(['activated'])
 const tasks = ref(null), busy = ref(false), error = ref(''), formError = ref(''), view = ref('task'), draft = ref(null), nodeDraft = ref(null), deleting = ref(null), every = ref('60'), chosen = ref([]), query = ref(''), group = ref(''), nodeQuery = ref(''), nodeGroup = ref(''), nameInput = ref(null), pickerList = ref(null), pickerHeight = ref(0)
+const loading = ref(false)
 const formId = `latency-form-${crypto.randomUUID()}`
 const notice = ref(null)
-let alive = true, base = [], seen = new Set(), openedAutoJoin = false, loadRevision = 0
+let alive = true, base = [], seen = new Set(), openedAutoJoin = false, loadRevision = 0, loadRequest = null, loadAgain = false
 const owner = () => alive
-onBeforeUnmount(() => { alive = false })
-const request = async (action, data = {}) => {
+onBeforeUnmount(() => { alive = false; loadRequest?.abort() })
+const request = async (action, data = {}, current = owner, signal) => {
   const index = props.selectedApiIndex, generation = props.siteGeneration
-  const ownsRequest = () => alive && index === props.selectedApiIndex && generation === props.siteGeneration
-  const result = await adminApi({ action, ...data }, index, ownsRequest)
+  const ownsRequest = () => current() && index === props.selectedApiIndex && generation === props.siteGeneration
+  const result = await adminApi({ action, ...data }, index, ownsRequest, signal)
   if (!ownsRequest() || result.stale) return null
   if (result.error) throw new Error(props.trans[result.error] || (result.status === 409 ? props.trans.latencyConflict : result.status === 404 ? props.trans.latencyMissing : result.status === 400 ? props.trans.latencyInvalid : result.error))
   if (!Array.isArray(result.data?.tasks) || !Number.isSafeInteger(result.data.revision)) throw new Error(props.trans.latencyUnavailable)
   return result.data
 }
 const load = async () => {
+  if (busy.value || loadRequest) { loadAgain = true; return }
   const revision = ++loadRevision
-  try { const result = await request('latency_list'); if (result && revision === loadRevision) { tasks.value = result.tasks; emit('activated'); error.value = '' } }
-  catch (e) { if (owner() && revision === loadRevision) { error.value = e.message; tasks.value ||= []; notice.value?.show(e.message, true) } }
+  const controller = new AbortController()
+  loadRequest = controller; loading.value = true; error.value = ''
+  const current = () => owner() && revision === loadRevision
+  try { const result = await request('latency_list', {}, current, controller.signal); if (result) { tasks.value = result.tasks; emit('activated') } }
+  catch (e) { if (current()) error.value = e.message }
+  finally {
+    if (loadRequest === controller) loadRequest = null
+    if (current()) loading.value = false
+    if (owner() && loadAgain && !busy.value) { loadAgain = false; void load() }
+  }
 }
 const groups = computed(() => [...new Set(props.servers.map(node => node.server_group).filter(Boolean))])
 watch(groups, values => { if (!values.includes(group.value)) group.value = ''; if (!values.includes(nodeGroup.value)) nodeGroup.value = '' })
@@ -88,10 +96,11 @@ watch(deleting, value => { notice.value?.clear(); if (value) formError.value = '
 const runMutation = async (action, data) => {
   if (busy.value) return false
   ++loadRevision
+  loadRequest?.abort(); loading.value = false
   busy.value = true; formError.value = ''
-  try { const result = await request(action, data); if (!result) return false; tasks.value = result.tasks; emit('activated'); return true }
+  try { const result = await request(action, data); if (!result) return false; tasks.value = result.tasks; error.value = ''; emit('activated'); return true }
   catch (e) { if (owner()) { formError.value = e.message; notice.value?.show(e.message, true) } return false }
-  finally { if (owner()) busy.value = false }
+  finally { if (owner()) { busy.value = false; if (loadAgain) { loadAgain = false; void load() } } }
 }
 const save = async () => {
   if (nodeDraft.value) { if (await runMutation('latency_node', { node: nodeDraft.value.id, tasks: chosen.value.filter(id => tasks.value.some(task => task.id === id)), base })) { closeEditor(); await nextTick(); notice.value?.show(props.trans.latencySaved) } return }
@@ -101,7 +110,12 @@ const save = async () => {
 }
 const remove = async () => { if (await runMutation('latency_delete', { id: deleting.value.id })) { deleting.value = null; await nextTick(); notice.value?.show(props.trans.latencyDeleted) } }
 const reorderProps = { get servers() { return tasks.value || [] }, get selectedApiIndex() { return props.selectedApiIndex }, get siteGeneration() { return props.siteGeneration }, get activeTab() { return view.value } }
-const { body, orderedServers, lifted, dragging, handlePointerDown, handleKeyDown, cancel } = useServerReorder(reorderProps, busy, async (_, ids) => { if (!await runMutation('latency_order', { ids })) { error.value = formError.value; await load() } })
+const { body, orderedServers, lifted, dragging, handlePointerDown, handleKeyDown, cancel } = useServerReorder(reorderProps, computed(() => busy.value || loading.value), async (_, ids) => { if (!await runMutation('latency_order', { ids })) { error.value = formError.value; await load() } })
+watch(() => [props.selectedApiIndex, props.siteGeneration], () => {
+  ++loadRevision; loadRequest?.abort(); loadRequest = null; loadAgain = false
+  tasks.value = null; error.value = ''; loading.value = false; closeEditor(); deleting.value = null
+  void load()
+}, { flush: 'sync' })
 watch(() => props.servers.map(node => node.id).join(), () => {
   if (draft.value && !nodeDraft.value) {
     const fresh = props.servers.filter(node => !seen.has(node.id)).map(node => node.id)
@@ -113,6 +127,8 @@ watch(() => props.servers.map(node => node.id).join(), () => {
 </script>
 <style scoped>
 .latency-page { display: grid; gap: 16px; }
+.latency-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.latency-status { color: var(--cf-muted); }
 .latency-toolbar, .latency-picker-section header, .latency-node-toolbar, .latency-picker-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .latency-views { display: flex; padding: 2px; border-radius: 8px; background: var(--cf-soft); }
 .latency-views button { border: 0; border-radius: 6px; padding: 4px 12px; font: inherit; font-size: 14px; color: var(--cf-muted); background: transparent; cursor: pointer; }
@@ -140,7 +156,7 @@ watch(() => props.servers.map(node => node.id).join(), () => {
 .latency-picker-toolbar .admin-search { flex: 1 1 160px; width: auto; min-width: 0; }.latency-node-toolbar .admin-search { flex: 1; min-width: 0; }.latency-picker-toolbar :deep(.toolbar-select), .latency-node-toolbar :deep(.toolbar-select) { width: 128px; }
 .latency-picker { border: 1px solid var(--cf-border); border-radius: 8px; overflow: visible; }.latency-picker-toolbar { padding: 8px; border-bottom: 1px solid var(--cf-border); flex-wrap: wrap; gap: 4px; }.latency-picker-actions { display: flex; gap: 4px; }.latency-picker-list { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 2px; padding: 6px; max-height: min(256px,40dvh); overflow-y: auto; align-content: start; }.latency-picker-list.is-tasks { grid-template-columns: 1fr; }
 .latency-picker-list label { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border-radius: 6px; font-size: 14px; line-height: 20px; cursor: pointer; }.latency-picker-list label:hover { background: var(--cf-soft); }.latency-picker-list span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.latency-picker-list small { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--cf-muted); }.latency-picker-list .is-offline span { color: var(--cf-muted); }
-@media(max-width:639px) { .latency-task-fields { grid-template-columns: minmax(0,1fr) 96px; }.latency-name { grid-column: 1/-1; }.latency-picker-list { grid-template-columns: 1fr; } }
+@media(max-width:639px) { .latency-toolbar { flex-wrap: wrap; }.latency-task-fields { grid-template-columns: minmax(0,1fr) 96px; }.latency-name { grid-column: 1/-1; }.latency-picker-list { grid-template-columns: 1fr; } }
 @media(min-width:480px) and (max-width:639px) { .latency-picker-list:not(.is-tasks) { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(pointer:coarse) { .latency-task-name .drag-handle { width: 32px; height: 32px; padding: 8px; } }
 </style>

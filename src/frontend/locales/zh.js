@@ -1,4 +1,6 @@
 export default {
+  latencyLoading: "正在加载监控…",
+  latencyRefreshing: "正在刷新监控…",
   latencyMissing: "该监控已删除，请刷新后重试。",
   latencySaved: "已保存，正在下发",
   latencyDeleted: "监控已删除",

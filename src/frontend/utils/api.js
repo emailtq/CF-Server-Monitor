@@ -432,7 +432,7 @@ export const adminApi = async (data, apiIndex = 0, requestOwner, signal) => {
       autoRedirect: false, responsePolicy: 'terminal', timeoutMs: 15000, requestOwner, signal
     })
   }
-  const result = await http.postByIndex('/admin/api', data, apiIndex, { requestOwner })
+  const result = await http.postByIndex('/admin/api', data, apiIndex, { requestOwner, signal })
   return result
 }
 

@@ -13,13 +13,13 @@ export async function issueTestTerminalToken(db, serverId, now = Date.now()) {
   return {...issued, enabled:true};
 }
 
-export async function harness({apiSecret = 'test-report-secret'} = {}) {
+export async function harness({apiSecret = 'test-report-secret', traceD1 = false} = {}) {
   const source = `
     import worker from './src/index.js';
     import { TerminalBroker } from './src/durable/TerminalBroker.js';
     import * as terminalDatabase from './src/database/terminal.js';
     import { MetricsBroadcaster } from './src/index.js';
-    const counts = {d1:0, metadataWrites:0, authReads:0, authWrites:0, timeouts:0, intervals:0, terminalQueries:[], errors:[]};
+    const counts = {d1:0, metadataWrites:0, authReads:0, authWrites:0, timeouts:0, intervals:0, terminalQueries:[], errors:[], queryTrace:[]};
     const nativeError = console.error;
     console.error = (...args) => {counts.errors.push(args.map(value=>value instanceof Error ? value.message : String(value))); nativeError(...args);};
     const nativeTimeout = globalThis.setTimeout, nativeInterval = globalThis.setInterval;
@@ -27,7 +27,10 @@ export async function harness({apiSecret = 'test-report-secret'} = {}) {
     Date.now = () => nativeNow() + clockOffset;
     globalThis.setTimeout = (...args) => {counts.timeouts++; return nativeTimeout(...args);};
     globalThis.setInterval = (...args) => {counts.intervals++; return nativeInterval(...args);};
+    // Trace mode preserves binding identity so instrumentation does not bypass the settings cache.
+    const tracedDatabases = new WeakMap();
     function countedDb(db) {
+      if (${JSON.stringify(traceD1)} && tracedDatabases.has(db)) return tracedDatabases.get(db);
       function statement(stmt, sql) {return new Proxy(stmt, {get(target,key) {
         if (key === 'bind') return (...args) => statement(target.bind(...args), sql);
         if (['run','first','all','raw'].includes(key)) return (...args) => {
@@ -37,14 +40,24 @@ export async function harness({apiSecret = 'test-report-secret'} = {}) {
           if (sql.includes('terminal_auth_sessions')) {
             if (sql.trim().startsWith('SELECT')) counts.authReads++; else counts.authWrites++;
           }
-          return target[key](...args);
+          const started = performance.now();
+          const result = target[key](...args);
+          if (!${JSON.stringify(traceD1)}) return result;
+          return result.then(value => {counts.queryTrace.push({sql, operation:key, startedMs:started, elapsedMs:performance.now()-started, sqlMs:value?.meta?.duration}); return value;});
         };
         return typeof target[key] === 'function' ? target[key].bind(target) : target[key];
       }});}
-      return new Proxy(db, {get(target,key) {
+      const counted = new Proxy(db, {get(target,key) {
         if (key === 'prepare') return sql => statement(target.prepare(sql), sql);
+        if (key === 'batch' && ${JSON.stringify(traceD1)}) return async (...args) => {
+          const started = performance.now(); const result = await target.batch(...args);
+          counts.queryTrace.push({sql:'<atomic batch>', operation:'batch', statements:result.length, startedMs:started, elapsedMs:performance.now()-started, sqlMs:result.reduce((sum,value)=>sum+(value.meta?.duration || 0),0)});
+          return result;
+        };
         return typeof target[key] === 'function' ? target[key].bind(target) : target[key];
       }});
+      if (${JSON.stringify(traceD1)}) tracedDatabases.set(db, counted);
+      return counted;
     }
     export class TestMetricsBroadcaster extends MetricsBroadcaster {
       constructor(state, env) {

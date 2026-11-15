@@ -1,4 +1,6 @@
 export default {
+  latencyLoading: "正在載入監控…",
+  latencyRefreshing: "正在重新整理監控…",
   latencyMissing: "此監控已刪除，請重新整理後重試。",
   latencySaved: "已儲存，正在下發",
   latencyDeleted: "監控已刪除",

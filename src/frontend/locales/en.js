@@ -1,4 +1,6 @@
 export default {
+  latencyLoading: "Loading monitors…",
+  latencyRefreshing: "Refreshing monitors…",
   latencyMissing: "The monitor was removed. Reload and try again.",
   latencySaved: "Saved, distributing configuration",
   latencyDeleted: "Monitor deleted",
