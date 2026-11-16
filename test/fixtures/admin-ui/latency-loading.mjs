@@ -7,12 +7,14 @@ import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import { harness, until } from '../../terminal-harness.js';
 import { saveSiteOptions } from '../../../src/utils/settings.js';
+import { runLatencyMetadataChecks } from './latency-metadata-checks.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.ADMIN_UI_PLAYWRIGHT || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
 const out = path.resolve(process.env.CFSM_LATENCY_LOADING_EVIDENCE || path.join(os.tmpdir(), 'cfsm-admin-ui-evidence', `round4-latency-${Date.now()}`));
 fs.mkdirSync(out, { recursive: true });
 const baseline = process.argv.includes('--baseline');
 const addRecoveryOnly = process.argv.includes('--add-recovery-only');
+const phase43Only = process.argv.includes('--phase43-only') || process.argv.includes('--metadata-only') || process.argv.includes('--add-node-only') || process.argv.includes('--staged-metadata-only') || process.argv.includes('--metadata-errors-only');
 const receipt = { baseline, addRecoveryOnly, localMiniflareNotProduction: true, checks: [], screenshots: [], timings: [], browserErrors: [] };
 let server, browser, context, page, a, b;
 const pendingApi = new Set();
@@ -38,13 +40,14 @@ try {
   server = await createServer({ plugins: [vue()], publicDir: path.resolve('public'), vueFixtureDevtools: true, fixtureEntries: [path.resolve('test/fixtures/admin-ui/latency-loading.html')], cacheDir: path.join(out, 'cache'), apiMiddlewarePlugin: { name: 'latency-loading-actual-worker', configureServer(vite) {
     vite.middlewares.use((request, response, next) => {
       const url = new URL(request.url, 'http://fixture.invalid');
-      const match = url.pathname.match(/^\/site-(a|b)(\/.*)$/); if (!match) return next();
+      const match = url.pathname.match(/^\/site-(a|b)(\/.*)$/) || (/^\/(admin\/api|api\/config)$/.test(url.pathname) ? ['','a',url.pathname] : null); if (!match) return next();
       const job = (async () => {
       const h = match[1] === 'a' ? a : b;
       let body = ''; for await (const chunk of request) body += chunk;
       const action = body ? JSON.parse(body).action : null;
       const item = holds.find(item => item.site === match[1] && item.action === (action || match[2]) && !item.arrived);
-      const headers = { ...request.headers, Cookie: `cfsm_auth=${h.token}`, Origin: 'https://example.com' }; delete headers.host;
+      const headers = new Headers(request.headers);
+      headers.set('Cookie', `cfsm_auth=${h.token}`); headers.set('Origin', 'https://example.com'); headers.delete('host');
       const started = performance.now();
       const result = await h.fetch(match[2] + url.search, { method: request.method, headers, ...(body ? { body } : {}) });
       const payload = Buffer.from(await result.arrayBuffer());
@@ -58,7 +61,8 @@ try {
   } } });
   browser = await chromium.launch({ headless: true, executablePath: process.env.ADMIN_UI_CHROMIUM || path.join(os.homedir(), 'AppData/Local/ms-playwright/chromium-1248/chrome-win64/chrome.exe') });
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  for (const width of addRecoveryOnly ? [] : baseline ? [390] : [360, 390, 1440, 1920]) for (const dark of baseline ? [false] : [false, true]) {
+  if (phase43Only) await runLatencyMetadataChecks({a,b,browser,origin,hold,waitHold,receipt,out,metadataOnly:process.argv.includes('--metadata-only'),addNodeOnly:process.argv.includes('--add-node-only'),stagedOnly:process.argv.includes('--staged-metadata-only'),errorsOnly:process.argv.includes('--metadata-errors-only')});
+  for (const width of addRecoveryOnly || phase43Only ? [] : baseline ? [390] : [360, 390, 1440, 1920]) for (const dark of baseline ? [false] : [false, true]) {
     receipt.dark = dark;
     await a.action('list', { refresh: true });
     context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: width < 640, isMobile: width < 640 });
@@ -177,7 +181,7 @@ try {
       await context.close(); context = null;
     }
   }
-  if (!baseline && !addRecoveryOnly) {
+  if (!baseline && !addRecoveryOnly && !phase43Only) {
     await a.action('import_servers', { settings: { latency_tasks: { version: 1, tasks: [] } } });
     for (const locale of ['zh', 'zh-TW', 'en', 'ja', 'id', 'fr', 'es']) {
       const trans = (await import(`../../../src/frontend/locales/${locale}.js`)).default;

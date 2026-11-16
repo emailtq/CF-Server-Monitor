@@ -87,3 +87,13 @@ test('first-error and initial-in-flight catalogs keep Add reachable and save aut
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/latency-loading.mjs', '--add-recovery-only'], { encoding: 'utf8', windowsHide: true, timeout: 55000, env: process.env });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}\n${result.error || ''}`);
 });
+
+test('revisited latency stays visible and first reports patch node metadata without replacing node ownership', { timeout: 180000 }, () => {
+  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/latency-loading.mjs', '--phase43-only'], { encoding: 'utf8', windowsHide: true, timeout: 170000, env: process.env });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}\n${result.error || ''}`);
+});
+
+test('metadata rejection and transport exceptions preserve adopted terminal state and recover without leaking requests', { timeout: 60000 }, () => {
+  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/latency-loading.mjs', '--metadata-errors-only'], { encoding: 'utf8', windowsHide: true, timeout: 55000, env: process.env });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}\n${result.error || ''}`);
+});

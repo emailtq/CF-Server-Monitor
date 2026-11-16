@@ -1,7 +1,7 @@
 <template>
   <div class="latency-page">
     <div class="latency-toolbar"><div role="group" :aria-label="trans.latencyView" class="latency-views"><button v-for="mode in ['task', 'node']" :key="mode" type="button" :aria-pressed="view === mode" @click="view = mode">{{ mode === 'task' ? trans.latencyByTask : trans.latencyByNode }}</button></div><div class="latency-toolbar-actions"><button class="btn" :disabled="busy || loading" @click="load">{{ trans.refresh }}</button><button class="btn btn-primary" :disabled="busy" @click="editTask()"><AdminIcon name="plus" />{{ trans.latencyAdd }}</button></div></div>
-      <div v-if="view === 'node'" class="latency-node-toolbar"><label class="admin-search"><AdminIcon name="search" /><input v-model="nodeQuery" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes"></label><ToolbarGroupSelect v-model="nodeGroup" :groups="groups" :all-label="trans.adminAllGroups" :label="trans.adminFilterGroup" :active="true" /></div>
+      <div v-if="view === 'node'" class="latency-node-toolbar"><label class="admin-search"><AdminIcon name="search" /><input v-model="nodeQuery" class="toolbar-input" :placeholder="trans.adminSearchNodes" :aria-label="trans.adminSearchNodes"></label><ToolbarGroupSelect v-model="nodeGroup" :groups="groups" :all-label="trans.adminAllGroups" :label="trans.adminFilterGroup" :active="isActive" /></div>
       <div class="table-wrapper" tabindex="0"><table class="terminal-table latency-table" :aria-busy="loading">
         <thead><tr v-if="view === 'task'"><th>{{ trans.latencyName }}</th><th>{{ trans.latencyTarget }}</th><th>{{ trans.latencyInterval }}</th><th>{{ trans.adminNodes }}</th><th>{{ trans.actions }}</th></tr><tr v-else><th>{{ trans.adminNodes }}</th><th>{{ trans.latencyMonitors }}</th><th>{{ trans.actions }}</th></tr></thead>
         <tbody v-if="loading || error" class="latency-status"><tr><td :colspan="view === 'task' ? 5 : 3"><span :role="error ? 'alert' : 'status'" :class="{ 'admin-notification-error': error }">{{ error || (tasks === null ? trans.latencyLoading : trans.latencyRefreshing) }}</span></td></tr></tbody>
@@ -34,18 +34,22 @@ import ToolbarGroupSelect from './ToolbarGroupSelect.vue'
 import { adminApi } from '../../../utils/api.js'
 import { validatePingNode } from '../../../utils/pingNode.js'
 import { useServerReorder } from '../composables/useServerReorder.js'
-const props = defineProps({ trans: Object, servers: Array, selectedApiIndex: Number, siteGeneration: Number })
+const props = defineProps({ trans: Object, servers: Array, selectedApiIndex: Number, siteGeneration: Number, active: { type: Boolean, default: true } })
 const emit = defineEmits(['activated'])
 const tasks = ref(null), busy = ref(false), error = ref(''), formError = ref(''), view = ref('task'), draft = ref(null), nodeDraft = ref(null), deleting = ref(null), every = ref('60'), chosen = ref([]), query = ref(''), group = ref(''), nodeQuery = ref(''), nodeGroup = ref(''), nameInput = ref(null), pickerList = ref(null), pickerHeight = ref(0)
 const loading = ref(false)
 const formId = `latency-form-${crypto.randomUUID()}`
 const notice = ref(null)
-let alive = true, base = [], seen = new Set(), openedAutoJoin = false, loadRevision = 0, loadRequest = null, loadAgain = false
-const owner = () => alive
-onBeforeUnmount(() => { alive = false; loadRequest?.abort() })
+let alive = true, base = [], seen = new Set(), openedAutoJoin = false, loadRevision = 0, loadRequest = null, loadAgain = false, activityRevision = 0, mutationRequest = null
+const visible = ref(!document.hidden)
+const isActive = computed(() => props.active && visible.value)
+const owner = () => alive && isActive.value
+const onVisibility = () => { visible.value = !document.hidden }
+document.addEventListener('visibilitychange', onVisibility)
+onBeforeUnmount(() => { alive = false; loadRequest?.abort(); mutationRequest?.abort(); document.removeEventListener('visibilitychange', onVisibility) })
 const request = async (action, data = {}, current = owner, signal) => {
-  const index = props.selectedApiIndex, generation = props.siteGeneration
-  const ownsRequest = () => current() && index === props.selectedApiIndex && generation === props.siteGeneration
+  const index = props.selectedApiIndex, generation = props.siteGeneration, activity = activityRevision
+  const ownsRequest = () => current() && activity === activityRevision && index === props.selectedApiIndex && generation === props.siteGeneration
   const result = await adminApi({ action, ...data }, index, ownsRequest, signal)
   if (!ownsRequest() || result.stale) return null
   if (result.error) throw new Error(props.trans[result.error] || (result.status === 409 ? props.trans.latencyConflict : result.status === 404 ? props.trans.latencyMissing : result.status === 400 ? props.trans.latencyInvalid : result.error))
@@ -53,6 +57,7 @@ const request = async (action, data = {}, current = owner, signal) => {
   return result.data
 }
 const load = async () => {
+  if (!owner()) return
   if (busy.value || loadRequest) { loadAgain = true; return }
   const revision = ++loadRevision
   const controller = new AbortController()
@@ -61,9 +66,10 @@ const load = async () => {
   try { const result = await request('latency_list', {}, current, controller.signal); if (result) { tasks.value = result.tasks; emit('activated') } }
   catch (e) { if (current()) error.value = e.message }
   finally {
-    if (loadRequest === controller) loadRequest = null
+    const finishing = loadRequest === controller
+    if (finishing) loadRequest = null
     if (current()) loading.value = false
-    if (owner() && loadAgain && !busy.value) { loadAgain = false; void load() }
+    if (finishing && owner() && loadAgain && !busy.value) { loadAgain = false; void load() }
   }
 }
 const groups = computed(() => [...new Set(props.servers.map(node => node.server_group).filter(Boolean))])
@@ -94,13 +100,16 @@ const editTask = async task => {
 const editNode = async node => { notice.value?.clear(); nodeDraft.value = node; draft.value = {}; chosen.value = owned(node.id).map(task => task.id); base = [...chosen.value]; query.value = ''; formError.value = ''; pickerHeight.value = 0; await nextTick(); pickerHeight.value = pickerList.value?.offsetHeight || 0 }
 watch(deleting, value => { notice.value?.clear(); if (value) formError.value = '' })
 const runMutation = async (action, data) => {
-  if (busy.value) return false
+  if (!owner() || busy.value) return false
+  const activity = activityRevision, controller = new AbortController()
+  mutationRequest = controller
+  const current = () => owner() && activity === activityRevision
   ++loadRevision
   loadRequest?.abort(); loading.value = false
   busy.value = true; formError.value = ''
-  try { const result = await request(action, data); if (!result) return false; tasks.value = result.tasks; error.value = ''; emit('activated'); return true }
-  catch (e) { if (owner()) { formError.value = e.message; notice.value?.show(e.message, true) } return false }
-  finally { if (owner()) { busy.value = false; if (loadAgain) { loadAgain = false; void load() } } }
+  try { const result = await request(action, data, current, controller.signal); if (!result) return false; tasks.value = result.tasks; error.value = ''; emit('activated'); return true }
+  catch (e) { if (current()) { formError.value = e.message; notice.value?.show(e.message, true) } return false }
+  finally { if (mutationRequest === controller) mutationRequest = null; if (current()) { busy.value = false; if (loadAgain) { loadAgain = false; void load() } } }
 }
 const save = async () => {
   if (nodeDraft.value) { if (await runMutation('latency_node', { node: nodeDraft.value.id, tasks: chosen.value.filter(id => tasks.value.some(task => task.id === id)), base })) { closeEditor(); await nextTick(); notice.value?.show(props.trans.latencySaved) } return }
@@ -109,9 +118,17 @@ const save = async () => {
   if (await runMutation('latency_save', { task: { ...draft.value, interval, nodes: chosen.value.filter(id => props.servers.some(node => node.id === id)), ...(draft.value.id ? { base } : {}) } })) { closeEditor(); await nextTick(); notice.value?.show(props.trans.latencySaved) }
 }
 const remove = async () => { if (await runMutation('latency_delete', { id: deleting.value.id })) { deleting.value = null; await nextTick(); notice.value?.show(props.trans.latencyDeleted) } }
-const reorderProps = { get servers() { return tasks.value || [] }, get selectedApiIndex() { return props.selectedApiIndex }, get siteGeneration() { return props.siteGeneration }, get activeTab() { return view.value } }
+const reorderProps = { get servers() { return tasks.value || [] }, get selectedApiIndex() { return props.selectedApiIndex }, get siteGeneration() { return props.siteGeneration }, get activeTab() { return isActive.value ? view.value : 'hidden' } }
 const { body, orderedServers, lifted, dragging, handlePointerDown, handleKeyDown, cancel } = useServerReorder(reorderProps, computed(() => busy.value || loading.value), async (_, ids) => { if (!await runMutation('latency_order', { ids })) { error.value = formError.value; await load() } })
+watch(isActive, active => {
+  if (active) { void load(); return }
+  ++activityRevision; ++loadRevision
+  loadRequest?.abort(); loadRequest = null; mutationRequest?.abort(); mutationRequest = null
+  loadAgain = false; loading.value = false; busy.value = false
+  cancel(); closeEditor(); deleting.value = null
+}, { flush: 'sync' })
 watch(() => [props.selectedApiIndex, props.siteGeneration], () => {
+  ++activityRevision; mutationRequest?.abort(); mutationRequest = null; busy.value = false
   ++loadRevision; loadRequest?.abort(); loadRequest = null; loadAgain = false
   tasks.value = null; error.value = ''; loading.value = false; closeEditor(); deleting.value = null
   void load()

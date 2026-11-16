@@ -59,7 +59,7 @@
           @terminal-access="terminalServer = $event"
         />
 
-        <LatencyTasks v-if="activeTab === 'collection'" :key="siteGeneration" :trans="trans" :servers="servers" :selected-api-index="selectedApiIndex" :site-generation="siteGeneration" @activated="settings.latency_tasks_active = true" />
+        <LatencyTasks v-if="latencyVisited || activeTab === 'collection'" v-show="activeTab === 'collection'" :active="activeTab === 'collection'" :key="siteGeneration" :trans="trans" :servers="servers" :selected-api-index="selectedApiIndex" :site-generation="siteGeneration" @activated="settings.latency_tasks_active = true" />
         <SettingsPanel
           :api-bases="apiBases"
           :is-multiple-mode="isMultipleMode"
@@ -757,6 +757,7 @@ let orderSaving = Promise.resolve(), orderRevision = 0
 let terminalStatusTimer = null, terminalStatusRequest = null
 let terminalStatusSequence = 0, terminalStatusGeneration = 0, terminalStatusAgain = false
 let terminalStatusLoggedOut = false
+let metadataRefreshAt = 0
 const terminalStatusActive = () => adminActive && isLoggedIn.value && !terminalStatusLoggedOut && !adminSiteLoading.value && activeTab.value === 'servers' && !document.hidden && servers.value.length > 0
 const cancelTerminalStatuses = () => {
   terminalStatusGeneration++; terminalStatusSequence++
@@ -771,9 +772,12 @@ const refreshTerminalStatuses = async () => {
   if (terminalStatusRequest) { terminalStatusAgain = true; return }
   const generation = terminalStatusGeneration, owner = requestOwner.value
   const ids = [...new Set(servers.value.map(server => server.id))]
+  const refreshMetadata = Date.now() - metadataRefreshAt >= 30000
+  const pendingMetadataIds = refreshMetadata ? ids : servers.value.filter(server => !server.last_updated).map(server => server.id)
   const controller = new AbortController()
   terminalStatusRequest = controller
   const current = () => owner() && generation === terminalStatusGeneration && sequence === terminalStatusSequence && terminalStatusActive()
+  let statusAdopted = false
   try {
     const nodes = {}
     // The API caps each unique batch at 1000; keep larger lists sequential.
@@ -783,9 +787,25 @@ const refreshTerminalStatuses = async () => {
       if (!current()) return
       Object.assign(nodes, result.error ? Object.fromEntries(batch.map(id => [id,{state:/^terminal_[a-z0-9_]+$/.test(result.error) ? result.error : 'query_failed'}])) : result.data?.nodes || {})
     }
-    if (current()) terminalStatuses.value = nodes
+    terminalStatuses.value = nodes
+    statusAdopted = true
+    if (refreshMetadata) metadataRefreshAt = Date.now()
+    for (let offset = 0; offset < pendingMetadataIds.length; offset += 1000) {
+      const latest = await adminApi({action:'list', metadataIds:pendingMetadataIds.slice(offset, offset + 1000), metadataRefresh:refreshMetadata}, selectedApiIndex.value, current, controller.signal)
+      if (!current()) return
+      if (latest.error) continue
+      for (const server of servers.value) {
+        const metadata = latest.data?.metadata?.[server.id]
+        if (!metadata?.last_updated) continue
+        server.os = metadata.os
+        server.ip_v4 = metadata.ip_v4
+        server.ip_v6 = metadata.ip_v6
+        server.region = server.region_override || metadata.region || ''
+        server.last_updated = metadata.last_updated
+      }
+    }
   } catch (_) {
-    if (current()) terminalStatuses.value = Object.fromEntries(ids.map(id => [id,{state:'query_failed'}]))
+    if (!statusAdopted && current()) terminalStatuses.value = Object.fromEntries(ids.map(id => [id,{state:'query_failed'}]))
   } finally {
     if (terminalStatusRequest !== controller) return
     terminalStatusRequest = null
@@ -804,6 +824,8 @@ const loginError = ref('')
 const loginLoading = ref(false)
 const adminSiteLoading = ref(false)
 const activeTab = ref('servers')
+const latencyVisited = ref(false)
+watch(activeTab, tab => { if (tab === 'collection') latencyVisited.value = true }, {flush:'sync'})
 watch(activeTab, () => { showCopyModal.value = false; terminalInstallOptions.value = {selected:false, enabled:false, token:''} })
 const servers = ref([])
 const selectedServers = ref([])
@@ -1207,6 +1229,8 @@ const handleApiIndexChange = async (newIndex) => {
 }
 
 const resetAdminContext = () => {
+  latencyVisited.value = false
+  metadataRefreshAt = 0
   notificationConfig.value = null
   terminalServer.value = null
   terminalStatuses.value = {}

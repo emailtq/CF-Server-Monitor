@@ -287,3 +287,45 @@ test('ordinary node terminal status validates authority but creates no cold brok
     assert.equal(calls,0);
   } finally {await h.dispose();}
 });
+
+test('bounded admin list projection reads first-report metadata for pending nodes independently of terminal admission', async () => {
+  const h = await harness({traceD1:true});
+  try {
+    await h.db.prepare("UPDATE servers SET history_partition_id=CASE id WHEN 'node-a' THEN 1 ELSE 2 END").run();
+    const query = () => h.action('list', {metadataIds:['node-a']});
+    assert.equal((await (await query()).json()).metadata?.['node-a'], undefined, 'no report is not empty metadata');
+    const body = {id:'node-a', terminal_enabled:false, time:{local_ts:Date.now()}, metrics:{cpu:1, os:'Ubuntu 24.04.3 LTS', ip_v4:'192.0.2.43', ip_v6:'2001:db8::43', timestamp:Date.now()}};
+    assert.equal((await h.fetch('/update', {method:'POST', cf:{country:'JP'}, headers:{...h.agentHeaders(), 'Content-Type':'application/json'}, body:JSON.stringify(body)})).status, 200);
+    const response = await query();
+    assert.equal(response.status, 200);
+    const data = await response.json(), metadata=data.metadata;
+    assert.ok(metadata?.['node-a'], 'first-report metadata is returned independently of terminal capability');
+    assert.equal(metadata['node-a'].os, 'Ubuntu 24.04.3 LTS');
+    assert.equal(metadata['node-a'].ip_v4, '192.0.2.43');
+    assert.equal(metadata['node-a'].ip_v6, '2001:db8::43');
+    assert.equal(metadata['node-a'].region, 'JP');
+    assert.ok(metadata['node-a'].last_updated > 0);
+    assert.deepEqual(Object.keys(metadata['node-a']).sort(), ['ip_v4','ip_v6','last_updated','os','region']);
+    assert.equal(metadata['node-b'], undefined);
+    assert.equal(data.servers, undefined, 'projection never returns complete config/business fields');
+    for (const metadataIds of [['node-a','node-a'], 'node-a', ['bad id'], Array(1001).fill('node-a')]) {
+      assert.equal((await h.action('list', {metadataIds})).status, 400);
+    }
+    const before = (await (await h.fetch('/test/worker-stats')).json()).queryTrace.length;
+    await h.action('terminal_status', {serverIds:['node-a']});
+    const after = (await (await h.fetch('/test/worker-stats')).json()).queryTrace.slice(before);
+    assert.equal(after.filter(item => item.sql.includes('FROM metrics_history')).length, 0, 'existing terminal-only callers pay no metadata-read cost');
+    assert.equal((await h.action('list', {metadataIds:['node-a']}, {headers:{Cookie:''}})).status, 401);
+    await saveSiteOptions(h.db, {terminal_enabled:'false'});
+    const disabled = await (await query()).json();
+    assert.equal(disabled.metadata['node-a'].os, 'Ubuntu 24.04.3 LTS');
+    await h.action('list');
+    const warmBefore=(await (await h.fetch('/test/worker-stats')).json()).queryTrace.length;
+    const firstWarm=await h.action('list',{metadataIds:['node-a','node-b'],metadataRefresh:true});
+    assert.equal(firstWarm.status,200);
+    assert.equal((await firstWarm.json()).metadata['node-a'].os,'Ubuntu 24.04.3 LTS');
+    await h.action('list',{metadataIds:['node-a','node-b'],metadataRefresh:true});
+    const warmTrace=(await (await h.fetch('/test/worker-stats')).json()).queryTrace.slice(warmBefore);
+    assert.equal(warmTrace.filter(item=>item.sql.includes('FROM metrics_history')).length,0,'low-frequency projection reuses the existing warm complete-metrics cache');
+  } finally {await h.dispose();}
+});

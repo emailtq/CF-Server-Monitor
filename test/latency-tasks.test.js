@@ -55,7 +55,7 @@ test('actual 9 and 32 task API configs → Go collection/report → authenticate
         assert.equal(collected.code, 0, collected.output);
         const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
         report.id = 'node-a'; report.metrics.timestamp = Date.now() - 1000;
-        assert.equal(report.config_schema, '9');
+        assert.equal(report.config_schema, '10', 'the current Agent advertises its supported schema while consuming a legacy schema-9 configuration');
         assert.equal(Object.keys(report.metrics.extra_probes).length, count);
         assert.ok(Object.values(report.metrics.extra_probes).every(probe => Number(probe.ping) >= 1 && Number(probe.loss) === 0));
         assert.ok(!JSON.stringify(report).includes(target));

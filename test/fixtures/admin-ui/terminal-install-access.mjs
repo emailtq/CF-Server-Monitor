@@ -190,7 +190,8 @@ try {
     assert.notEqual(token,old);
     assert.ok((await command()).includes(token));
     assert.equal((await command()).includes(old),false);
-    assert.equal(await page.locator('[data-credential-notice]').count(),0,'lost reply recovery must not announce success');
+    assert.equal(await page.locator('[data-credential-notice]').count(),1);
+    assert.equal(await page.locator('[data-credential-notice]').getAttribute('role'),'alert','lost reply reports its actual failure while rereading the current credential');
   });
   await check('background read is cancellable; stale response never enters another node', async () => {
     await page.keyboard.press('Escape');
@@ -260,7 +261,7 @@ try {
         assert.equal(await toggle().isChecked(),false);
         const geometry=await page.locator('.admin-dialog-download').evaluate(d=>{
           const css=getComputedStyle(d), header=getComputedStyle(d.querySelector('h2')), command=getComputedStyle(d.querySelector('.cmd-output')), footer=getComputedStyle(d.querySelector('footer'));
-          return {width:d.getBoundingClientRect().width,padding:css.padding,radius:css.borderRadius,font:header.fontSize,weight:header.fontWeight,line:header.lineHeight,commandFont:command.fontSize,commandLine:command.lineHeight,commandFamily:command.fontFamily,footer:footer.flexDirection,overflow:d.scrollWidth>d.clientWidth};
+          return {width:d.getBoundingClientRect().width,padding:getComputedStyle(d.querySelector('.admin-dialog-scroll')).paddingLeft,radius:css.borderRadius,font:header.fontSize,weight:header.fontWeight,line:header.lineHeight,commandFont:command.fontSize,commandLine:command.lineHeight,commandFamily:command.fontFamily,footer:footer.flexDirection,overflow:d.scrollWidth>d.clientWidth};
         });
         assert.ok(Math.abs(geometry.width-Math.min(576,width-32))<2);
         assert.equal(geometry.padding,'24px'); assert.equal(geometry.radius,'10px');

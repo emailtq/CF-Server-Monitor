@@ -1,5 +1,5 @@
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
-import { getLatestMetricsForAllServers, clearDashboardLatencyHistoryCache } from '../database/schema.js';
+import { getLatestMetrics, getLatestMetricsForAllServers, clearDashboardLatencyHistoryCache } from '../database/schema.js';
 import { getAllServers, clearServersListCache, clearAllCaches } from '../utils/cache.js';
 import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
@@ -677,6 +677,29 @@ async function handleSaveThemeOptionsAction({ env, sys, data }) {
 }
 
 async function handleListAction({ env, data, sys }) {
+  if (data.metadataIds !== undefined) {
+    const ids = data.metadataIds;
+    if (!Array.isArray(ids) || ids.length > 1000 || !ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id)) || new Set(ids).size !== ids.length) return createBadRequestResponse('invalidServerIds');
+    if (data.metadataRefresh === true) {
+      const metrics = await getLatestMetricsForAllServers(env.DB);
+      return Response.json({metadata:Object.fromEntries(ids.filter(id => metrics.has(id)).map(id => {
+        const item = metrics.get(id);
+        return [id, {os:item.os || '', region:item.region || '', ip_v4:item.ip_v4 || '0', ip_v6:item.ip_v6 || '0', last_updated:item.timestamp || 0}];
+      }))}, {headers:{'Cache-Control':'no-store'}});
+    }
+    const {results:queue} = await env.DB.prepare('SELECT id, history_partition_id, timestamp FROM servers WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids)).all();
+    const metadata = Object.create(null);
+    // Only pending first reports bypass the dashboard's 30s cache; never reload node business configuration.
+    await Promise.all(Array.from({length:Math.min(3, queue.length)}, async () => {
+      while (queue.length) {
+        const server = queue.shift();
+        if (!(server.history_partition_id > 0)) continue;
+        const metrics = await getLatestMetrics(env.DB, server.id, server);
+        if (metrics) metadata[server.id] = {os:metrics.os || '', region:metrics.region || '', ip_v4:metrics.ip_v4 || '0', ip_v6:metrics.ip_v6 || '0', last_updated:metrics.timestamp || 0};
+      }
+    }));
+    return Response.json({metadata}, {headers:{'Cache-Control':'no-store'}});
+  }
   // 管理后台「刷新缓存」会带 refresh: true，跳过本 isolate 的 120 秒列表缓存直接读 D1
   if (data?.refresh === true) {
     clearServersListCache();
