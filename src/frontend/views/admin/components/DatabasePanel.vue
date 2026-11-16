@@ -1,38 +1,13 @@
 <template>
-  <div id="tab-database" class="tab-content" :class="{ active: activeTab === 'database' }">
-    <div class="settings-section">
-      <div class="section-title">{{ trans.dbManagement }}</div>
-
-      <div class="settings-grid">
-        <div class="form-group">
-          <button @click="$emit('open-db-modal', 'upgrade')" class="btn btn-primary btn-lg" :disabled="dbLoading"> {{ trans.upgradeDatabase }}</button>
-          <p class="text-muted text-sm mt-2">{{ trans.upgradeDesc }}</p>
-        </div>
-
-        <div class="form-group">
-          <button @click="$emit('open-db-modal', 'clearHistory')" class="btn btn-red btn-lg" :disabled="dbLoading"> {{ trans.clearHistory }}</button>
-          <p class="text-muted text-sm mt-2">{{ trans.clearHistoryDesc }}</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <div class="section-title">{{ trans.exportServers }} / {{ trans.importServers }}</div>
-
-      <div class="settings-grid">
-        <div class="form-group">
-          <label class="admin-check-target" for="include-notification-secrets"><input id="include-notification-secrets" v-model="includeNotificationSecrets" type="checkbox" :disabled="exporting || importing"><span>{{ trans.adminIncludeNotificationSecrets }}</span></label>
-          <p class="text-muted text-sm">{{ trans.adminBackupWarning }}</p>
+  <div id="tab-database" class="tab-content database-settings" :class="{ active: activeTab === 'database' }">
+    <section class="settings-section" data-section="backup">
+      <h3 class="section-title">{{ trans.adminBackup }}</h3>
+      <p class="text-muted database-description">{{ trans.adminBackupWarning }}</p>
+      <label class="admin-check-target database-consent" for="include-notification-secrets"><input id="include-notification-secrets" v-model="includeNotificationSecrets" type="checkbox" :disabled="exporting || importing"><span>{{ trans.adminIncludeNotificationSecrets }}</span></label>
+      <div class="database-backup-actions">
           <button @click="requestExport" class="btn btn-primary btn-lg" :disabled="dbLoading || exporting || importing">
             <AdminIcon name="download" />{{ exporting ? trans.exporting : ' ' + trans.exportServers }}
           </button>
-          <p v-if="exportNotice" class="text-sm mt-2" :style="{ color: exportNotice.success ? 'var(--accent-green)' : 'var(--accent-red)' }">
-            {{ exportNotice.text }}
-          </p>
-          <p v-if="exportNotice?.warning" class="warning-box" role="status">{{ trans.adminSensitiveBackupWarning }} ({{ exportNotice.warning }})</p>
-        </div>
-
-        <div class="form-group">
           <input
             ref="fileInput"
             type="file"
@@ -43,8 +18,11 @@
           <button @click="$refs.fileInput.click()" class="btn btn-lg" :disabled="dbLoading || importing || exporting">
             <AdminIcon name="upload" />{{ importing ? trans.importing : ' ' + trans.importServers }}
           </button>
-        </div>
       </div>
+      <p v-if="exportNotice" class="text-sm mt-2" :style="{ color: exportNotice.success ? 'var(--accent-green)' : 'var(--accent-red)' }" role="status">
+        {{ exportNotice.text }}
+      </p>
+      <p v-if="exportNotice?.warning" class="warning-box" role="status">{{ trans.adminSensitiveBackupWarning }}</p>
 
       <div v-if="importResult" class="mt-3">
         <div :class="importResult.success ? 'warning-box' : 'danger-box'" class="mb-2">
@@ -70,7 +48,21 @@
           <button v-if="importResult.reloadNeeded" class="btn btn-primary" @click="acknowledgeReload">{{ trans.adminAcknowledgeReload }}</button>
         </div>
       </div>
-    </div>
+    </section>
+    <section class="settings-section" data-section="maintenance">
+      <h3 class="section-title">{{ trans.dbManagement }}</h3>
+      <div class="database-action">
+        <p class="text-muted database-description">{{ trans.upgradeDesc }}</p>
+        <button @click="$emit('open-db-modal', 'upgrade')" class="btn" :disabled="dbLoading">{{ trans.upgradeDatabase }}</button>
+      </div>
+    </section>
+    <section class="settings-section database-danger" data-section="danger">
+      <h3 class="section-title">{{ trans.clearHistory }}</h3>
+      <div class="database-action">
+        <p class="text-muted database-description">{{ trans.clearHistoryDesc }}</p>
+        <button @click="$emit('open-db-modal', 'clearHistory')" class="btn btn-red" :disabled="dbLoading">{{ trans.clearHistory }}</button>
+      </div>
+    </section>
     <AdminDialog :open="showSensitiveConfirm" :title="trans.adminSensitiveBackupTitle" :busy="exporting" @close="showSensitiveConfirm = false">
       <template #body><p class="danger-box">{{ trans.adminSensitiveBackupWarning }}</p><p>{{ trans.adminBackupWarning }}</p><p v-if="exportNotice && !exportNotice.success" class="text-red" role="alert">{{ exportNotice.text }}</p></template>
       <template #footer><button class="btn" :disabled="exporting" @click="showSensitiveConfirm = false">{{ trans.cancel }}</button><button class="btn btn-primary" :disabled="exporting" @click="handleExport(true)">{{ trans.adminConfirmSensitiveExport }}</button></template>

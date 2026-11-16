@@ -14,7 +14,9 @@ const out = path.resolve(process.env.NAMED_PAGES_REPORT_DIR || path.join(os.tmpd
 fs.mkdirSync(out, { recursive: true });
 const baseline = process.argv.includes('--baseline');
 const themesOnly = process.argv.includes('--themes-only');
-const report = { baseline, realD1: true, physicalAndroid: false, checks: [], bounds: [], screenshots: [], errors: [], requests: [] };
+const dataSettingsOnly = process.argv.includes('--data-settings-only');
+const layoutOnly = process.argv.includes('--layout-only');
+const report = { baseline, scope: dataSettingsOnly ? 'data-settings' : 'named-pages', realD1: true, physicalAndroid: false, checks: [], bounds: [], screenshots: [], errors: [], requests: [] };
 let a, b, server, browser, context, page;
 const holds = [], pending = new Set();
 const hold = (site, action, status) => {
@@ -62,6 +64,34 @@ async function measure(pageName, caseName) {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'page has no horizontal overflow');
     const coarse = await page.evaluate(() => matchMedia('(pointer:coarse)').matches);
     assert.ok(bounds.filter(b => b.innerRects.length === 1 && !b.wrapsThemeRow).every(b => b.box.height === (coarse ? 44 : 36)), 'unaffected single-line controls retain accepted 36/44px height');
+  }
+}
+
+async function measureDataSettings(pageName, caseName, touch) {
+  const layout = await page.evaluate(pageName => {
+    const root = document.querySelector(pageName === 'database' ? '#tab-database' : '.general-settings');
+    const box = el => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, width: b.width, height: b.height, right: b.right, bottom: b.bottom }; };
+    return { viewportWidth: innerWidth, sections: [...root.querySelectorAll('.settings-section')].map(el => ({ name: el.dataset.section, box: box(el) })),
+      fields: [...root.querySelectorAll('.form-input,.form-select')].map(el => ({ field: el.dataset.settingField, box: box(el), labelX: el.closest('.form-group').querySelector('.form-label').getBoundingClientRect().x })),
+      consentX: root.querySelector('.database-consent input')?.getBoundingClientRect().x,
+      backupActionX: root.querySelector('.database-backup-actions .btn')?.getBoundingClientRect().x,
+      rowGaps: [...root.querySelectorAll('.form-row')].map(el => getComputedStyle(el).gap),
+      descriptions: [...root.querySelectorAll('.database-action p')].map(el => ({ description: box(el), action: box(el.parentElement.querySelector('.btn')) })) };
+  }, pageName);
+  report.bounds.push({ caseName, pageName, layout });
+  assert.deepEqual(layout.sections.map(s => s.name), pageName === 'database' ? ['backup', 'maintenance', 'danger'] : ['site', 'collection', 'cloudflare'], 'actual information/keyboard order');
+  assert.ok(layout.descriptions.every(d => d.description.bottom + 11 <= d.action.y), 'description precedes action with breathing room');
+  if (pageName === 'settings') {
+    assert.ok(layout.rowGaps.every(gap => gap === '20px'), 'actual row spacing survives later legacy mobile rules');
+    const [site, collection, cloudflare] = layout.sections.map(s => s.box);
+    assert.ok(site.bottom + 15 <= collection.y, 'site is a separate first group');
+    if (touch) assert.ok(collection.bottom + 15 <= cloudflare.y, 'mobile groups stack');
+    else { assert.equal(collection.y, cloudflare.y, 'desktop groups share a row'); assert.ok(collection.right + 15 <= cloudflare.x, 'desktop uses width'); }
+    assert.ok(layout.fields.every(f => f.box.x >= 0 && f.box.right <= layout.viewportWidth && f.labelX === f.box.x), 'fields and hints share a real axis within viewport');
+  } else {
+    const [, maintenance, danger] = layout.sections.map(s => s.box);
+    assert.ok(maintenance.bottom + 23 <= danger.y, 'danger is separated from ordinary maintenance');
+    assert.equal(layout.consentX, layout.backupActionX, 'backup consent aligns with actions');
   }
 }
 
@@ -133,7 +163,7 @@ try {
         const item = holds.find(item => item.site === match[1] && item.action === action && !item.arrived);
         const headers = { ...request.headers, Cookie: `cfsm_auth=${h.token}`, Authorization: `Bearer ${h.token}`, Origin: 'https://example.com' }; delete headers.host;
         const result = item?.status ? Response.json({ error: 'injected_failure' }, { status: item.status }) : await h.fetch(match[2] + url.search, { method: request.method, headers, ...(body ? { body } : {}) });
-        const payload = Buffer.from(await result.arrayBuffer()); report.requests.push({ site: match[1], action, status: item?.status || result.status });
+        const payload = Buffer.from(await result.arrayBuffer()); report.requests.push({ site: match[1], action, status: item?.status || result.status, ...(['save_settings', 'import_servers', 'export_servers'].includes(action) ? { body: JSON.parse(body) } : {}) });
         if (action === 'start_theme_preview' && result.ok) report.previewUrl = JSON.parse(payload.toString()).preview_url;
         if (item) { item.arrived = true; await item.promise; }
         response.writeHead(item?.status || result.status, { 'Content-Type': result.headers.get('Content-Type') || 'application/json' });
@@ -145,21 +175,30 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.ADMIN_UI_CHROMIUM || path.join(os.homedir(), 'AppData/Local/ms-playwright/chromium-1248/chrome-win64/chrome.exe') });
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   const cases = baseline ? [[360, false, 'fr'], [390, true, 'es'], [1440, false, 'fr'], [1920, true, 'fr']] : [[360, false, 'fr'], [360, true, 'fr'], [390, false, 'es'], [390, true, 'es'], [1440, false, 'zh'], [1440, true, 'zh'], [1920, false, 'fr'], [1920, true, 'fr'], [390, false, 'ja'], [390, true, 'zh-TW'], [1920, false, 'en'], [1920, true, 'id']];
+  const selectedCase = process.argv.find(arg => arg.startsWith('--case='))?.slice(7);
+  if (selectedCase) { const index = cases.findIndex(([width, dark, locale]) => `${width}-${dark ? 'dark' : 'light'}-${locale}` === selectedCase); assert.ok(index >= 0, 'case must select an existing viewport/theme/locale'); cases.splice(0, cases.length, cases[index]); }
   for (const [width, dark, locale] of process.argv.includes('--actions-only') ? [] : cases) {
     const name = `${width}-${dark ? 'dark' : 'light'}-${locale}`, touch = width < 640;
-    context = await browser.newContext({ viewport: { width, height: touch ? 844 : 1000 }, hasTouch: touch, isMobile: touch });
+    context = await browser.newContext({ viewport: { width, height: touch ? 844 : 1000 }, hasTouch: touch, isMobile: touch, timezoneId: 'Asia/Shanghai' });
     page = await context.newPage(); page.on('pageerror', error => report.errors.push(error.stack));
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
     await page.goto(`${origin}/test/fixtures/admin-ui/named-pages.html?locale=${locale}#/admin`);
     await page.waitForFunction(() => window.adminState?.().servers.length === 2 && window.adminState().settings.username === 'fixture');
     await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
     assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), touch, 'real touch/fine media, not only width');
-    for (const pageName of themesOnly ? ['themeStore'] : ['database', 'themeStore', 'security', 'settings', 'updates']) {
+    for (const pageName of themesOnly ? ['themeStore'] : dataSettingsOnly ? ['database', 'settings'] : ['database', 'themeStore', 'security', 'settings', 'updates']) {
       await enter(pageName);
       if (pageName === 'themeStore') { await page.locator('.theme-card').first().waitFor(); await page.waitForFunction(() => [...document.querySelectorAll('.theme-cover')].every(image => image.complete && image.naturalWidth > 0)); }
       if (pageName === 'security') await page.evaluate(() => window.adminState().changeAdminPassword = true);
       await frames(); await measure(pageName, name);
-      if (locale === 'fr' || locale === 'es' || width === 1440 && !dark || pageName === 'security' && width === 390) { await page.evaluate(() => scrollTo(0, 0)); await shot(`${name}-${pageName}`); }
+      if (dataSettingsOnly && !baseline) await measureDataSettings(pageName, name, touch);
+      if (dataSettingsOnly || locale === 'fr' || locale === 'es' || width === 1440 && !dark || pageName === 'security' && width === 390) { await page.evaluate(() => scrollTo(0, 0)); await shot(`${name}-${pageName}`); }
+      if (dataSettingsOnly && pageName === 'settings' && touch) {
+        await page.locator('.cloudflare-settings').evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' })); await shot(`${name}-settings-cloudflare`, true);
+      }
+      if (dataSettingsOnly && pageName === 'settings' && ['fr', 'es', 'zh'].includes(locale)) {
+        await page.locator('[data-setting-field=frontend_ws_timeout_minutes]').evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' })); await shot(`${name}-settings-fields`, true);
+      }
       if (['fr', 'es'].includes(locale) && ['themeStore', 'database'].includes(pageName)) {
         const target = pageName === 'themeStore' ? page.locator('.theme-card').last() : page.locator('#tab-database .settings-section .btn').last();
         await target.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' })); await shot(`${name}-${pageName}-actions`, true);
@@ -172,7 +211,7 @@ try {
         if (!baseline) { assert.ok(spacing >= 7.5); assert.equal(await page.locator('section.settings-section:visible a.btn').getAttribute('href'), 'https://github.com/emailtq/CF-Server-Monitor/tree/terminal'); }
       }
     }
-    if (!baseline && !themesOnly) {
+    if (!baseline && !themesOnly && !dataSettingsOnly) {
       await eyes(name, touch);
       assert.equal(await page.locator('[data-setting-field=jwt_secret]').inputValue(), '', 'existing JWT never refilled');
       assert.equal(await page.locator('[data-setting-field=password]').inputValue(), '', 'configured password never refilled');
@@ -180,8 +219,8 @@ try {
     }
     await context.close(); context = null;
   }
-  if (!baseline && !themesOnly) {
-    context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  if (!baseline && !themesOnly && !layoutOnly) {
+    context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, timezoneId: 'Asia/Shanghai' });
     page = await context.newPage(); page.on('pageerror', error => report.errors.push(error.stack));
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
     await page.goto(`${origin}/test/fixtures/admin-ui/named-pages.html?locale=fr#/admin`);
@@ -214,31 +253,82 @@ try {
     assert.equal(await page.evaluate(() => window.adminState().settings.jwt_secret), '');
     assert.equal((await (await a.action('get_settings')).json()).settings.password_configured, true);
     await closeMessage();
-    await enter('settings'); await field('site_title').fill('Named pages accepted'); await save();
+    await enter('settings');
+    assert.equal(await page.locator('.settings-save-bar:visible .btn').count(), 1, 'one whole-config save');
+    await field('site_title').fill('Named pages accepted');
+    await field('cloudflare_account_id').fill('fixture-account'); await field('cloudflare_token').fill('fixture-cloudflare-token');
+    await field('cloudflare_token').focus();
+    await field('cloudflare_token').evaluate(el => { window.ownedCloudflareInput = el; el.setSelectionRange(2, 5); });
+    await page.locator('.cloudflare-settings .admin-secret-eye').tap();
+    assert.deepEqual(await field('cloudflare_token').evaluate(el => [window.ownedCloudflareInput === el, document.activeElement === el, el.selectionStart, el.selectionEnd]), [true, true, 2, 5], 'moved secret keeps accepted input/focus/selection');
+    await page.locator('#cfg_auto_discovery').uncheck(); await page.locator('#cfg_wss_report_enabled').check();
+    await page.locator('.wss-schedule-actions .btn').last().click();
+    await page.locator('.wss-hour-option').nth(0).click(); await page.locator('.wss-hour-option').nth(23).click();
+    assert.deepEqual(await page.evaluate(() => window.adminState().settings.wss_report_hours), [15, 16], 'Shanghai local 00 and 23 map to UTC16 and15');
+    await field('frontend_ws_timeout_minutes').fill('17'); await field('long_history_points').selectOption('240');
+    const failedSettings = hold('a', 'save_settings', 503); await save(); await waitHold(failedSettings);
+    assert.ok(await page.locator('.general-settings input,.general-settings select,.general-settings button').evaluateAll(els => els.every(el => el.matches(':disabled'))), 'one busy fieldset covers every group/action');
+    failedSettings.release(); await page.waitForFunction(() => window.adminState().saveResult?.success === false && !window.adminState().saving);
+    assert.equal(await field('site_title').inputValue(), 'Named pages accepted'); assert.equal(await field('cloudflare_token').inputValue(), 'fixture-cloudflare-token');
+    assert.deepEqual(await page.evaluate(() => window.adminState().settings.wss_report_hours), [15, 16], 'settings failure retains entire draft');
+    await closeMessage(); await save();
     await page.waitForFunction(() => window.adminState().saveResult?.success === true && !window.adminState().saving);
-    assert.equal((await (await a.action('get_settings')).json()).settings.site_title, 'Named pages accepted');
+    const payload = report.requests.filter(r => r.action === 'save_settings').at(-1).body.settings;
+    assert.deepEqual(Object.keys(payload).sort(), ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'display_mode', 'preferred_theme', 'default_language', 'appearance_options', 'auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_account_id', 'cloudflare_token', 'username', 'csp_static', 'csp_api', 'ua'].sort(), 'original complete DTO keys; no password/JWT refill or partial save');
+    assert.deepEqual([payload.auto_discovery, payload.wss_report_enabled, payload.wss_report_hours, payload.frontend_ws_timeout_minutes, payload.long_history_points], ['false', 'true', [15, 16], '17', '240']);
+    const persisted = (await (await a.action('get_settings')).json()).settings;
+    assert.equal(persisted.site_title, 'Named pages accepted'); assert.equal(persisted.auto_discovery, 'false'); assert.equal(persisted.wss_report_enabled, 'true');
+    assert.equal(persisted.frontend_ws_timeout_minutes, '17'); assert.equal(persisted.long_history_points, '240');
+    assert.deepEqual(persisted.wss_report_hours, [15, 16]);
+    report.settingsContract = { payload, persisted: Object.fromEntries(['site_title', 'auto_discovery', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points'].map(key => [key, persisted[key]])), timezone: 'Asia/Shanghai', localHours: [0, 23], utcHours: [15, 16], oneSave: true, failureRetainedDraft: true };
     await closeMessage();
     await page.getByRole('button', { name: t.queryD1Quota, exact: true }).click();
     await page.waitForFunction(() => !!window.adminState().alertMessage && !window.adminState().d1UsageLoading); await closeMessage();
     report.checks.push('real security validation, password consent/cancel, disabled busy form, failed-save draft recovery and successful authenticated D1 save');
 
     await enter('database');
+    assert.equal((await a.action('save_notification_config', { expectedRevision: 0, channels: [{ name: 'Fixture only', type: 'telegram', enabled: false, config: { chatId: '42' }, secrets: { botToken: '123:fixture-only' }, template: '{{message}}' }], rules: [] })).status, 200);
     const exportButton = page.getByRole('button', { name: t.exportServers, exact: true });
     const download = async click => { const waiting = page.waitForEvent('download'); await click(); const file = await waiting; const target = path.join(out, file.suggestedFilename()); await file.saveAs(target); return JSON.parse(fs.readFileSync(target, 'utf8')); };
     const backup = await download(() => exportButton.click());
     assert.equal(backup.format, 'cfsm-backup'); assert.equal(backup.version, 1); assert.equal(backup.servers.length, 2);
+    assert.equal('notification_config' in backup.settings, false, 'ordinary backup excludes notification credentials');
     const exportFailure = hold('a', 'export_servers', 503); await exportButton.click(); await waitHold(exportFailure); exportFailure.release();
     await page.getByText(t.serversExportFailed, { exact: true }).waitFor(); await download(() => exportButton.click());
     await page.locator('#include-notification-secrets').check(); await exportButton.click();
     const dialog = page.getByRole('dialog'); await dialog.waitFor();
-    await download(() => dialog.getByRole('button', { name: t.adminConfirmSensitiveExport, exact: true }).click()); await dialog.waitFor({ state: 'hidden' });
+    const exportsBeforeConsent = report.requests.filter(r => r.action === 'export_servers').length;
+    await dialog.getByRole('button', { name: t.cancel, exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    assert.equal(report.requests.filter(r => r.action === 'export_servers').length, exportsBeforeConsent, 'cancel sends no sensitive export');
+    await exportButton.click(); await dialog.waitFor();
+    const sensitive = await download(() => dialog.getByRole('button', { name: t.adminConfirmSensitiveExport, exact: true }).click()); await dialog.waitFor({ state: 'hidden' });
+    assert.equal(sensitive.settings.notification_config.channels[0].secrets.botToken, '123:fixture-only', 'actual sensitive backup after explicit consent');
+    assert.equal(sensitive.notificationBackup.warning, 'notification_backup_contains_credentials', 'machine warning remains in the backup protocol');
+    const sensitiveWarning = page.locator('#tab-database p.warning-box[role=status]');
+    assert.equal(await sensitiveWarning.textContent(), t.adminSensitiveBackupWarning, 'sensitive export keeps the complete localized warning without raw machine code');
+    assert.equal(await page.locator('#tab-database').innerText().then(text => text.includes('notification_backup_contains_credentials')), false, 'raw warning code is not displayed');
+    await sensitiveWarning.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' })); await shot('390-light-fr-sensitive-export-warning', true);
+    report.checks.push('sensitive backup retains protocol warning but displays only its complete localized safety message');
     const upload = page.locator('#tab-database input[type=file]');
     await upload.setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from('{invalid') });
     await page.getByText(t.adminImportFailed, { exact: true }).waitFor();
+    assert.equal(await upload.inputValue(), '', 'invalid-file recovery clears file chooser');
     const importedId = '00000000-0000-4000-8000-000000000011';
-    await upload.setInputFiles({ name: 'valid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ servers: [{ id: importedId, name: 'Imported fixture' }] })) });
+    const notification = sensitive.settings.notification_config;
+    notification.rules = [{ id: 'selected-fixture', name: 'Missing source', type: 'offline', enabled: true, scope: { mode: 'selected', serverIds: ['source-only'] }, targetIds: [notification.channels[0].id], options: { minutes: 5 } }];
+    const importFile = { name: 'valid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ servers: [{ id: importedId, name: 'Imported fixture' }, { id: 'node-a', name: 'Existing fixture' }], settings: { site: { password: 'ignored-fixture-password', ua: 'ignored-fixture-agent' }, notification_config: notification } })) };
+    const failedImport = hold('a', 'import_servers', 503); await upload.setInputFiles(importFile); await waitHold(failedImport);
+    assert.equal(await exportButton.isDisabled(), true); assert.equal(await page.locator('#include-notification-secrets').isDisabled(), true, 'backup busy mutual exclusion');
+    failedImport.release(); await page.getByText(t.adminImportFailed, { exact: true }).waitFor();
+    await upload.setInputFiles(importFile);
     await page.getByRole('button', { name: t.adminAcknowledgeReload, exact: true }).waitFor();
+    await page.getByText(`${t.importedCount}: 1`, { exact: true }).waitFor(); await page.getByText(`${t.skippedCount}: 1`, { exact: true }).waitFor();
     assert.equal((await a.db.prepare('SELECT name FROM servers WHERE id=?').bind(importedId).first()).name, 'Imported fixture');
+    await page.getByText(`${t.adminUnresolvedRules}: selected-fixture`, { exact: true }).waitFor();
+    await page.getByText('selected-fixture: source-only', { exact: true }).waitFor();
+    await page.getByText(`${t.adminIgnoredFields}: password, ua`, { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.adminState().servers.length), 2, 'import has not implicitly reloaded');
+    report.importContract = { imported: 1, skipped: 1, unresolvedRuleIds: ['selected-fixture'], missingServerIds: ['source-only'], ignoredFields: ['password', 'ua'], explicitReload: true };
     await measure('database-import-result', '390-light-fr');
     await page.getByRole('button', { name: t.adminAcknowledgeReload, exact: true }).evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
     await shot('390-light-fr-import-result');
@@ -292,6 +382,15 @@ try {
     assert.equal(await page.evaluate(() => window.adminState().servers.length), 2, 'site B does not adopt site A imported rows');
     await shot('390-light-fr-updates-site-b');
     report.checks.push('actual version strings from authenticated config, latest Agent not stale version.json agent, stale config/403 discarded after site switch');
+    await enter('settings'); await field('site_title').fill('Site B pending settings');
+    const staleSave = hold('b', 'save_settings'); await save(); await waitHold(staleSave);
+    await page.locator('#admin-site').selectOption('0');
+    await page.waitForFunction(() => !window.adminState().adminSiteLoading && window.adminState().selectedApiIndex === 0);
+    staleSave.release(); await frames();
+    assert.equal(await field('site_title').inputValue(), 'Named pages accepted', 'old-site successful save never adopts its draft/result in new site');
+    assert.equal(await page.evaluate(() => window.adminState().saveResult), null);
+    assert.equal((await (await b.action('get_settings')).json()).settings.site_title, 'Site B pending settings', 'old request still saved only its actual D1 owner');
+    report.checks.push('site switch during actual successful whole-config save discards stale UI result, keeps both D1 site owners');
   }
 } catch (error) { report.errors.push(error.stack); }
 finally {

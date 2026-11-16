@@ -9,7 +9,10 @@ export default {
   latencyConflict: "Konfigurasi berubah. Muat ulang sebelum menyimpan.",
   latencyUnavailable: "Perbarui Worker situs untuk mengaktifkan monitor latensi terpadu.",
 
-  collectionSettings: "Pengumpulan dan koneksi",
+  adminBackup: "Pencadangan dan pemulihan",
+  adminSiteSettings: "Pengaturan situs",
+  adminCloudflareUsage: "Penggunaan Cloudflare",
+  collectionSettings: "Koneksi dan pelaporan",
   latencyName: "Nama",
   latencyNone: "Batalkan semua",
   latencyAdd: "Tambah monitor",

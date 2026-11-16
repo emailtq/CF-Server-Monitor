@@ -262,6 +262,38 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui .settings-save-bar { margin-top: 16px; }
 .admin-ui.admin-ui.admin-ui .settings-save-bar { background: var(--cf-panel); border-color: var(--cf-border); border-radius: 6px; box-shadow: none; backdrop-filter: none; }
 .admin-ui .settings-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+/* Only the reopened data/settings pages use this grouping; other named pages keep their layout. */
+.admin-ui .general-settings { display: grid; gap: 20px; align-items: start; }
+.admin-ui .general-site-selector { margin-bottom: 20px; }
+.admin-ui .general-settings .site-settings { grid-column: 1 / -1; }
+.admin-ui .general-settings .form-group { margin-bottom: 0; }
+.admin-ui .general-settings .settings-section .form-row { gap: 20px; }
+.admin-ui .general-settings .form-row > .form-group:not(.checkbox-item) { display: flex; flex-direction: column; }
+.admin-ui .general-settings .form-row .form-group > :is(.form-input, .form-select) { margin-top: auto; }
+.admin-ui .general-settings .cloudflare-settings .form-row { flex-direction: column; }
+.admin-ui .general-settings .cloudflare-settings .form-row + .form-row { margin-top: 20px; }
+.admin-ui .general-settings .checkbox-item { align-items: start; gap: 8px 16px; }
+.admin-ui .general-settings .checkbox-item > input { align-self: center; }
+.admin-ui .general-settings .wss-schedule { margin-top: 20px; }
+.admin-ui .general-settings .wss-schedule-actions { align-items: flex-start; }
+.admin-ui.admin-ui.admin-ui :is(.general-settings, .database-settings) .btn { height: auto; padding: 6.5px 12px; font-size: 14px; line-height: 21px; }
+.admin-ui .database-settings .settings-section + .settings-section { margin-top: 20px; }
+.admin-ui .database-description { margin: 0; max-width: 80ch; font-size: 14px; line-height: 1.5; }
+.admin-ui .database-consent { display: flex; align-items: center; justify-content: flex-start; gap: 12px; margin: 16px 0; }
+.admin-ui .database-backup-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.admin-ui .database-action .btn { margin-top: 16px; }
+.admin-ui.admin-ui.admin-ui .database-settings .database-danger { margin-top: 32px; border-color: color-mix(in oklab, var(--cf-red) 35%, var(--cf-border)); }
+.admin-ui.admin-ui.admin-ui .database-danger .section-title { color: var(--cf-red); border-color: color-mix(in oklab, var(--cf-red) 35%, var(--cf-border)); }
+@media (min-width: 1100px) {
+  .admin-ui .general-settings { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
+@media (max-width: 639px) {
+  .admin-ui .database-backup-actions { flex-direction: column; }
+  .admin-ui .database-backup-actions .btn { width: 100%; }
+}
+@media (pointer: coarse) {
+  .admin-ui.admin-ui.admin-ui :is(.general-settings, .database-settings) .btn { padding-top: 10.5px; padding-bottom: 10.5px; }
+}
 .admin-ui .ping-node-fields { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .admin-ui .ping-node-fields .ping-node-name { width: 96px; flex-shrink: 0; }
 .admin-ui .ping-node-fields .form-input:not(.ping-node-name) { flex: 1; width: 0; }

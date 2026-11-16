@@ -9,7 +9,10 @@ export default {
   latencyConflict: "設定が変更されました。再読み込み後に保存してください。",
   latencyUnavailable: "統一遅延監視には、このサイトのWorkerを更新してください。",
 
-  collectionSettings: "収集と接続",
+  adminBackup: "バックアップと復元",
+  adminSiteSettings: "サイト設定",
+  adminCloudflareUsage: "Cloudflare 使用量",
+  collectionSettings: "接続とレポート",
   latencyName: "名前",
   latencyNone: "すべて解除",
   latencyAdd: "監視を追加",

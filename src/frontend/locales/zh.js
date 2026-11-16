@@ -9,7 +9,10 @@ export default {
   latencyConflict: "配置已变更，请刷新后重新保存。",
   latencyUnavailable: "请先更新此站点的Worker以启用统一延迟任务。",
 
-  collectionSettings: "采集和连接",
+  adminBackup: "备份与恢复",
+  adminSiteSettings: "站点设置",
+  adminCloudflareUsage: "Cloudflare 用量",
+  collectionSettings: "连接与上报",
   latencyName: "名称",
   latencyNone: "全不选",
   latencyAdd: "添加监控",

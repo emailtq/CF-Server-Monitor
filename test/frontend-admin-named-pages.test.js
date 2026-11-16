@@ -30,7 +30,8 @@ test('Worker terminal version source stays separate from Agent releases and reta
 
 test('named admin pages fit long labels and inset eyes preserve actual input selection with D1 actions', { timeout: 240000 }, () => {
   const out = process.env.NAMED_PAGES_REPORT_DIR || path.join(os.tmpdir(), 'cfsm-admin-ui-evidence', `round4-named-pages-${Date.now()}`);
-  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/named-pages.mjs'], { encoding: 'utf8', timeout: 230000, windowsHide: true, env: { ...process.env, NAMED_PAGES_REPORT_DIR: out } });
+  const args = process.env.NAMED_PAGES_SCOPE === 'data-settings' ? ['--data-settings-only'] : [];
+  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/named-pages.mjs', ...args], { encoding: 'utf8', timeout: 230000, windowsHide: true, env: { ...process.env, NAMED_PAGES_REPORT_DIR: out } });
   process.stdout.write(result.stdout || ''); process.stderr.write(result.stderr || '');
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
 });

@@ -9,7 +9,10 @@ export default {
   latencyConflict: "La configuración cambió. Recarga antes de guardar.",
   latencyUnavailable: "Actualiza el Worker del sitio para activar los monitores unificados.",
 
-  collectionSettings: "Recopilación y conexiones",
+  adminBackup: "Copia de seguridad y restauración",
+  adminSiteSettings: "Configuración del sitio",
+  adminCloudflareUsage: "Uso de Cloudflare",
+  collectionSettings: "Conexiones e informes",
   latencyName: "Nombre",
   latencyNone: "Desmarcar todo",
   latencyAdd: "Añadir monitor",

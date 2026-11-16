@@ -1,6 +1,5 @@
 <template>
-  <div class="settings-grid collection-settings">
-<div class="settings-section"><h3 class="section-title">{{ trans.collectionSettings }}</h3><div class="form-row"><label class="form-group flex-1 checkbox-item">
+  <section class="settings-section collection-settings" data-section="collection"><h3 class="section-title">{{ trans.collectionSettings }}</h3><div class="form-row"><label class="form-group flex-1 checkbox-item">
             <input type="checkbox" id="cfg_wss_report_enabled" :aria-label="trans.wssReportEnabled" data-setting-field="wss_report_enabled" v-model="settings.wss_report_enabled">
             <span><b>{{ trans.wssReportEnabled }}</b></span>
             <HelpTooltip :text="trans.wssReportTip" />
@@ -59,15 +58,14 @@
               <option v-for="option in longHistoryPointOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </div>
-        </div></div>
-  </div>
+        </div>
+  </section>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import HelpTooltip from './AdminHelp.vue'
 const props = defineProps({ trans: Object, settings: Object, passwordVisible: Object, canEditSiteSettings: Boolean, cspErrors: Object, userAgentInvalid: Boolean, changeAdminPassword: Boolean, d1UsageLoading: Boolean })
-defineEmits(['toggle-password', 'toggle-admin-password-change', 'upload-bg', 'upload-bg-mobile', 'upload-favicon', 'query-d1-usage', 'validate-csp'])
 import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY } from '../../../utils/constants.js'
 const longHistoryPointOptions = computed(() => (
   HISTORY.LONG_RANGE_POINT_OPTIONS.map(points => ({
@@ -160,7 +158,7 @@ const formatWssHourRange = hour => {
 }
 
 .collection-settings .wss-schedule-header > :first-child {
-  flex: 1 1 280px;
+  flex: 1 1 240px;
   min-width: 0;
 }
 

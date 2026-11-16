@@ -1,12 +1,21 @@
 <template>
   <div id="tab-settings" class="tab-content" :class="{ active: settingsPages.includes(activeTab) }">
     <p class="settings-save-hint">{{ trans.adminWholeConfigHint }}</p>
-    <div v-if="activeTab === 'settings' && isMultipleMode" class="settings-section"><label class="form-label" for="admin-site">{{ trans.apiEndpoint }}</label><select id="admin-site" class="form-select" :value="selectedApiIndex" :disabled="siteLoading" @change="$emit('api-index-change', Number($event.target.value))"><option v-for="(base, index) in apiBases" :key="index" :value="index">{{ base }}</option></select></div>
+    <div v-if="activeTab === 'settings' && isMultipleMode" class="settings-section general-site-selector"><label class="form-label" for="admin-site">{{ trans.apiEndpoint }}</label><select id="admin-site" class="form-select" :value="selectedApiIndex" :disabled="siteLoading" @change="$emit('api-index-change', Number($event.target.value))"><option v-for="(base, index) in apiBases" :key="index" :value="index">{{ base }}</option></select></div>
     <fieldset class="settings-fieldset" :disabled="saving">
     <AppearanceSettings v-show="activeTab === 'themeStore'" v-bind="panelProps" @validate-csp="validateCspField" @upload-bg="$emit('upload-bg', $event)" @upload-bg-mobile="$emit('upload-bg-mobile', $event)" @upload-favicon="$emit('upload-favicon', $event)" />
-    <CollectionSettings v-show="activeTab === 'settings'" v-bind="panelProps" />
     <SecuritySettings v-show="activeTab === 'security'" v-bind="panelProps" @toggle-password="$emit('toggle-password', $event)" @toggle-admin-password-change="$emit('toggle-admin-password-change')" />
-    <SiteSettings v-show="activeTab === 'settings'" v-bind="panelProps" @toggle-password="$emit('toggle-password', $event)" @query-d1-usage="$emit('query-d1-usage')" />
+    <div v-show="activeTab === 'settings'" class="general-settings">
+      <section v-if="canEditSiteSettings" class="settings-section site-settings" data-section="site">
+        <h3 class="section-title">{{ trans.adminSiteSettings }}</h3>
+        <div class="form-group">
+          <label class="form-label" for="cfg_site_title">{{ trans.siteTitle }}</label>
+          <input id="cfg_site_title" type="text" :aria-label="trans.siteTitle" data-setting-field="site_title" v-model="settings.site_title" class="form-input" placeholder="Cloudflare Server Monitor">
+        </div>
+      </section>
+      <CollectionSettings v-bind="panelProps" />
+      <SiteSettings :trans="trans" :settings="settings" :password-visible="passwordVisible" :d1-usage-loading="d1UsageLoading" @toggle-password="$emit('toggle-password', $event)" @query-d1-usage="$emit('query-d1-usage')" />
+    </div>
     </fieldset>
     <div class="settings-save-bar"><button @click="$emit('save-settings')" class="btn btn-primary" :disabled="saving">{{ saving ? trans.saving : trans.saveConfig }}</button></div>
   </div>

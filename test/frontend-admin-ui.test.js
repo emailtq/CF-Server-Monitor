@@ -23,7 +23,17 @@ test('public cards keep each API site’s canonical or legacy latency mode', asy
 test('non-latency collection controls belong to Settings, not the task manager', () => {
   const panel = fs.readFileSync('src/frontend/views/admin/components/SettingsPanel.vue', 'utf8');
   const collection = fs.readFileSync('src/frontend/views/admin/components/CollectionSettings.vue', 'utf8');
-  assert.match(panel, /CollectionSettings v-show="activeTab === 'settings'"/);
+  const { descriptor } = parse(panel);
+  const stack = [descriptor.template.ast];
+  let collectionInSettings = false;
+  while (stack.length) {
+    const node = stack.pop();
+    if (node.tag === 'div' && node.props.some(p => p.type === 7 && p.name === 'show' && p.exp?.content === "activeTab === 'settings'")) {
+      collectionInSettings ||= node.children.some(child => child.tag === 'CollectionSettings');
+    }
+    if (node.children) stack.push(...node.children);
+  }
+  assert.ok(collectionInSettings, 'the collection component is inside the Settings-only group');
   assert.doesNotMatch(collection, /ping-node-grid|visiblePingFields|extra_ping_nodes/);
   for (const field of ['wss_report_enabled', 'frontend_ws_timeout_minutes', 'long_history_points']) assert.ok(collection.includes(field));
 });

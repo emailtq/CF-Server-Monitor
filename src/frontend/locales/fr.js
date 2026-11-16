@@ -9,7 +9,10 @@ export default {
   latencyConflict: "La configuration a changé. Rechargez avant de sauvegarder.",
   latencyUnavailable: "Mettez à jour le Worker du site pour activer les moniteurs unifiés.",
 
-  collectionSettings: "Collecte et connexions",
+  adminBackup: "Sauvegarde et restauration",
+  adminSiteSettings: "Paramètres du site",
+  adminCloudflareUsage: "Utilisation de Cloudflare",
+  collectionSettings: "Connexions et rapports",
   latencyName: "Nom",
   latencyNone: "Tout désélectionner",
   latencyAdd: "Ajouter un moniteur",

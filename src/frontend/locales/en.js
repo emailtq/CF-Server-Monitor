@@ -9,7 +9,10 @@ export default {
   latencyConflict: "Assignments changed. Reload before saving again.",
   latencyUnavailable: "Update the Worker on this site to enable unified latency tasks.",
 
-  collectionSettings: "Collection and connections",
+  adminBackup: "Backup and restore",
+  adminSiteSettings: "Site settings",
+  adminCloudflareUsage: "Cloudflare usage",
+  collectionSettings: "Connections and reporting",
   latencyName: "Name",
   latencyNone: "Deselect all",
   latencyAdd: "Add monitor",
