@@ -9,7 +9,7 @@ test('single-page notifications and actual CDP touch picker/scroll behavior', ()
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('actual alert pointer popup follows background short/body scrollports without exempting menu focus', () => {
+test('actual alert popup keeps active input entry through short/body scrolling without a focus handoff', () => {
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/dialogs.mjs', '--picker-scrollport'], {
     encoding: 'utf8', timeout: 60000, windowsHide: true,
     env: { ...process.env, ADMIN_DIALOG_REPORT_DIR: process.env.STAGE2_REPORT_DIR ? path.join(process.env.STAGE2_REPORT_DIR, 'picker-scrollport') : '.planning/2026-11-13-admin-ui-refinement/successor/stage2/evidence/picker-scrollport' }

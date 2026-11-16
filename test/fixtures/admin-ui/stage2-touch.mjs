@@ -121,9 +121,9 @@ try {
     visualViewport.addEventListener('resize', () => window.touchEvents.push({ type: 'visualViewport.resize', height: visualViewport.height, active: document.activeElement.tagName }));
   });
   await tap(cdp, summary); await dialog.locator('.admin-picker-menu').waitFor();
-  if (['all', 'picker'].includes(probe)) await check('CDP touch opens without focusing a text input', async () => {
+  if (['all', 'picker'].includes(probe)) await check('CDP touch opens the persistent search input directly', async () => {
     report.geometry.push(await page.evaluate(() => ({ coarse: matchMedia('(pointer:coarse)').matches, touch: navigator.maxTouchPoints, viewport: { width: visualViewport.width, height: visualViewport.height }, active: document.activeElement.tagName })));
-    assert.equal(await page.evaluate(() => !!document.activeElement.closest('input,textarea')), false);
+    assert.equal(await summary.evaluate(el => el === document.activeElement && el.type === 'search'), true);
     assert.equal(await summary.getAttribute('aria-expanded'), 'true');
   });
   if (['all', 'viewport'].includes(probe)) await check('real CDP visual viewport shrink retains open picker and explicit search', async () => {
@@ -132,7 +132,7 @@ try {
     await tap(cdp, page.locator('[data-action=add-rule]'));
     await tap(cdp, dialog.locator('.admin-picker-summary').first());
     report.geometry.push({ kind: 'before-viewport', trigger: await dialog.locator('.admin-picker-summary').first().boundingBox(), menu: await dialog.locator('.admin-picker-menu').boundingBox() });
-    await tap(cdp, dialog.locator('.admin-picker-search input'));
+    await tap(cdp, dialog.locator('.admin-picker-summary[aria-expanded="true"]'));
     assert.equal(await page.evaluate(() => document.activeElement.type), 'search');
     // Actual mobile viewport geometry/event, not an overridden visualViewport object.
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 320, deviceScaleFactor: 1, mobile: true });
@@ -142,7 +142,7 @@ try {
     await dialog.locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await dialog.locator('.admin-picker-menu').count(), 1, 'keyboard-induced dialog scroll must retain focused search');
-    await dialog.locator('.admin-picker-search input').fill('Node 2');
+    await dialog.locator('.admin-picker-summary[aria-expanded="true"]').fill('Node 2');
     assert.ok(await dialog.locator('.admin-picker-option').count());
     const short = await page.evaluate(() => { const r = document.querySelector('.admin-picker-menu').getBoundingClientRect(); return { viewportHeight: visualViewport.height, menuTop: r.top, menuBottom: r.bottom }; });
     report.geometry.push({ kind: 'actual-short-search', ...short });
@@ -301,11 +301,11 @@ try {
       await click(page.locator('[data-page=alerts]')); await click(page.locator('[data-action=add-rule]'));
       const picker = dialog.locator('.admin-picker-summary').first(); await click(picker); await dialog.locator('.admin-picker-menu').waitFor();
       await check(`${width}/${theme}: picker explicit search, keyboard navigation and restoring trigger`, async () => {
-        assert.equal(await page.evaluate(() => document.activeElement.tagName), 'DIV');
+        assert.equal(await picker.evaluate(el => el === document.activeElement && el.type === 'search'), true);
         await nativeDrag(page, cdp, dialog.locator('.admin-picker-options'), false, mobile, `picker-${width}-${theme}`);
-        await click(dialog.locator('.admin-picker-search input')); await dialog.locator('.admin-picker-search input').fill('Node 2');
+        await click(dialog.locator('.admin-picker-summary[aria-expanded="true"]')); await dialog.locator('.admin-picker-summary[aria-expanded="true"]').fill('Node 2');
         assert.equal(await page.evaluate(() => document.activeElement.type), 'search');
-        await page.keyboard.press('End'); assert.match(await page.evaluate(() => document.activeElement.value), /node-2\d?/);
+        await page.keyboard.press('ArrowDown'); await page.keyboard.press('End'); assert.match(await picker.evaluate(el => document.getElementById(el.getAttribute('aria-activedescendant')).querySelector('input').value), /node-2\d?/);
         await page.keyboard.press('Escape'); assert.equal(await dialog.locator('.admin-picker-menu').count(), 0); assert.equal(await picker.evaluate(el => el === document.activeElement), true);
         await picker.focus(); await page.keyboard.press('ArrowDown'); assert.equal(await page.evaluate(() => document.activeElement.type), 'search'); await page.keyboard.press('Escape');
       });

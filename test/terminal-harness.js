@@ -253,16 +253,26 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
   `;
   const output = await build({ stdin: { contents: source, resolveDir: process.cwd(), sourcefile: 'terminal-test.js' }, bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*'] });
   const mf = new Miniflare({ ...(outboundService ? {outboundService} : {}), modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: apiSecret ? {API_SECRET:apiSecret} : {} });
-  const db = await mf.getD1Database('DB');
-  const { initDatabase } = await import('../src/database/schema.js?fixture=' + crypto.randomUUID());
-  await initDatabase(db);
-  clearSiteSettingsCache();
-  const sys = {jwt_secret: 's'.repeat(64), terminal_enabled: 'true', theme_url: ''};
-  await saveSiteOptions(db, sys);
-  for (const node of ['node-a', 'node-b']) await db.prepare('INSERT INTO servers (id, name) VALUES (?, ?)').bind(node, node).run();
-  const token = await generateToken({API_SECRET: 'test-report-secret'}, sys);
-  const otherToken = await generateToken({API_SECRET: 'test-report-secret'}, sys);
-  const nodes = { 'node-a': await issueTestTerminalToken(db, 'node-a'), 'node-b': await issueTestTerminalToken(db, 'node-b') };
+  let db, token, otherToken, nodes, startupPhase = 'runtime-start';
+  try {
+    db = await mf.getD1Database('DB');
+    startupPhase = 'schema-and-seed';
+    const { initDatabase } = await import('../src/database/schema.js?fixture=' + crypto.randomUUID());
+    await initDatabase(db);
+    clearSiteSettingsCache();
+    const sys = {jwt_secret: 's'.repeat(64), terminal_enabled: 'true', theme_url: ''};
+    await saveSiteOptions(db, sys);
+    for (const node of ['node-a', 'node-b']) await db.prepare('INSERT INTO servers (id, name) VALUES (?, ?)').bind(node, node).run();
+    token = await generateToken({API_SECRET: 'test-report-secret'}, sys);
+    otherToken = await generateToken({API_SECRET: 'test-report-secret'}, sys);
+    nodes = { 'node-a': await issueTestTerminalToken(db, 'node-a'), 'node-b': await issueTestTerminalToken(db, 'node-b') };
+  } catch (error) {
+    error.harnessPhase = startupPhase;
+    // Miniflare cleans up in finally, then may rethrow the same readiness error.
+    try { await mf.dispose(); } catch (cleanupError) { if (cleanupError !== error) error.cleanupError = cleanupError; }
+    clearSiteSettingsCache();
+    throw error;
+  }
   const clients = [];
   async function fetch(path, options = {}) { return mf.dispatchFetch(`https://example.com${path}`, options); }
   async function action(action, data = {}, options = {}) {

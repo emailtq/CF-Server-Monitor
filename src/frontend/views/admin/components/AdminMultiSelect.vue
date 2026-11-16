@@ -1,15 +1,13 @@
 <template>
-  <div ref="root" class="admin-picker" :data-side="side">
-    <button ref="trigger" type="button" class="admin-picker-summary" :title="summary" :aria-label="label || t('adminSelectItems')" :aria-expanded="open" :aria-controls="menuId" aria-haspopup="true" @click="toggle" @keydown.down.prevent="show" @keydown.up.prevent="show">
-      <span>{{ summary }}</span><AdminIcon name="chevron-down" />
-    </button>
-    <div v-if="open" :id="menuId" ref="menu" class="admin-picker-menu" tabindex="-1" :style="menuStyle" @keydown="keydown">
-      <div class="admin-picker-search"><input ref="search" v-model="query" type="search" :aria-label="t('adminSearchOptions')" :placeholder="t('adminSearchOptions')" /></div>
+  <div ref="root" class="admin-picker" :data-side="side" :data-open="open ? '' : undefined" @keydown="keydown">
+    <input ref="trigger" v-model="query" type="search" autocomplete="off" class="admin-picker-summary" :title="summary" :placeholder="summary" :aria-label="(label || t('adminSelectItems')) + ' · ' + t('adminSearchOptions')" role="combobox" :aria-expanded="open" :aria-controls="open ? menuId : undefined" :aria-activedescendant="open && activeId ? activeId : undefined" aria-autocomplete="list" aria-haspopup="listbox" @click="show" @input="activeId = ''; show()" />
+    <button type="button" class="admin-picker-arrow" tabindex="-1" :aria-label="label || t('adminSelectItems')" :aria-expanded="open" @mousedown.prevent @click="toggle"><AdminIcon name="chevron-down" /></button>
+    <div v-if="open" ref="menu" class="admin-picker-menu" :style="menuStyle" @mousedown.prevent>
       <div class="admin-picker-count" role="status">{{ modelValue.length }} / {{ options.length }} {{ t('adminSelected') }}</div>
-      <div ref="list" class="admin-picker-options" tabindex="-1" :style="{ maxHeight: `${listHeight}px` }">
-        <slot name="before-options" />
-        <label v-for="option in filtered" :key="option.value" class="admin-picker-option" :class="{ 'is-disabled': unavailable(option) }">
-          <input type="checkbox" :value="option.value" :checked="modelValue.includes(option.value)" :disabled="unavailable(option)" :aria-label="option.label" @change="select(option, $event)" />
+      <div :id="menuId" ref="list" class="admin-picker-options" role="listbox" :aria-label="label || t('adminSelectItems')" aria-multiselectable="true" :style="{ maxHeight: `${listHeight}px` }">
+        <slot name="before-options" :option-id="`${menuId}-scope`" :active="activeId === `${menuId}-scope`" />
+        <label v-for="(option, index) in filtered" :id="`${menuId}-${index}`" :key="option.value" class="admin-picker-option" role="option" :aria-selected="modelValue.includes(option.value)" :aria-disabled="unavailable(option)" :class="{ 'is-disabled': unavailable(option), 'is-active': activeId === `${menuId}-${index}` }">
+          <input type="checkbox" tabindex="-1" :value="option.value" :checked="modelValue.includes(option.value)" :disabled="unavailable(option)" :aria-label="option.label" @change="select(option, $event)" />
           <span>{{ option.label }}<small v-if="option.description">{{ option.description }}</small></span>
         </label>
         <p v-if="!filtered.length" class="admin-picker-empty">{{ t('adminNoOptions') }}</p>
@@ -28,12 +26,12 @@ const props = defineProps({ modelValue: { type: Array, required: true }, options
 const emit = defineEmits(['update:modelValue'])
 const root = ref(null)
 const trigger = ref(null)
-const search = ref(null)
 const list = ref(null)
 const menu = ref(null)
 const menuStyle = ref({})
 const open = ref(false)
 const query = ref('')
+const activeId = ref('')
 const side = ref('down')
 const listHeight = ref(200)
 const menuId = `admin-picker-${crypto.randomUUID()}`
@@ -45,7 +43,7 @@ const select = (option, event) => {
   if (unavailable(option)) { event.target.checked = props.modelValue.includes(option.value); return }
   emit('update:modelValue', event.target.checked ? [...props.modelValue, option.value] : props.modelValue.filter(value => value !== option.value))
 }
-const close = (restore = false) => { open.value = false; if (restore) trigger.value?.focus() }
+const close = (restore = false) => { open.value = false; query.value = ''; activeId.value = ''; if (restore && document.activeElement !== trigger.value) trigger.value?.focus({ preventScroll: true }) }
 const position = (closeOffscreen = false) => {
   if (!open.value || !menu.value) return
   const rect = trigger.value.getBoundingClientRect()
@@ -57,8 +55,8 @@ const position = (closeOffscreen = false) => {
   const bottom = top + (viewport?.height || innerHeight) - 32
   const visibleTop = Math.max(top, container ? container.top + scrollport.clientTop : top)
   const visibleBottom = Math.min(bottom, container ? container.top + scrollport.clientTop + scrollport.clientHeight : bottom)
-  // Protect active text entry from keyboard panning, not the pointer-opening menu focus.
-  if (closeOffscreen === true && document.activeElement !== search.value && (rect.bottom <= visibleTop || rect.top >= visibleBottom)) { close(); return }
+  // Keyboard panning must not dismiss the input's active search.
+  if (closeOffscreen === true && document.activeElement !== trigger.value && (rect.bottom <= visibleTop || rect.top >= visibleBottom)) { close(); return }
   const chrome = menu.value.offsetHeight - list.value.offsetHeight
   const below = bottom - rect.bottom - 4
   const above = rect.top - top - 4
@@ -76,24 +74,34 @@ const position = (closeOffscreen = false) => {
     top: `${Math.max(top, Math.min(side.value === 'up' ? rect.top - 4 - height : rect.bottom + 4, bottom - height))}px`
   }
 }
-const show = async event => {
+const show = async () => {
   if (open.value) return
   window.dispatchEvent(new CustomEvent('admin-picker-open', { detail: menuId }))
-  query.value = ''; open.value = true
+  open.value = true
   await nextTick(); position()
-  // Only keyboard opening requests text entry; touch/mouse opening must not summon a soft keyboard.
-  const keyboard = event?.type === 'keydown' || event?.detail === 0
-  const target = keyboard ? search.value : menu.value
-  target?.focus({ preventScroll: true })
 }
-const toggle = event => open.value ? close() : show(event)
-const keydown = event => {
+const toggle = () => { if (open.value) close(); else { trigger.value?.focus({ preventScroll: true }); show() } }
+const keydown = async event => {
+  if (event.isComposing || event.keyCode === 229) return
+  if (!open.value) {
+    if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); await show() }
+    return
+  }
   if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
-  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
   const options = [...list.value.querySelectorAll('input:not(:disabled)')]
-  const index = options.indexOf(document.activeElement)
+  const index = options.findIndex(option => option.closest('label').id === activeId.value)
+  if (['Enter', ' '].includes(event.key) && index >= 0) { event.preventDefault(); options[index].click(); return }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  if (['Home', 'End'].includes(event.key) && index < 0) return
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : event.key === 'ArrowDown' ? Math.min(options.length - 1, index + 1) : index < 0 ? options.length - 1 : Math.max(0, index - 1)
-  event.preventDefault(); options[next]?.focus()
+  event.preventDefault()
+  const row = options[next]?.closest('label')
+  if (!row) return
+  row.id ||= `${menuId}-slot-${next}`
+  activeId.value = row.id
+  const top = row.offsetTop - list.value.offsetTop
+  if (top < list.value.scrollTop) list.value.scrollTop = top
+  else if (top + row.offsetHeight > list.value.scrollTop + list.value.clientHeight) list.value.scrollTop = top + row.offsetHeight - list.value.clientHeight
 }
 const otherOpened = event => { if (event.detail !== menuId) close() }
 const outside = event => { if (!root.value?.contains(event.target)) close() }

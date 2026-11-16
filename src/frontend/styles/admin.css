@@ -152,15 +152,14 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui .admin-dialog-body .form-group { min-width: 0; }
 .admin-ui .admin-dialog-body :is(pre, .cmd-input) { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; font-family: var(--cf-font); }
 .admin-ui .admin-picker { position: relative; min-width: 0; }
-.admin-ui .admin-picker-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 36px; padding: 7px 12px; border: 1px solid var(--cf-border); border-radius: 6px; background: var(--cf-panel); color: var(--cf-text); }
-.admin-ui .admin-picker-summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-ui.admin-ui.admin-ui .admin-picker-summary { width: 100%; min-width: 0; height: 36px; padding: 7px 36px 7px 12px; border: 1px solid var(--cf-border); border-radius: 6px; background: var(--cf-panel); color: var(--cf-text); font: inherit; }
+.admin-ui .admin-picker-summary::placeholder { color: var(--cf-muted); opacity: 1; }
+.admin-ui .admin-picker-arrow { position: absolute; top: 0; right: 0; height: 36px; width: 36px; display: flex; align-items: center; justify-content: center; border: 0; background: none; color: var(--cf-muted); }
 .admin-ui .admin-picker-menu { position: fixed; z-index: 5; border: 1px solid var(--cf-border); border-radius: 8px; background: var(--cf-panel); color: var(--cf-text); box-shadow: 0 8px 22px #00000024; overflow: hidden; }
-.admin-ui .admin-picker-search { padding: 8px; border-bottom: 1px solid var(--cf-border); }
-.admin-ui .admin-picker-search input { width: 100%; min-width: 0; height: 34px; padding: 7px 12px; color: var(--cf-text); border: 1px solid var(--cf-border); border-radius: 6px; background: var(--cf-panel); }
 .admin-ui .admin-picker-count { font-size: 12px; color: var(--cf-muted); padding: 4px 12px; }
 .admin-ui .admin-picker-options { max-height: 200px; overflow-y: auto; overscroll-behavior: contain; }
 .admin-ui .admin-picker-option { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 12px; cursor: pointer; font-size: 14px; }
-.admin-ui .admin-picker-option:hover { background: var(--cf-soft); }
+.admin-ui .admin-picker-option:hover, .admin-ui .admin-picker-option.is-active { background: var(--cf-soft); }
 .admin-ui .admin-picker-option > span { min-width: 0; overflow-wrap: anywhere; }
 .admin-ui .admin-picker-option small { display: block; color: var(--cf-muted); font-size: 12px; }
 .admin-ui .admin-picker-option.is-disabled { color: var(--cf-muted); cursor: not-allowed; }
@@ -212,9 +211,9 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
   .admin-ui .admin-nav-item { min-height: 44px; }
   .admin-ui.admin-ui.admin-ui .admin-dialog-footer .btn { min-height: 44px; }
   .admin-ui .admin-picker-option { min-height: 44px; }
-  .admin-ui .admin-picker-search input { height: 44px; }
   .admin-ui .admin-dialog-close::before { content: ''; position: absolute; inset: -6px; }
-  .admin-ui .admin-picker-summary { height: 44px; }
+  .admin-ui.admin-ui.admin-ui .admin-picker-summary { height: 44px; padding-right: 44px; font-size: 16px; }
+  .admin-ui .admin-picker-arrow { height: 44px; width: 44px; }
 }
 
 .admin-ui.admin-ui.admin-ui .admin-filter-group { display: flex; gap: 8px; width: auto; margin-right: auto; min-width: 0; }

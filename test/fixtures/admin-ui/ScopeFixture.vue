@@ -5,7 +5,7 @@
       <AdminDialog :open="open" title="Picker interface fixture" @close="open = false">
         <template #body>
           <AdminMultiSelect v-model="selected" :options="options" :summary="override" label="Extended picker">
-            <template #before-options><label class="admin-picker-option"><input id="slot-option" type="checkbox" v-model="slotChecked"><span>{{ unsafe }}</span></label></template>
+            <template #before-options="{ optionId, active }"><label :id="optionId" class="admin-picker-option" role="option" :aria-selected="slotChecked" :class="{ 'is-active': active }"><input id="slot-option" type="checkbox" tabindex="-1" v-model="slotChecked"><span>{{ unsafe }}</span></label></template>
           </AdminMultiSelect>
           <AdminMultiSelect v-model="defaultSelected" :options="options" :min-selected="1" label="Default picker" />
           <button id="clear-override" class="btn" @click="override = undefined">Use default summary</button>

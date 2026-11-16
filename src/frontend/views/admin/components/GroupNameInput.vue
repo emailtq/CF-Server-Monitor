@@ -1,9 +1,9 @@
 <template>
   <div ref="root" class="admin-group-combobox" :data-open="shown ? '' : undefined" @focusout="!root.contains($event.relatedTarget) && (open = false)">
-    <input :id="id" ref="input" v-model="name" class="form-input" :disabled="disabled" :role="counts.size ? 'combobox' : undefined" :aria-expanded="counts.size ? shown : undefined" :aria-controls="shown ? listId : undefined" :aria-activedescendant="shown && items[active] !== undefined ? `${listId}-${active}` : undefined" :aria-autocomplete="counts.size ? 'list' : undefined" :placeholder="trans.adminUngrouped" autocomplete="off" @click="show" @input="typed = true; active = -1; open = true" @keydown="key">
+    <input :id="id" :name="inputName" ref="input" v-model="name" class="form-input" :disabled="disabled" :role="counts.size ? 'combobox' : undefined" :aria-expanded="counts.size ? shown : undefined" :aria-controls="shown ? listId : undefined" :aria-activedescendant="shown && items[active] !== undefined ? `${listId}-${active}` : undefined" :aria-autocomplete="counts.size ? 'list' : undefined" :placeholder="trans.adminUngrouped" autocomplete="off" @click="show" @input="typed = true; active = -1; open = true" @keydown="key">
     <button v-if="counts.size" type="button" tabindex="-1" :disabled="disabled" :aria-label="trans.adminChooseGroup" @pointerdown.prevent="shown ? open = false : (input.focus({ preventScroll: true }), show())"><AdminIcon name="chevron-down" :class="{ 'is-open': shown }" /></button>
     <Transition name="admin-group-popover">
-      <div v-if="shown" ref="menu" class="admin-group-options" :style="menuStyle" @pointerdown.prevent>
+      <div v-if="shown" ref="menu" class="admin-group-options" :style="menuStyle" @mousedown.prevent>
         <div :id="listId" role="listbox" :aria-label="trans.adminExistingGroups">
           <div v-for="(group, index) in items" :key="group">
             <div v-if="!group" class="admin-group-option-divider" />
@@ -20,7 +20,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AdminIcon from './AdminIcon.vue'
-const props = defineProps({ id: String, servers: Array, trans: Object, disabled: Boolean })
+import '../../../styles/admin-group.css'
+const props = defineProps({ id: String, inputName: String, servers: { type: Array, default: () => [] }, trans: Object, disabled: Boolean })
 const name = defineModel({ type: String, default: '' })
 const root = ref(null), input = ref(null), menu = ref(null), open = ref(false), typed = ref(false), active = ref(0), menuStyle = ref({})
 const listId = `admin-group-names-${crypto.randomUUID()}`
@@ -38,9 +39,10 @@ const position = () => {
   const top = (viewport?.offsetTop || 0) + 8, bottom = top + (viewport?.height || innerHeight) - 16
   const height = Math.min(menu.value.scrollHeight + 2, 250, Math.max(rect.top - top, bottom - rect.bottom) - 4)
   const up = bottom - rect.bottom < height + 4 && rect.top - top > bottom - rect.bottom
-  menuStyle.value = { left: `${rect.left}px`, top: `${up ? rect.top - height - 4 : rect.bottom + 4}px`, width: `${rect.width}px`, maxHeight: `${Math.max(0, height)}px`, transformOrigin: up ? 'bottom' : 'top' }
+  menuStyle.value = { left: `${rect.left}px`, top: `${up ? rect.top - height - 4 : rect.bottom + 4}px`, width: `${rect.width}px`, maxHeight: `${Math.max(0, height)}px`, transformOrigin: up ? 'bottom' : 'top', '--admin-group-enter-y': up ? '8px' : '-8px' }
 }
 const key = event => {
+  if (event.isComposing || event.keyCode === 229) return
   if (event.key === 'Escape' && shown.value) { event.preventDefault(); event.stopPropagation(); open.value = false }
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault()

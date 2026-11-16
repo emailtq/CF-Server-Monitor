@@ -176,24 +176,24 @@ try {
       return { owner: owner.className, scrollTop: owner.scrollTop, section: box(section), body: box(body), port: box(owner), trigger: box(section.querySelector('.admin-picker-summary')), menu: box(section.querySelector('.admin-picker-menu')) };
     });
     await trigger.click(); await menu.waitFor();
-    assert.equal(await menu.evaluate(el => el === document.activeElement), true, 'pointer opening focuses the non-input menu, not search');
+    assert.equal(await trigger.evaluate(el => el === document.activeElement), true, 'pointer opening keeps the persistent search input');
     const beforeMenuScroll = await sample(), options = menu.locator('.admin-picker-options'), optionsBox = await options.boundingBox();
     await page.mouse.move(optionsBox.x + optionsBox.width / 2, optionsBox.y + optionsBox.height / 2); await page.mouse.wheel(0, 300);
     await page.waitForFunction(() => document.querySelector('.admin-picker-options')?.scrollTop > 0);
     assert.equal((await sample()).scrollTop, beforeMenuScroll.scrollTop, 'menu wheel must not scroll the surrounding dialog');
-    await page.keyboard.press('End'); await frames();
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('End'); await frames();
     assert.equal(await menu.count(), 1); assert.equal((await sample()).scrollTop, beforeMenuScroll.scrollTop, 'menu keyboard scroll retains the background owner');
     await page.keyboard.press('Escape'); assert.equal(await menu.count(), 0); assert.equal(await trigger.evaluate(e => e === document.activeElement), true); assert.equal(await dialog.count(), 1);
     await trigger.click(); await menu.waitFor(); const before = await sample();
-    assert.equal(await menu.evaluate(el => el === document.activeElement), true, 'menu-container focus must not exempt active background scrolling');
+    assert.equal(await trigger.evaluate(el => el === document.activeElement), true, 'search remains the focus owner during background scrolling');
     await page.mouse.move(before.port.right - 4, (before.port.top + before.port.bottom) / 2); await page.mouse.wheel(0, -2000);
     await page.waitForFunction(() => { const section = document.querySelector('.admin-dialog'), body = section.querySelector('.admin-dialog-body'); return (section.querySelector('.admin-dialog-scroll')).scrollTop === 0; });
     await frames(); const after = await sample(), outside = after.trigger.bottom <= after.port.top || after.trigger.top >= after.port.bottom;
     report.geometry.push({ kind: 'picker-scrollport', height, beforeMenuScroll, before, after, outside });
     await screenshot(`picker-scrollport-${height}`);
     assert.equal(outside, height === 360, 'the short viewport must really scroll the trigger out; normal body keeps it visible');
-    assert.equal(await menu.count(), outside ? 0 : 1, 'a fully clipped trigger must close its popup instead of leaving it over the header');
-    if (!outside) { await page.keyboard.press('Escape'); assert.equal(await trigger.evaluate(e => e === document.activeElement), true); }
+    assert.equal(await menu.count(), 1, 'active input entry survives scrolling and keyboard panning; fixed popup stays bounded');
+    await page.keyboard.press('Escape'); assert.equal(await trigger.evaluate(e => e === document.activeElement), true);
   });
   await check('visualViewport-only keyboard shrink leaves modal layout to the browser as in minimal', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -259,7 +259,7 @@ try {
         await nativeScrollbar({ page, report, out, PNG }, textarea, 'y', `modal-textarea-${dark}-${dpr}`);
         await open('alert'); await page.locator('.admin-picker-summary').first().click();
         await nativeScrollbar({ page, report, out, PNG }, page.locator('.admin-picker-options'), 'y', `picker-${dark}-${dpr}`);
-        await page.keyboard.press('End'); await page.keyboard.press('Escape');
+        await page.keyboard.press('ArrowDown'); await page.keyboard.press('End'); await page.keyboard.press('Escape');
         assert.equal(await page.locator('.admin-picker-summary').first().evaluate(el => el === document.activeElement), true);
         await screenshot(`native-modal-${dark}-${dpr}`);
       } finally { await dpiContext.close(); page = originalPage; }

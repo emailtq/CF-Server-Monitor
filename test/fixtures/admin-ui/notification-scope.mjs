@@ -109,29 +109,29 @@ try {
       await goto(); await open();
       await check(`escaped optional summary and bounded slot use real DOM/${coarse}`, async () => {
         const summary = dialog.locator('.admin-picker-summary').first();
-        assert.equal(await summary.innerText(), '<img src=x onerror=alert(1)> & "fixture"');
+        assert.equal(await summary.getAttribute('placeholder'), '<img src=x onerror=alert(1)> & "fixture"');
         assert.equal(await summary.getAttribute('title'), '<img src=x onerror=alert(1)> & "fixture"');
         assert.equal(await summary.locator('img').count(), 0);
         await summary.click(); assert.equal(await menu().locator('#slot-option').count(), 1, 'bounded before-options slot missing');
         assert.equal(await menu().locator('img').count(), 0);
         assert.ok((await menu().locator('.admin-picker-options').boundingBox()).height <= 201);
-        await page.keyboard.press('Home'); assert.equal(await page.evaluate(() => document.activeElement.id), 'slot-option');
+        await page.keyboard.press('ArrowDown'); await page.keyboard.press('Home'); assert.equal(await summary.evaluate(el => document.getElementById(el.getAttribute('aria-activedescendant')).querySelector('input').id), 'slot-option');
         await page.keyboard.press('Space'); assert.equal(await menu().locator('#slot-option').isChecked(), true);
         assert.equal(await page.locator('#selected').innerText(), '["node-0","node-1"]', 'slot is presentation-owned, not a picker model value');
-        await page.keyboard.press('ArrowDown'); assert.equal(await page.evaluate(() => document.activeElement.value), 'node-0');
+        await page.keyboard.press('ArrowDown'); assert.equal(await summary.evaluate(el => document.getElementById(el.getAttribute('aria-activedescendant')).querySelector('input').value), 'node-0');
         await page.keyboard.press('Escape'); assert.equal(await menu().count(), 0); assert.equal(await summary.evaluate(el => el === document.activeElement), true);
       });
       await check(`default title, tags, count, minimum, hidden selections and one menu unchanged/${coarse}`, async () => {
-        const summary = dialog.locator('.admin-picker-summary').nth(1); assert.equal(await summary.innerText(), 'Node 0'); assert.equal(await summary.getAttribute('title'), 'Node 0');
+        const summary = dialog.locator('.admin-picker-summary').nth(1); assert.equal(await summary.getAttribute('placeholder'), 'Node 0'); assert.equal(await summary.getAttribute('title'), 'Node 0');
         assert.equal(await dialog.locator('.admin-picker').nth(1).locator('.admin-picker-tags').innerText(), 'Node 0');
         await summary.click(); assert.equal(await menu().locator('.admin-picker-count').innerText(), '1 / 120 selected');
         assert.equal(await menu().locator('input[value="node-0"]').isDisabled(), true);
-        await menu().locator('.admin-picker-search input').fill('Node 1'); await menu().locator('input[value="node-1"]').check();
-        await menu().locator('.admin-picker-search input').fill('Node 2'); assert.equal(await page.locator('#default-selected').innerText(), '["node-0","node-1"]');
+        await dialog.locator('.admin-picker-summary[aria-expanded="true"]').fill('Node 1'); await menu().locator('input[value="node-1"]').check();
+        await dialog.locator('.admin-picker-summary[aria-expanded="true"]').fill('Node 2'); assert.equal(await page.locator('#default-selected').innerText(), '["node-0","node-1"]');
         await page.keyboard.press('Escape'); await dialog.locator('.admin-picker-summary').first().click();
         await summary.focus(); await page.keyboard.press('ArrowDown'); assert.equal(await menu().count(), 1); assert.equal(await menu().locator('#slot-option').count(), 0);
-        await page.keyboard.press('Escape'); await dialog.locator('#clear-override').click(); assert.equal(await dialog.locator('.admin-picker-summary').first().innerText(), '2 / 120 selected');
-        await dialog.locator('#empty-override').click(); assert.equal((await dialog.locator('.admin-picker-summary').first().innerText()).trim(), '');
+        await page.keyboard.press('Escape'); await dialog.locator('#clear-override').click(); assert.equal(await dialog.locator('.admin-picker-summary').first().getAttribute('placeholder'), '2 / 120 selected');
+        await dialog.locator('#empty-override').click(); assert.equal((await dialog.locator('.admin-picker-summary').first().getAttribute('placeholder')).trim(), '');
         await dialog.locator('#clear-override').click(); assert.equal(await dialog.locator('.admin-picker-summary').first().getAttribute('title'), '2 / 120 selected');
       });
       await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -190,7 +190,8 @@ try {
         const stored = await loadNotificationConfig(db); stored.rules = [{ id: 'imported', name: 'Imported scope', type: 'offline', enabled: false, options: { minutes: 3 }, scope: { mode: 'selected', serverIds: ['unresolved_fixture'] }, targetIds: [stored.channels[0].id] }];
         await db.prepare("UPDATE settings SET value=? WHERE key='notification_config'").bind(JSON.stringify(stored)).run(); await goto(); await page.locator('#edit-imported').click();
         assert.equal(await dialog.locator('[name=enabled]').isDisabled(), true); await dialog.locator('.admin-picker-summary').first().click(); assert.equal(await menu().locator('[data-scope-all]').isDisabled(), true);
-        await menu().locator('.admin-picker-search input').fill('Node 0'); await menu().locator('input[value="node-0"]').check(); await menu().locator('.admin-picker-search input').fill('unresolved'); await menu().locator('input[value="unresolved_fixture"]').uncheck();
+        await dialog.locator('.admin-picker-summary[aria-expanded="true"]').fill('Node 0'); await menu().locator('input[value="node-0"]').check(); await dialog.locator('.admin-picker-summary[aria-expanded="true"]').fill('unresolved'); await menu().locator('input[value="unresolved_fixture"]').uncheck();
+        await menu().locator('input[value="unresolved_fixture"]').check(); assert.deepEqual(await draftScope(), { mode: 'selected', serverIds: ['node-0', 'unresolved_fixture'] }, 'historical missing choice remains available for undo before save'); await menu().locator('input[value="unresolved_fixture"]').uncheck();
         assert.equal(await menu().locator('[data-scope-all]').isDisabled(), true, 'historical missing refs require saving repair before widening'); assert.deepEqual(await draftScope(), { mode: 'selected', serverIds: ['node-0'] });
         await page.keyboard.press('Escape'); assert.equal(await dialog.locator('[name=enabled]').isChecked(), false); await dialog.locator('[name=enabled]').check(); await save({ mode: 'selected', serverIds: ['node-0'] });
         await page.locator('#edit-imported').click(); await dialog.locator('.admin-picker-summary').first().click(); assert.equal(await menu().locator('[data-scope-all]').isDisabled(), false); await page.keyboard.press('Escape'); await dialog.locator('[data-action=cancel]').click();
@@ -199,7 +200,7 @@ try {
       for (const [width, height] of [[1440, 900], [390, 540], [320, 540]]) await check(`bounded scope menu, keyboard and effective touch/${width}x${height}/${coarse}`, async () => {
         await page.setViewportSize({ width, height }); assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), coarse);
         const summary = dialog.locator('.admin-picker-summary').first(); await summary.scrollIntoViewIfNeeded(); await summary.focus(); await page.keyboard.press('ArrowDown');
-        assert.equal(await menu().count(), 1); await page.keyboard.press('Home'); assert.equal(await page.evaluate(() => document.activeElement.hasAttribute('data-scope-all')), true);
+        assert.equal(await menu().count(), 1); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Home'); assert.equal(await summary.evaluate(el => document.getElementById(el.getAttribute('aria-activedescendant')).querySelector('input').hasAttribute('data-scope-all')), true);
         const list = await menu().locator('.admin-picker-options').boundingBox(), box = await menu().boundingBox(); assert.ok(list.height <= 201); assert.ok(box.x >= 15 && box.x + box.width <= width - 15); assert.ok(box.y >= 15 && box.y + box.height <= height - 15);
         const option = menu().locator('[data-scope-all]').locator('..'); await option.scrollIntoViewIfNeeded();
         if (coarse) { const r = await option.boundingBox(); assert.ok(r.width >= 44 && r.height >= 44); assert.equal(await option.evaluate(el => { const r = el.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2; return [[x-21,y],[x+21,y],[x,y-21],[x,y+21]].every(([px,py]) => el.contains(document.elementFromPoint(px,py))); }), true); }

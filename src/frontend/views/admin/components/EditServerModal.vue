@@ -7,8 +7,8 @@
         </div>
 
         <div class="form-group flex-1">
-          <label class="form-label">{{ trans.groupName }}</label>
-          <input type="text" name="edit_server_group" autocomplete="off" v-model="editForm.server_group" class="form-input" placeholder="e.g. US VPS">
+          <label for="edit-server-group" class="form-label">{{ trans.groupName }}</label>
+          <GroupNameInput id="edit-server-group" input-name="edit_server_group" v-model="editForm.server_group" :servers="servers" :trans="trans" :disabled="saving" />
         </div>
       </div>
 <div class="form-row">
@@ -199,6 +199,7 @@
 
 <script setup>
 import AdminDialog from './AdminDialog.vue'
+import GroupNameInput from './GroupNameInput.vue'
 import { computed, watch } from 'vue'
 import HelpTooltip from './AdminHelp.vue'
 
@@ -213,7 +214,8 @@ const props = defineProps({
   saving: { type: Boolean, default: false },
   currentServerName: { type: String, default: '' },
   agentVersion: String, error: String, selectedApiIndex: { type: Number, default: 0 },
-  settings: { type: Object, required: true }
+  settings: { type: Object, required: true },
+  servers: { type: Array, default: () => [] }
 })
 
 const billingCycleOptions = BILLING_CYCLES

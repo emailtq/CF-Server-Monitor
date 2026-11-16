@@ -69,8 +69,8 @@ const focusable = () => [...(dialogElement()?.querySelectorAll('button,input,sel
 const focusFirst = () => (focusable()[0] || dialogElement())?.focus()
 const requestClose = () => { if (!props.busy && topmost()) emit('close') }
 const keydown = event => {
-  if (!topmost()) return
-  if (event.key === 'Escape' && !event.target.closest('.admin-picker-menu, .admin-group-combobox[data-open], .admin-toolbar-group-menu')) { event.preventDefault(); event.stopImmediatePropagation(); requestClose() }
+  if (!topmost() || event.isComposing || event.keyCode === 229) return
+  if (event.key === 'Escape' && !event.target.closest('.admin-picker[data-open], .admin-group-combobox[data-open], .admin-toolbar-group-menu')) { event.preventDefault(); event.stopImmediatePropagation(); requestClose() }
   if (event.key !== 'Tab') return
   const elements = focusable()
   const first = elements[0]

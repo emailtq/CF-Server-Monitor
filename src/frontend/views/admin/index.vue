@@ -134,6 +134,7 @@
         v-model:edit-form="editForm"
         :current-server-name="currentServerName"
         :settings="nodeSettings"
+        :servers="servers"
         :agent-version="currentServerVersion"
         :selected-api-index="selectedApiIndex"
         @terminal-access="terminalServer = servers.find(server => server.id === editForm.id); showEditModal = false"
