@@ -260,6 +260,9 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui.admin-ui.admin-ui .settings-section { min-width: 0; background: var(--cf-panel); border: 1px solid var(--cf-border); border-radius: 8px; padding: 20px; box-shadow: none; }
 .admin-ui .settings-section .form-row { display: flex; gap: 16px; }
 .admin-ui .settings-section .form-group { flex: 1; min-width: 0; }
+.admin-ui .admin-aligned-fields > .form-group { display: flex; flex-direction: column; }
+.admin-ui .admin-aligned-fields > .form-group > :is(.form-input, .form-textarea, .admin-secret-field) { margin-top: auto; }
+.admin-ui .admin-notification-preferences > .server-secondary { margin: 16px 0 12px; }
 .admin-ui .settings-save-hint { display: block; color: var(--cf-muted); font-size: 12px; margin: 0 0 16px; }
 .admin-ui .settings-save-bar { margin-top: 16px; }
 .admin-ui.admin-ui.admin-ui .settings-save-bar { background: var(--cf-panel); border-color: var(--cf-border); border-radius: 6px; box-shadow: none; backdrop-filter: none; }
@@ -308,7 +311,7 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui #tab-settings .form-label { display: block; }
 .admin-ui #tab-settings .inline-help-action { display: flex; flex-wrap: wrap; align-items: flex-start; }
 .admin-ui #tab-settings .inline-help-action .admin-field-hint { flex-basis: 100%; }
-.admin-ui .admin-updates-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-ui .admin-updates-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .admin-ui.admin-ui.admin-ui #tab-theme-store .theme-actions .btn { height: auto; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .server-name-link { font: inherit; font-weight: 500; color: var(--cf-text); min-width: 96px; white-space: normal; }
 .admin-ui.admin-ui.admin-ui .admin-node-table .admin-copy-value { color: var(--cf-text); font-size: 14px; padding: 0; line-height: 20px; font-variant-numeric: tabular-nums; }
@@ -390,6 +393,20 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui.admin-ui.admin-ui .theme-card { background: var(--cf-panel); }
 .admin-ui.admin-ui.admin-ui :is(.theme-cover-wrap, .theme-cover-wrap-mikus) { background: var(--cf-soft); }
 .admin-ui .admin-details .form-row { margin-top: 16px; }
+.admin-ui :is(.admin-node-edit-form, .admin-registration-form, .admin-uninstall-form) .form-label { display: block; }
+.admin-ui .admin-responsive-fields,
+.admin-ui .admin-dialog-body .admin-node-options { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; }
+.admin-ui .admin-responsive-fields > .form-group { display: flex; flex-direction: column; min-width: 0; }
+.admin-ui .admin-responsive-fields > .form-group > :is(.form-input, .form-select) { margin-top: auto; }
+.admin-ui .admin-responsive-fields .form-label .admin-field-hint { margin-top: 4px; }
+.admin-ui .admin-registration-form > .form-group > .admin-field-hint { margin-top: 8px; }
+.admin-ui .admin-details .admin-responsive-fields { margin-top: 16px; }
+.admin-ui .admin-command-preview { display: flex; gap: 8px; padding: 12px; border-color: var(--cf-border); border-radius: 6px; background: var(--cf-soft); }
+.admin-ui .admin-command-preview .cmd-output { font-size: 14px; color: var(--cf-text); }
+@media (min-width: 640px) {
+  .admin-ui .admin-responsive-fields,
+  .admin-ui .admin-dialog-body .admin-node-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .admin-ui .checkbox-item { display: flex; align-items: center; justify-content: space-between; }
 @media (min-width: 1280px) { .admin-ui.admin-ui.admin-ui .admin-node-table { min-width: 920px; } }
 @media (max-width: 639px) {

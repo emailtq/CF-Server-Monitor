@@ -81,7 +81,11 @@ export async function downloadCopyChecks({page, load, ready, noticeReady, nextFr
         await page.getByRole('button',{name:en.adminBulkAdd,exact:true}).click();
         const button = page.locator('.admin-dialog-edit footer button').last(); await button.waitFor();
         await page.waitForFunction(() => document.querySelector('.admin-dialog-edit footer button:last-child')?.disabled === false);
+        const preview = page.locator('.admin-registration-form .cmd-output');
+        assert.equal(await preview.isVisible(), true, 'copy uses a command the user can actually read');
+        const visibleCommand = await preview.innerText();
         await button.click(); assert.equal(await button.innerText(),en.copy);
+        if (success) assert.equal(await page.evaluate(() => window.copied), visibleCommand, 'clipboard receives the exact visible installation command');
       } else if (kind === 'uninstall') {
         await page.locator('[data-server-id=node-a] .action-btns').getByRole('button',{name:en.delete,exact:true}).click();
         await page.locator('.cmd-input-wrapper button').click();
@@ -127,6 +131,31 @@ export async function downloadCopyChecks({page, load, ready, noticeReady, nextFr
       await page.evaluate(() => window.releaseCopy()); await nextFrame();
       assert.equal(await toast().count(),0);
     }
+  });
+  await check('copy feedback registration controls update the readable command and copy its current value', async () => {
+    await load({controlled:false,openDownload:false});
+    await page.getByRole('button',{name:en.adminBulkAdd,exact:true}).click();
+    const form = page.locator('.admin-registration-form'), button = page.locator('.admin-dialog-edit footer button').last();
+    const available = () => page.waitForFunction(() => document.querySelector('.admin-dialog-edit footer button:last-child')?.disabled === false);
+    await available();
+    await form.locator('.admin-responsive-fields').first().locator('input').fill('Desktop fixture node');
+    await form.locator('.admin-responsive-fields').last().locator('input').fill('v9.8.7');
+    await available();
+    await form.locator('.admin-responsive-fields').last().locator('select').selectOption('__custom__');
+    await form.locator('#auto-discovery-custom-proxy').fill('https://fixture-proxy.invalid/');
+    await form.locator('#cfg_auto_discovery_auto_update').check();
+    await form.locator(':scope > .form-group select').first().selectOption('cfsm-user');
+    await available();
+    let command = await form.locator('pre').innerText();
+    assert.match(command,/v9\.8\.7/); assert.match(command,/fixture-proxy\.invalid/); assert.match(command,/-auto_update=1/); assert.match(command,/Desktop fixture node/);
+    await button.click(); assert.equal(await page.evaluate(() => window.copied),command);
+    await form.locator('.admin-responsive-fields').first().locator('select').selectOption('windows');
+    await available();
+    assert.equal(await form.locator(':scope > .form-group select').count(),0,'Linux installation user is not offered on Windows');
+    command = await form.locator('pre').innerText(); assert.match(command,/Invoke-WebRequest/); assert.match(command,/-auto_update='1'/);
+    await button.click(); assert.equal(await page.evaluate(() => window.copied),command);
+    await screenshot(page,path.join(out,'copy-registration-windows-current-command.png'));
+    await page.locator('.admin-dialog-close').click(); await page.getByRole('dialog').waitFor({state:'hidden'});
   });
   await check('copy feedback page toast Alt+T and blur restore the prior control like actual Sonner', async () => {
     await load({controlled:false,openDownload:false});

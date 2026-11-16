@@ -5109,15 +5109,6 @@ body.mikus-theme .mikus-stats-mascot-img {
         grid-template-columns: repeat(6, minmax(0, 1fr));
     }
 
-    .edit-server-modal .mobile-two-row {
-        flex-wrap: wrap;
-    }
-
-    .edit-server-modal .mobile-two-row .form-group {
-        flex: 0 0 calc(50% - 6px);
-        min-width: 0;
-    }
-
     .settings-section .flex[style*="gap"] {
         flex-direction: column;
     }

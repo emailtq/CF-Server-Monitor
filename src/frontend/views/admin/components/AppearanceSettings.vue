@@ -106,7 +106,7 @@
 <div class="settings-section" v-if="canEditSiteSettings">
         <div class="section-title">{{ trans.appearance }}</div>
 
-        <div class="form-row">
+        <div class="form-row admin-aligned-fields">
           <div class="form-group flex-1">
             <label class="form-label">
               {{ trans.customHead }}

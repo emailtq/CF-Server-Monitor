@@ -27,7 +27,7 @@
           <label class="login-label">{{ trans.password }}</label>
           <div class="password-input-wrapper admin-secret-field">
             <input :type="passwordVisible.login ? 'text' : 'password'" name="password" autocomplete="current-password" v-model="loginForm.password" required class="login-input">
-            <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.login" :aria-label="(passwordVisible.login ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.password" @click="$emit('toggle-password', 'login')"><AdminIcon :name="passwordVisible.login ? 'eye-off' : 'eye'" /></button>
+            <button type="button" class="admin-secret-eye" :aria-pressed="!!passwordVisible.login" :aria-label="(passwordVisible.login ? trans.adminHideSecret : trans.adminShowSecret) + ': ' + trans.password" @mousedown.prevent @click="$emit('toggle-password', 'login')"><AdminIcon :name="passwordVisible.login ? 'eye-off' : 'eye'" /></button>
           </div>
         </div>
         <div v-if="turnstileSiteKey && (turnstileLoginEnabled || (turnstileEnabled && !turnstileVerified))" class="login-form-group">

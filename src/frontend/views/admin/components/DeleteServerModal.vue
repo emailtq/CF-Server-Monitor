@@ -1,6 +1,7 @@
 <template>
   <AdminDialog :open="show" :title="currentServerName" :busy="busy" @close="$emit('close')">
     <template #body>
+      <div class="admin-uninstall-form">
       <input type="hidden" :value="deleteServerId">
 
       <div class="mb-4">
@@ -77,6 +78,7 @@
         />
         <input v-else type="text" readonly :value="uninstallCommand" class="cmd-input flex-1">
         <button @click="$emit('copy-uninstall')" class="btn admin-copy-action ml-2" :disabled="busy || !uninstallCommand"><AdminIcon name="copy" />{{ trans.copy }}</button>
+      </div>
       </div>
     </template>
     <template #footer>

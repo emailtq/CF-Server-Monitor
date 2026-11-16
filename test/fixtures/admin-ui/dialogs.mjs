@@ -16,11 +16,13 @@ const out = path.resolve(process.env.ADMIN_DIALOG_REPORT_DIR || `.planning/2026-
 const viewportScrollbarOnly = process.argv.includes('--viewport-scrollbar');
 const pickerScrollportOnly = process.argv.includes('--picker-scrollport');
 const edgeKeyboardOnly = process.argv.includes('--edge-keyboard');
+const desktopLayoutOnly = process.argv.includes('--desktop-layout');
 fs.mkdirSync(out, { recursive: true });
 const report = { node: process.version, args: process.argv.slice(2), checks: [], geometry: [], screenshots: [], errors: [], actions: [], boundary: 'Mounted production Vue components and styles; synthetic HTTP responses only. Private Vue refs select existing inline dialogs; no substituted dialog markup.' };
 let server, browser, context, page, httpOrigin, origin;
 const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const check = async (name, fn) => {
+  if (desktopLayoutOnly && !name.startsWith('desktop layout')) return;
   if (edgeKeyboardOnly) return;
   if (pickerScrollportOnly && !name.startsWith('actual alert picker')) return;
   try { await fn(); report.checks.push({ name, pass: true }); console.log(`PASS ${name}`); }
@@ -53,12 +55,16 @@ const inspect = async (kind, dimensions) => {
     const structural = [...section.querySelectorAll('*'), section].filter(e => !e.matches('input,textarea,select,option') && e.getClientRects().length);
     const scrolls = structural.filter(e => ['auto', 'scroll'].includes(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight + 1);
     const scroll = section.querySelector('.admin-dialog-scroll');
-    return { group: section.classList.contains('admin-dialog-group'), scheme: getComputedStyle(section).colorScheme, box: { x: r.x, y: r.y, width: r.width, height: r.height }, gutter: scroll.offsetWidth - scroll.clientWidth - scroll.clientLeft * 2, body: { clientWidth: body.clientWidth, offsetWidth: body.offsetWidth, clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, padding: getComputedStyle(body).padding }, scrolls: scrolls.map(e => e.className), horizontal: structural.filter(e => e.clientWidth && (e === section || e === body || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)) && e.scrollWidth > e.clientWidth + 1).map(e => ({ name: e.className, width: e.clientWidth, scrollWidth: e.scrollWidth })) };
+    return { group: section.classList.contains('admin-dialog-group'), scheme: getComputedStyle(section).colorScheme, box: { x: r.x, y: r.y, width: r.width, height: r.height }, gutter: scroll.offsetWidth - scroll.clientWidth - scroll.clientLeft * 2, body: { clientWidth: body.clientWidth, offsetWidth: body.offsetWidth, clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, padding: getComputedStyle(body).padding, controls: [...body.querySelectorAll('input:not([type=hidden]),select,textarea,button,pre')].some(el => el.checkVisibility()) }, scrolls: scrolls.map(e => e.className), horizontal: structural.filter(e => e.clientWidth && (e === section || e === body || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)) && e.scrollWidth > e.clientWidth + 1).map(e => ({ name: e.className, width: e.clientWidth, scrollWidth: e.scrollWidth })) };
   });
   if (base.box.x < -.5 || base.box.x + base.box.width > dimensions.width + .5 || base.box.y < -.5 || base.box.y + base.box.height > dimensions.height + .5) problems.push('dialog outside viewport');
   if (base.horizontal.length) problems.push(`horizontal overflow ${JSON.stringify(base.horizontal)}`);
   if (dimensions.dark !== undefined && base.scheme !== (dimensions.dark ? 'dark' : 'light')) problems.push('effective theme differs from requested theme');
-  if (base.body.clientHeight < 44) problems.push('dialog body collapsed below a usable control height');
+  if (base.body.controls && base.body.clientHeight < 44) problems.push('dialog body collapsed below a usable control height');
+  if (kind === 'downloadConfirm') {
+    assert.equal(await dialog.locator('.admin-dialog-head .admin-group-description').innerText(), await page.evaluate(() => window.dialogFixture.state.props.trans.downloadReissueConfirm), 'accepted minimal confirmation keeps its complete description in the header');
+    assert.equal(base.body.clientHeight, 0, 'description-only confirmation adds no empty body space');
+  }
   if (base.group) {
     // Actual minimal bounds its picker separately; the shell scrolls too in a short keyboard viewport.
     if (base.scrolls.some(name => !/(?:admin-dialog-scroll|admin-group-picker-list)/.test(name))) problems.push(`unexpected group scroll owner ${base.scrolls}`);
@@ -153,7 +159,7 @@ try {
   page = await context.newPage(); page.setDefaultTimeout(5000); page.on('pageerror', error => report.errors.push(error.stack));
   if (edgeKeyboardOnly) await (process.argv.includes('--ime-layout') ? round4Dialogs : round3Dialogs)({ page, context, open, frames, out, report, PNG, screenshot, origin });
   const kinds = ['add', 'group', 'delete', 'edit', 'batch', 'renew', 'download', 'downloadConfirm', 'autoDiscovery', 'notificationCreate', 'notificationSmtp', 'notificationWebhook', 'notificationTemplate', 'alert', 'alertEdit', 'revoke', 'terminal', 'database', 'notificationRemoval', 'autoUpdateWarning', 'databaseClear', 'databaseUpgrade', 'd1Usage', 'validation', 'saveResult', 'message'];
-  const matrix = viewportScrollbarOnly || pickerScrollportOnly || edgeKeyboardOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 1920, height: 1080, locale: 'ja', dark: true }, { width: 360, height: 780, locale: 'zh', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
+  const matrix = viewportScrollbarOnly || pickerScrollportOnly || edgeKeyboardOnly || desktopLayoutOnly ? [] : [{ width: 1440, height: 900, locale: 'en', dark: false }, { width: 1920, height: 1080, locale: 'ja', dark: true }, { width: 360, height: 780, locale: 'zh', dark: false }, { width: 390, height: 300, locale: 'en', dark: true, stress: true }];
   if (viewportScrollbarOnly || pickerScrollportOnly) { await page.goto(`${origin}/admin?locale=en#/admin/terminal/node-a`); await page.waitForFunction(() => window.dialogFixture); }
   const viewportCdp = await context.newCDPSession(page);
   for (const dimensions of matrix) {
@@ -167,6 +173,64 @@ try {
     for (const kind of kinds) await check(`${kind} ${dimensions.width}x${dimensions.height} ${dimensions.locale} containment`, async () => { await open(kind, dimensions.stress); await page.evaluate(dark => document.body.classList.toggle('light', !dark), dimensions.dark); await inspect(kind, dimensions); });
   }
   await viewportCdp.detach();
+  if (desktopLayoutOnly) {
+    const desktopCdp = await context.newCDPSession(page);
+    const cases = [[1440, false, 'zh'], [1440, true, 'en'], [1920, false, 'fr'], [1920, true, 'ja'], [360, false, 'fr'], [360, true, 'id'], [390, false, 'es'], [390, true, 'zh-TW']];
+    for (const [width, dark, locale] of cases) await check(`desktop layout ${width} ${dark ? 'dark' : 'light'} ${locale}`, async () => {
+      await desktopCdp.send('Emulation.setTouchEmulationEnabled', { enabled: width < 640 });
+      await page.setViewportSize({ width, height: width < 640 ? 844 : 1000 });
+      await page.goto(`${origin}/admin?locale=${locale}#/admin/terminal/node-a`);
+      await page.waitForFunction(() => window.dialogFixture);
+      assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), width < 640);
+      for (const kind of kinds) {
+        await open(kind); await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
+        const geometry = await page.locator('.admin-dialog').last().evaluate(section => {
+          const box = el => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, right: b.right, bottom: b.bottom, width: b.width, height: b.height }; };
+          const textRects = el => {
+            const result = [], walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) if (walker.currentNode.textContent.trim()) {
+              const range = document.createRange(); range.selectNodeContents(walker.currentNode);
+              result.push(...[...range.getClientRects()].map(b => ({ x: b.x, y: b.y, right: b.right, bottom: b.bottom })));
+            }
+            return result;
+          };
+          const labels = [...section.querySelectorAll('.form-label')].filter(el => el.checkVisibility()).map(el => ({ text: el.textContent.trim(), box: box(el), texts: textRects(el), stacked: getComputedStyle(el).display !== 'flex' }));
+          const buttons = [...section.querySelectorAll('button.btn')].filter(el => el.checkVisibility()).map(el => ({ text: el.textContent.trim(), box: box(el), texts: textRects(el) }));
+          const rows = [...section.querySelectorAll('.admin-responsive-fields')].map(el => ({ box: box(el), fields: [...el.children].filter(el => el.checkVisibility()).map(el => ({ box: box(el), control: box(el.querySelector('.form-input,.form-select')), label: box(el.querySelector('.form-label')) })) }));
+          const preview = section.querySelector('.cmd-output-wrapper');
+          return { kind: section.className, width: innerWidth, horizontal: section.scrollWidth > section.clientWidth, labels, buttons, rows, preview: preview && { visible: preview.checkVisibility(), box: box(preview), text: preview.querySelector('pre').innerText } };
+        });
+        report.geometry.push({ kind, width, dark, locale, layout: geometry });
+        assert.equal(geometry.horizontal, false, `${kind}: no shell horizontal overflow`);
+        for (const label of geometry.labels) assert.ok(label.texts.every(r => r.x >= label.box.x - 1 && r.right <= label.box.right + 1), `${kind}: complete label/hint ${label.text}`);
+        for (const button of geometry.buttons) assert.ok(button.texts.every(r => r.x >= button.box.x + 1 && r.right <= button.box.right - 1 && r.y >= button.box.y + 1 && r.bottom <= button.box.bottom - 1), `${kind}: button text keeps its bounds: ${button.text}`);
+        if (['edit', 'autoDiscovery', 'delete'].includes(kind)) assert.ok(geometry.labels.every(label => label.stacked), `${kind}: label and hint do not compete as flex items`);
+        if (kind === 'edit' || kind === 'autoDiscovery') {
+          assert.ok(geometry.rows.length > 0, 'real fields use scoped responsive rows');
+          for (const row of geometry.rows) {
+            assert.ok(row.fields.every(f => f.box.width >= (width < 640 ? 240 : 260) && f.control.x === f.label.x), 'usable field width and label/control axis');
+            for (let i = 1; i < row.fields.length; i++) if (row.fields[i].box.y === row.fields[i - 1].box.y) assert.equal(row.fields[i].control.y, row.fields[i - 1].control.y, 'paired inputs align below different hint lengths');
+          }
+        }
+        if (kind === 'autoDiscovery') {
+          assert.equal(geometry.preview.visible, true, 'installation preview is actually visible');
+          assert.match(geometry.preview.text, /^fixture-install/);
+        }
+        if (['edit', 'autoDiscovery', 'delete', 'batch', 'alert', 'notificationSmtp', 'revoke', 'download'].includes(kind) && (width >= 1440 || ['edit', 'autoDiscovery', 'delete'].includes(kind))) {
+          await page.locator('.admin-dialog').last().evaluate(section => { section.querySelector('.admin-dialog-scroll').scrollTop = 0; });
+          await screenshot(`desktop-${kind}-${width}-${dark ? 'dark' : 'light'}-${locale}`);
+          if (kind === 'edit') {
+            await page.locator('[name=edit_traffic_limit]').evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+            await screenshot(`desktop-edit-traffic-${width}-${dark ? 'dark' : 'light'}-${locale}`);
+          }
+        }
+        await page.locator('.admin-dialog').last().locator('.admin-dialog-close').click();
+        if (kind === 'downloadConfirm') await page.locator('.admin-dialog-download .admin-dialog-close').click();
+        await page.locator('.admin-dialog').waitFor({ state: 'hidden' });
+      }
+    });
+    await desktopCdp.detach();
+  }
   for (const height of [360, 700]) await check(`actual alert picker follows the stable shell at ${height}px, own scrolling and keyboard`, async () => {
     await page.setViewportSize({ width: 390, height }); await open('alert');
     const dialog = page.locator('.admin-dialog').last(), trigger = dialog.locator('.admin-picker-summary').first(), menu = dialog.locator('.admin-picker-menu');

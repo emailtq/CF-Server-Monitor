@@ -1,6 +1,6 @@
 <template>
   <AdminDialog :open="show" :title="currentServerName" size="edit" :busy="saving" @close="$emit('close')">
-    <template #body><input type="hidden" v-model="editForm.id"><div class="form-row">
+    <template #body><div class="admin-node-edit-form"><input type="hidden" v-model="editForm.id"><div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.hostnameLabel }} <span class="required">*</span></label>
           <input type="text" name="edit_name" autocomplete="off" v-model="editForm.name" class="form-input" placeholder="e.g. My Server">
@@ -25,7 +25,7 @@
 <div class="form-group">
         <label class="form-label">{{ trans.note }}</label>
         <textarea name="edit_note" autocomplete="off" v-model="editForm.note" class="form-textarea" rows="2" :placeholder="trans.notePlaceholder"></textarea>
-      </div><div class="form-row">
+      </div><div class="form-row admin-node-options">
         <div class="form-group flex-1">
           <label class="checkbox-item no-margin">
             <input type="checkbox" v-model="editForm.auto_renewal">
@@ -61,7 +61,7 @@
             </span>
           </label>
         </div>
-      </div><section class="admin-form-section"><h4>{{ trans.traffic }}</h4><div class="form-row mobile-two-row">
+      </div><section class="admin-form-section"><h4>{{ trans.traffic }}</h4><div class="admin-responsive-fields">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.trafficLimit }} (GB)</label>
           <input type="number" name="edit_traffic_limit" autocomplete="off" v-model="editForm.traffic_limit" class="form-input" placeholder="e.g. 1000" min="0" step="1">
@@ -92,7 +92,7 @@
           </label>
           <input type="number" name="edit_traffic_alert_percent" autocomplete="off" v-model="editForm.traffic_alert_percent" class="form-input" min="0" max="100" step="1">
         </div>
-      </div></section><details class="admin-details"><summary>{{ trans.billing }}</summary><div class="form-row mobile-two-row">
+      </div></section><details class="admin-details"><summary>{{ trans.billing }}</summary><div class="admin-responsive-fields">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.currency }}</label>
           <select v-model="editForm.currency" class="form-select">
@@ -116,7 +116,7 @@
           <label class="form-label">{{ trans.expirationDate }}</label>
           <input type="date" name="edit_expire_date" autocomplete="off" v-model="editForm.expire_date" class="form-input" @click="openDatePicker">
         </div>
-      </div></details><details class="admin-details"><summary>{{ trans.agentVersion }}</summary><p class="text-muted text-sm">{{ agentVersion || '-' }}</p><div class="form-row mobile-two-row">
+      </div></details><details class="admin-details"><summary>{{ trans.agentVersion }}</summary><p class="text-muted text-sm">{{ agentVersion || '-' }}</p><div class="admin-responsive-fields">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ trans.collectInterval }}
@@ -156,7 +156,7 @@
           </select>
         </div>
       </div>
-<div class="form-row mobile-two-row">
+<div class="admin-responsive-fields">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ trans.pingMode }}
@@ -189,7 +189,7 @@
           <input type="number" name="edit_tx_correction" autocomplete="off" v-model="editForm.tx_correction" class="form-input" placeholder="0" min="0" step="0.1">
         </div>
       </div>
-<p class="server-secondary">{{ trans.latencyNodeHint }}</p><div class="admin-form-actions"><a class="btn admin-quiet" :href="`/#/server/${encodeURIComponent(editForm.id)}?apiIndex=${selectedApiIndex}`">{{ trans.view }}</a><button type="button" class="btn" @click="$emit('terminal-access')">{{ trans.terminalAccess }}</button></div></details><p v-if="error" class="text-red" role="alert">{{ error }}</p></template>
+<p class="server-secondary">{{ trans.latencyNodeHint }}</p><div class="admin-form-actions"><a class="btn admin-quiet" :href="`/#/server/${encodeURIComponent(editForm.id)}?apiIndex=${selectedApiIndex}`">{{ trans.view }}</a><button type="button" class="btn" @click="$emit('terminal-access')">{{ trans.terminalAccess }}</button></div></details><p v-if="error" class="text-red" role="alert">{{ error }}</p></div></template>
     <template #footer>
       <button @click="$emit('close')" class="btn" :disabled="saving">{{ trans.cancel }}</button>
       <button @click="$emit('save')" class="btn btn-primary" :disabled="saving">{{ saving ? trans.saving : trans.save }}</button>

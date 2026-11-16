@@ -18,7 +18,7 @@
           </div>
         </div>
 
-        <div class="form-row">
+        <div class="form-row admin-aligned-fields">
           <div class="form-group flex-1">
             <label class="form-label">
               {{ trans.turnstileSiteKey }}
@@ -36,7 +36,7 @@
           </div>
         </div>
 
-        <div class="form-row">
+        <div class="form-row admin-aligned-fields">
           <div class="form-group flex-1">
             <label class="form-label">
               {{ trans.jwtSecret }}
@@ -100,7 +100,7 @@
           <HelpTooltip :text="trans.apiSecretTip" />
         </div>
 
-        <div v-if="changeAdminPassword" class="form-row">
+        <div v-if="changeAdminPassword" class="form-row admin-aligned-fields">
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.password }}</label>
             <div class="password-input-wrapper admin-secret-field">

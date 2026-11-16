@@ -16,6 +16,7 @@ const baseline = process.argv.includes('--baseline');
 const themesOnly = process.argv.includes('--themes-only');
 const dataSettingsOnly = process.argv.includes('--data-settings-only');
 const layoutOnly = process.argv.includes('--layout-only');
+const desktopAudit = process.argv.includes('--desktop-audit');
 const report = { baseline, scope: dataSettingsOnly ? 'data-settings' : 'named-pages', realD1: true, physicalAndroid: false, checks: [], bounds: [], screenshots: [], errors: [], requests: [] };
 let a, b, server, browser, context, page;
 const holds = [], pending = new Set();
@@ -64,6 +65,41 @@ async function measure(pageName, caseName) {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'page has no horizontal overflow');
     const coarse = await page.evaluate(() => matchMedia('(pointer:coarse)').matches);
     assert.ok(bounds.filter(b => b.innerRects.length === 1 && !b.wrapsThemeRow).every(b => b.box.height === (coarse ? 44 : 36)), 'unaffected single-line controls retain accepted 36/44px height');
+  }
+}
+
+async function measureReachable(pageName, caseName) {
+  const result = await page.evaluate(() => {
+    const root = document.querySelector('.admin-dialog:last-child') || document.querySelector('.admin-content') || document.querySelector('.login-container');
+    const box = el => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, right: b.right, bottom: b.bottom }; };
+    const controls = [...root.querySelectorAll('.btn,.login-btn,.form-input,.form-select,.login-input')].filter(el => el.checkVisibility()).map(el => {
+      const b = box(el), walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), text = [];
+      if (el.matches('button,a')) while (walker.nextNode()) if (walker.currentNode.textContent.trim()) {
+        const range = document.createRange(); range.selectNodeContents(walker.currentNode); text.push(...[...range.getClientRects()].map(r => ({ x: r.x, y: r.y, right: r.right, bottom: r.bottom })));
+      }
+      return { label: el.textContent.trim(), class: el.className, box: b, text, inTable: !!el.closest('.table-wrapper') };
+    });
+    const hint = document.querySelector('.admin-notification-workspace .settings-section > .server-secondary');
+    const preferences = hint?.checkVisibility() ? { grid: box(hint.previousElementSibling), hint: box(hint), action: box(hint.nextElementSibling) } : null;
+    const alignedRows = [...root.querySelectorAll('.settings-section .form-row')].filter(row => row.checkVisibility()).map(row => [...row.children].map(field => {
+      const input = field.querySelector('.form-input,.form-select,.form-textarea');
+      return input && { field: input.getAttribute('aria-label'), parentY: box(field).y, inputY: box(input).y };
+    }).filter(Boolean));
+    const updates = document.querySelector('.admin-updates-actions');
+    const updateGap = updates?.checkVisibility() ? box(updates).y - box(updates.previousElementSibling).bottom : null;
+    return { controls, preferences, alignedRows, updateGap, overflow: document.documentElement.scrollWidth > innerWidth, width: innerWidth };
+  });
+  report.bounds.push({ pageName, caseName, reachable: result });
+  assert.equal(result.overflow, false, `${pageName}: no page horizontal overflow`);
+  if (result.preferences) {
+    assert.ok(result.preferences.hint.y - result.preferences.grid.bottom >= 12, 'notification preference explanation is separated from field hints');
+    assert.ok(result.preferences.action.y - result.preferences.hint.bottom >= 12, 'notification explanation has breathing room before save');
+  }
+  for (const row of result.alignedRows) for (let i = 1; i < row.length; i++) if (row[i].parentY === row[i - 1].parentY) assert.equal(row[i].inputY, row[i - 1].inputY, `${pageName}: inputs align below different label/hint lengths ${JSON.stringify(row)}`);
+  if (result.updateGap !== null) assert.ok(result.updateGap >= 12, 'update explanation is separated from navigation actions');
+  for (const control of result.controls) {
+    if (!control.inTable) assert.ok(control.box.x >= 0 && control.box.right <= result.width, `${pageName}: control in viewport ${control.class}`);
+    assert.ok(control.text.every(r => r.x >= control.box.x + 1 && r.right <= control.box.right - 1 && r.y >= control.box.y + 1 && r.bottom <= control.box.bottom - 1), `${pageName}: complete button text ${control.label}`);
   }
 }
 
@@ -152,6 +188,18 @@ try {
     await saveSiteOptions(h.db, { is_public: 'true', site_title: title, username: 'fixture', theme_url: '', last_agent_version: 'v9.8.7' });
     assert.equal((await h.action('save_settings', { settings: { username: 'fixture', password: 'fixture-password' } })).status, 200);
   }
+  if (desktopAudit) {
+    await a.db.prepare("UPDATE servers SET history_partition_id=CASE id WHEN 'node-a' THEN 1 ELSE 2 END, name=CASE id WHEN 'node-a' THEN 'London edge' ELSE 'Windows build server' END, server_group=CASE id WHEN 'node-a' THEN 'Europe' ELSE 'Build' END, region=CASE id WHEN 'node-a' THEN 'GB' ELSE 'US' END, traffic_limit=500, price='4.50', currency='$', billing_cycle='month', expire_date='2027-01-01'").run();
+    for (const [id, os, country, address] of [['node-a', 'Ubuntu 24.04.3 LTS', 'GB', '192.0.2.10'], ['node-b', 'Microsoft Windows Server 2025 build 26100', 'US', '192.0.2.20']]) {
+      const at = Date.now();
+      assert.equal((await a.fetch('/update', { method: 'POST', cf: { country }, headers: { ...a.agentHeaders(id), 'Content-Type': 'application/json' }, body: JSON.stringify({ id, terminal_enabled: false, time: { local_ts: at }, metrics: { cpu: 1, os, ip_v4: address, ip_v6: '2001:db8:abcd:1234:5678:90ab:cdef:1234', timestamp: at } }) })).status, 200);
+    }
+    await a.action('list', { refresh: true });
+    const response = await a.action('save_notification_config', { expectedRevision: 0, channels: [{ name: 'Desktop notification fixture with a descriptive name', type: 'telegram', enabled: false, config: { chatId: '42' }, secrets: { botToken: '123:fixture-only' }, template: '{{message}}' }], rules: [] });
+    assert.equal(response.status, 200); const config = await response.json();
+    assert.equal((await a.action('save_notification_config', { expectedRevision: config.revision, channels: config.channels, rules: [{ id: 'desktop-rule', name: 'Desktop alert fixture with a descriptive name', type: 'offline', enabled: false, scope: { mode: 'all', serverIds: [] }, targetIds: [config.channels[0].id], options: { minutes: 5 } }] })).status, 200);
+    assert.equal((await a.action('latency_save', { task: { name: 'Desktop latency fixture', target: 'fixture.test:443', interval: 60, nodes: ['node-a'], auto_join: false } })).status, 200);
+  }
   server = await createServer({ plugins: [vue()], publicDir: path.resolve('public'), vueFixtureDevtools: true, frontendExports: true, fixtureEntries: [path.resolve('test/fixtures/admin-ui/named-pages.html')], cacheDir: path.join(out, '.cache'), apiMiddlewarePlugin: { name: 'named-pages-authenticated-worker-d1', configureServer(vite) {
     vite.middlewares.use((request, response, next) => {
       const url = new URL(request.url, 'http://fixture.invalid'), match = url.pathname.match(/^\/site-(a|b)(\/.*)$/);
@@ -181,25 +229,41 @@ try {
     const name = `${width}-${dark ? 'dark' : 'light'}-${locale}`, touch = width < 640;
     context = await browser.newContext({ viewport: { width, height: touch ? 844 : 1000 }, hasTouch: touch, isMobile: touch, timezoneId: 'Asia/Shanghai' });
     page = await context.newPage(); page.on('pageerror', error => report.errors.push(error.stack));
-    await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+    await context.route('**/*', route => {
+      const url = new URL(route.request().url());
+      if (url.origin !== origin) return route.abort();
+      // Relative production assets are served from /admin; this nested fixture needs the same actual public bytes.
+      if (desktopAudit && /^\/test\/fixtures\/admin-ui\/(?:flags|os-icons)\//.test(url.pathname)) return route.continue({ url: origin + url.pathname.replace('/test/fixtures/admin-ui', '') });
+      return route.continue();
+    });
     await page.goto(`${origin}/test/fixtures/admin-ui/named-pages.html?locale=${locale}#/admin`);
     await page.waitForFunction(() => window.adminState?.().servers.length === 2 && window.adminState().settings.username === 'fixture');
     await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
     assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), touch, 'real touch/fine media, not only width');
-    for (const pageName of themesOnly ? ['themeStore'] : dataSettingsOnly ? ['database', 'settings'] : ['database', 'themeStore', 'security', 'settings', 'updates']) {
+    const reachablePages = ['servers', 'collection', 'notifications', 'alerts', 'database', 'themeStore', 'security', 'settings', 'updates'];
+    if (desktopAudit) assert.deepEqual(await page.locator('[data-page]').evaluateAll(els => els.map(el => el.dataset.page)), reachablePages, 'audit every actual reachable nav entry');
+    for (const pageName of desktopAudit ? reachablePages : themesOnly ? ['themeStore'] : dataSettingsOnly ? ['database', 'settings'] : ['database', 'themeStore', 'security', 'settings', 'updates']) {
       await enter(pageName);
+      if (desktopAudit && pageName === 'servers') await page.waitForFunction(() => { const images = [...document.querySelectorAll('#tab-servers .flag-img,#tab-servers .os-icon-img')]; return images.length === 4 && images.every(image => image.complete && image.naturalWidth > 0); });
+      if (desktopAudit && pageName === 'collection') await page.waitForFunction(() => document.querySelector('.latency-table')?.getAttribute('aria-busy') === 'false');
+      if (desktopAudit && ['notifications', 'alerts'].includes(pageName)) await page.locator(pageName === 'notifications' ? '[data-channel-row]' : '[data-rule-row]').first().waitFor();
       if (pageName === 'themeStore') { await page.locator('.theme-card').first().waitFor(); await page.waitForFunction(() => [...document.querySelectorAll('.theme-cover')].every(image => image.complete && image.naturalWidth > 0)); }
       if (pageName === 'security') await page.evaluate(() => window.adminState().changeAdminPassword = true);
       await frames(); await measure(pageName, name);
+      if (desktopAudit) { await measureReachable(pageName, name); await page.evaluate(() => scrollTo(0, 0)); await shot(`${name}-${pageName}`, true); }
+      if (desktopAudit && pageName === 'themeStore' && locale === 'fr') {
+        await page.locator('[data-setting-field=custom_head]').evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+        await shot(`${name}-theme-custom-code`, true);
+      }
       if (dataSettingsOnly && !baseline) await measureDataSettings(pageName, name, touch);
-      if (dataSettingsOnly || locale === 'fr' || locale === 'es' || width === 1440 && !dark || pageName === 'security' && width === 390) { await page.evaluate(() => scrollTo(0, 0)); await shot(`${name}-${pageName}`); }
+      if (!desktopAudit && (dataSettingsOnly || locale === 'fr' || locale === 'es' || width === 1440 && !dark || pageName === 'security' && width === 390)) { await page.evaluate(() => scrollTo(0, 0)); await shot(`${name}-${pageName}`); }
       if (dataSettingsOnly && pageName === 'settings' && touch) {
         await page.locator('.cloudflare-settings').evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' })); await shot(`${name}-settings-cloudflare`, true);
       }
       if (dataSettingsOnly && pageName === 'settings' && ['fr', 'es', 'zh'].includes(locale)) {
         await page.locator('[data-setting-field=frontend_ws_timeout_minutes]').evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' })); await shot(`${name}-settings-fields`, true);
       }
-      if (['fr', 'es'].includes(locale) && ['themeStore', 'database'].includes(pageName)) {
+      if (!desktopAudit && ['fr', 'es'].includes(locale) && ['themeStore', 'database'].includes(pageName)) {
         const target = pageName === 'themeStore' ? page.locator('.theme-card').last() : page.locator('#tab-database .settings-section .btn').last();
         await target.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' })); await shot(`${name}-${pageName}-actions`, true);
       }
@@ -211,7 +275,62 @@ try {
         if (!baseline) { assert.ok(spacing >= 7.5); assert.equal(await page.locator('section.settings-section:visible a.btn').getAttribute('href'), 'https://github.com/emailtq/CF-Server-Monitor/tree/terminal'); }
       }
     }
-    if (!baseline && !themesOnly && !dataSettingsOnly) {
+    if (desktopAudit) {
+      if (name === '1920-light-fr') {
+        await enter('servers');
+        const t = await page.evaluate(() => window.adminState().trans);
+        const mutationsBefore = report.requests.filter(r => ['edit', 'batch_delete'].includes(r.action)).length;
+        await page.locator('#tab-servers .toolbar').getByRole('button', { name: t.group, exact: true }).click();
+        await page.locator('.admin-dialog-group .server-checkbox').first().check();
+        await page.locator('.admin-dialog-group summary').click();
+        let waiting = page.waitForEvent('dialog');
+        let click = page.locator('.admin-dialog-group').getByRole('button', { name: t.batchDelete, exact: true }).click();
+        let confirmation = await waiting;
+        assert.equal(confirmation.type(), 'confirm'); assert.equal(confirmation.message(), t.confirmDeleteServers + 1 + t.irreversible);
+        await confirmation.dismiss(); await click;
+        await page.locator('.admin-dialog-group').waitFor({ state: 'hidden' });
+        await page.locator('#tab-servers .toolbar').getByRole('button', { name: t.group, exact: true }).click();
+        await page.locator('.admin-dialog-group summary').click();
+        await page.locator('.admin-dialog-group').getByRole('button', { name: t.batchEdit, exact: true }).click();
+        await page.locator('.admin-dialog-group').waitFor({ state: 'hidden' });
+        const field = page.locator('.batch-edit-field').filter({ has: page.getByText(t.autoUpdate, { exact: true }) });
+        await field.locator('input[type=checkbox]').check(); await field.locator('select').selectOption('true');
+        waiting = page.waitForEvent('dialog'); click = page.getByRole('dialog').getByRole('button', { name: t.save, exact: true }).click();
+        confirmation = await waiting; assert.equal(confirmation.type(), 'confirm'); assert.equal(confirmation.message(), t.autoUpdateRiskDesc);
+        await confirmation.dismiss(); await click;
+        assert.equal(report.requests.filter(r => ['edit', 'batch_delete'].includes(r.action)).length, mutationsBefore, 'native cancel sends no edit/delete request');
+        await page.locator('.admin-dialog-edit .admin-dialog-close').click();
+        await page.locator('.admin-dialog-edit').waitFor({ state: 'hidden' });
+        report.checks.push('existing native bulk-delete and bulk auto-update confirmations retain their complete warnings and cancel without writes');
+      }
+      await enter('collection');
+      const t = await page.evaluate(() => window.adminState().trans);
+      const originalTasks = (await (await a.action('latency_list')).json()).tasks;
+      const cancel = async () => { await page.getByRole('dialog').getByRole('button', { name: t.cancel, exact: true }).click(); await page.getByRole('dialog').waitFor({ state: 'hidden' }); };
+      await page.locator('.latency-toolbar-actions .btn-primary').click();
+      await page.getByRole('dialog').waitFor(); await measureReachable('latency-add', name); await shot(`${name}-latency-add`, true);
+      await page.getByRole('dialog').locator('.latency-name input').fill('Cancelled desktop draft'); await cancel();
+      await page.locator('.latency-table .action-btns button').first().click();
+      await measureReachable('latency-edit', name); await shot(`${name}-latency-edit`, true); await cancel();
+      await page.locator('.latency-table .action-btns button').last().click();
+      await measureReachable('latency-delete', name); await shot(`${name}-latency-delete`, true); await cancel();
+      await page.locator('.latency-views button').last().click();
+      await page.locator('.latency-table tbody .btn-icon').first().click();
+      await measureReachable('latency-node-assignment', name); await shot(`${name}-latency-node-assignment`, true); await cancel();
+      assert.deepEqual((await (await a.action('latency_list')).json()).tasks, originalTasks, 'cancel does not mutate real D1 catalog, including migrated legacy tasks');
+      await page.evaluate(() => { window.adminState().isLoggedIn = false; });
+      await page.locator('.login-container').waitFor(); await measureReachable('login', name); await shot(`${name}-login`, true);
+      const input = page.locator('.login-container input').last(); await input.fill('fixture-only'); await input.focus();
+      const eye = page.locator('.login-container .admin-secret-eye');
+      const paint = () => eye.evaluate(el => { const css = getComputedStyle(el); return [css.backgroundColor, css.borderWidth, css.boxShadow, css.outlineStyle]; });
+      const beforePaint = await paint();
+      await input.evaluate(el => el.setSelectionRange(2, 5)); if (touch) await eye.tap(); else await eye.click();
+      assert.deepEqual(await input.evaluate(el => [document.activeElement === el, el.selectionStart, el.selectionEnd]), [true, 2, 5]);
+      assert.deepEqual(await paint(), beforePaint, 'login eye has no pointer paint flash');
+      await eye.focus(); await page.keyboard.press('Space'); assert.equal(await eye.getAttribute('aria-pressed'), 'false', 'keyboard activation still toggles the eye');
+      report.checks.push(`${name}: all nine nav pages, login and four actual latency dialogs; cancellation leaves D1 unchanged`);
+    }
+    if (!baseline && !themesOnly && !dataSettingsOnly && !desktopAudit) {
       await eyes(name, touch);
       assert.equal(await page.locator('[data-setting-field=jwt_secret]').inputValue(), '', 'existing JWT never refilled');
       assert.equal(await page.locator('[data-setting-field=password]').inputValue(), '', 'configured password never refilled');
@@ -219,7 +338,7 @@ try {
     }
     await context.close(); context = null;
   }
-  if (!baseline && !themesOnly && !layoutOnly) {
+  if (!baseline && !themesOnly && !layoutOnly && !desktopAudit) {
     context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, timezoneId: 'Asia/Shanghai' });
     page = await context.newPage(); page.on('pageerror', error => report.errors.push(error.stack));
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());

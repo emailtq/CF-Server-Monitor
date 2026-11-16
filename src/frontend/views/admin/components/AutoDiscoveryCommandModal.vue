@@ -1,7 +1,8 @@
 <template>
   <AdminDialog :open="show" :title="trans.autoAdd" size="edit" @close="$emit('close')">
     <template #body>
-      <div class="form-row">
+      <div class="admin-registration-form">
+      <div class="admin-responsive-fields">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.targetOs }}</label>
           <select :value="targetOs" class="form-select" @change="$emit('update:target-os', $event.target.value)">
@@ -24,7 +25,9 @@
           >
         </div>
 
-        <div v-if="targetOs === 'linux'" class="form-group flex-1">
+      </div>
+
+        <div v-if="targetOs === 'linux'" class="form-group">
           <label class="form-label">
             {{ trans.installMode }}
             <HelpTooltip :text="trans.nonRootInstallTip" />
@@ -34,9 +37,7 @@
             <option value="cfsm-user">{{ trans.installModeCfsmUser }}</option>
           </select>
         </div>
-      </div>
-
-      <div class="form-row">
+      <div class="admin-responsive-fields">
         <div class="form-group flex-1">
           <label class="form-label">
             Agent {{ trans.version }}
@@ -60,37 +61,42 @@
             <option v-for="option in ghProxyOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             <option :value="CUSTOM_GH_PROXY_VALUE">{{ trans.custom || 'Custom' }}</option>
           </select>
-          <input
-            v-if="showCustomGhProxy"
-            type="text"
-            :value="ghProxy"
-            class="form-input mt-2"
-            :placeholder="trans.ghProxyPlaceholder"
-            @input="$emit('update:gh-proxy', $event.target.value)"
-          >
         </div>
 
+      </div>
+
+      <div v-if="showCustomGhProxy" class="form-group">
+        <label for="auto-discovery-custom-proxy" class="form-label">{{ trans.custom }} · {{ trans.ghProxy }}</label>
+        <input
+          id="auto-discovery-custom-proxy"
+          type="text"
+          :value="ghProxy"
+          class="form-input"
+          :placeholder="trans.ghProxyPlaceholder"
+          @input="$emit('update:gh-proxy', $event.target.value)"
+        >
+      </div>
+
         <div class="form-group">
-          <label class="form-label">&nbsp;</label>
-          <div class="checkbox-item no-margin">
+          <label class="checkbox-item no-margin" for="cfg_auto_discovery_auto_update">
             <input
               id="cfg_auto_discovery_auto_update"
               type="checkbox"
               :checked="autoUpdate"
               @change="$emit('update:auto-update', $event.target.checked)"
             >
-            <label for="cfg_auto_discovery_auto_update"><b>{{ trans.autoUpdate }}</b></label>
-            <HelpTooltip :text="trans.autoUpdateRiskDesc" />
-          </div>
+            <span><b>{{ trans.autoUpdate }}</b></span>
+          </label>
+          <HelpTooltip :text="trans.autoUpdateRiskDesc" />
         </div>
-      </div>
 
       <div class="form-group">
-        <div class="cmd-output-wrapper">
+        <div v-if="installCommand" class="cmd-output-wrapper admin-command-preview">
           <span class="cmd-prompt">{{ targetOs === 'windows' ? 'PS' : '$' }}</span>
           <pre class="cmd-output">{{ installCommand }}</pre>
         </div>
         <p v-if="!installCommand" data-registration-status :role="commandError || (!releaseLoading && !releaseAvailable) ? 'alert' : 'status'" class="download-error">{{ commandPlaceholder }}</p>
+      </div>
       </div>
     </template>
     <template #footer>
