@@ -36,5 +36,5 @@ export function useNotificationConfig(props) {
   const load = () => run('get_notification_config')
   const save = (channels = config.value.channels, rules = config.value.rules) => run('save_notification_config', { expectedRevision: config.value.revision, channels, rules, timezone: config.value.timezone, language: config.value.language })
   const test = channel => run('test_notification_channel', { channel })
-  return { config, busy, locked, error, result, load, save, test, eventStatus, refreshEvents }
+  return { config, busy, locked, error, result, load, save, test, eventStatus }
 }

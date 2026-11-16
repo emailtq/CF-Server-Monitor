@@ -10,6 +10,37 @@ import fs from 'node:fs';
 
 const eventConfig = (type = 'panelLogin') => ({ schema: 1, revision: 1, timezone: 'UTC', language: 'en', channels: [{ id: 'channel', name: 'Fixture', type: 'telegram', enabled: true, config: { chatId: 'fixture' }, secrets: { botToken: 'fixture-token' }, template: '{{event}} {{message}} {{time}}' }], rules: [{ id: 'rule', name: 'Success', type, enabled: true, scope: { mode: type === 'panelLogin' ? 'site' : 'all', serverIds: [] }, targetIds: ['channel'], options: {} }] });
 
+test('HTTP and WSS SSH receipts reach D1 and the selected channel without dashboard or cron', async t => {
+  const sends = [];
+  const h = await harness({ outboundService: async request => { sends.push({ at: performance.now(), payload: await request.json() }); return Response.json({ ok: true }); } });
+  try {
+    await saveSiteOptions(h.db, { wss_report_enabled: 'true' });
+    await h.db.prepare("UPDATE servers SET history_partition_id=1 WHERE id='node-a'").run();
+    await h.db.prepare("INSERT INTO settings(key,value) VALUES('notification_config',?)").bind(JSON.stringify(eventConfig('sshLogin'))).run();
+    for (const [index, mode] of ['HTTP','WSS'].entries()) {
+      const body = { id: 'node-a', time: { local_ts: Date.now() }, metrics: { cpu: '5' }, ssh_events: { version: 1, stream: `timing-${mode}`, state: 'watching', source: 'journal', events: [{ sequence: 1, occurredAt: Date.now(), user: 'fixture-user', address: '127.0.0.1', method: 'password' }] } };
+      const peer = mode === 'WSS' ? await h.socket('/update?config_schema=10', h.agentHeaders()) : null;
+      const startedAt = performance.now();
+      if (peer) {
+        peer.ws.send(JSON.stringify(body));
+        await until(() => controls(peer).some(frame => frame.ssh_ack?.stream === body.ssh_events.stream && frame.ssh_ack.sequence === 1));
+      } else {
+        const response = await h.fetch('/update', { method: 'POST', headers: { ...h.agentHeaders(), 'Content-Type': 'application/json', 'X-Agent-Config-Schema': '10' }, body: JSON.stringify(body) });
+        assert.equal(response.status, 200);
+        assert.deepEqual(JSON.parse(response.headers.get('X-CFSM-Ssh-Ack')), { stream: body.ssh_events.stream, sequence: 1 });
+      }
+      const acknowledgedAt = performance.now();
+      assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM login_events').first()).count, index + 1, 'ACK must follow durable D1 event');
+      await until(() => sends.length === index + 1);
+      const sendMs = sends[index].at - startedAt;
+      assert.ok(sendMs < 5000, `${mode} delivery required external refresh/cron`);
+      assert.match(sends[index].payload.text, /fixture-user/);
+      await until(async () => (await h.db.prepare("SELECT COUNT(*) AS count FROM login_event_deliveries WHERE state='sent'").first()).count === index + 1);
+      t.diagnostic(`${mode}: report-to-durable-ACK=${(acknowledgedAt-startedAt).toFixed(1)}ms report-to-fake-channel=${sendMs.toFixed(1)}ms`);
+    }
+  } finally { await h.dispose(); }
+});
+
 test('durable panel and terminal spools do not revive disabled rules or adopt newly enabled targets', async () => {
   for (const type of ['panelLogin', 'terminalConnected']) {
     const sent = [];

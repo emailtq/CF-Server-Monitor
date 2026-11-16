@@ -14,13 +14,15 @@ const report = { checks: [], errors: [], screenshots: [], channelSends: 0, realD
 let h, server, browser, context;
 try {
   h = await harness({ outboundService: async () => { report.channelSends++; return Response.json({ ok: true }); } });
-  const config = { schema: 1, revision: 1, language: 'en', timezone: 'UTC', rules: [], channels: [{ id: 'fixture-channel', name: 'Fixture channel', type: 'telegram', enabled: true, config: { chatId: 'fixture' }, secrets: { botToken: 'fixture-token' }, template: '{{event}} {{message}} {{time}}' }] };
+  const config = { schema: 1, revision: 1, language: 'en', timezone: 'UTC', rules: [{ id: 'ssh-existing', name: 'Existing SSH login', type: 'sshLogin', enabled: true, scope: { mode: 'all', serverIds: [] }, targetIds: ['fixture-channel'], options: {} }], channels: [{ id: 'fixture-channel', name: 'Fixture channel', type: 'telegram', enabled: true, config: { chatId: 'fixture' }, secrets: { botToken: 'fixture-token' }, template: '{{event}} {{message}} {{time}}' }] };
   await h.db.prepare("INSERT INTO settings(key,value) VALUES('notification_config',?)").bind(JSON.stringify(config)).run();
+  const { queueLoginEvent } = await import('../../../src/services/loginEvents.js');
+  await queueLoginEvent({ DB: h.db }, { type: 'sshLogin', id: 'fixture-uncertain', occurredAt: Date.now(), serverId: 'node-a', tokenVersion: h.nodes['node-a'].tokenVersion, user: 'fixture', address: '127.0.0.1', method: 'password' });
+  await h.db.prepare("UPDATE login_event_deliveries SET state='uncertain'").run();
   server = await createServer({ frontendExports: true, cacheDir: path.join(out, '.cache'), plugins: [vue()], publicDir: path.resolve('public') });
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   browser = await chromium.launch({ headless: true, executablePath: 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
-  context = await browser.newContext();
-  await context.route('**/*', async route => {
+  const routeLocal = async route => {
     const url = new URL(route.request().url());
     if (url.origin !== origin) return route.abort();
     if (url.pathname.endsWith('/api/config') || url.pathname === '/theme') return route.fulfill({ json: {} });
@@ -33,17 +35,28 @@ try {
       return route.fulfill({ json: { success: true, settings: { username: 'fixture', password_configured: true, site_title: 'CF Monitor' }, servers: ['node-a','node-b'].map(id => ({ id, name: id, net_rx_monthly: 0, net_tx_monthly: 0 })), stats: { total: 2 } } });
     }
     return route.continue();
-  });
-  const page = await context.newPage();
-  page.on('pageerror', error => report.errors.push(error.stack));
-  for (const width of [360,390,1440,1920]) for (const theme of ['light','dark']) {
-    const locale = width < 400 ? 'zh' : width === 1920 ? 'fr' : 'en';
-    await page.setViewportSize({ width, height: width < 400 ? 844 : 1000 });
+  };
+  const cases = [360,390,1440,1920].flatMap(width => ['light','dark'].map(theme => ({ width, theme, locale: width < 400 ? 'zh' : width === 1920 ? 'fr' : 'en', edit: true })));
+  cases.push(...['zh-TW','ja','es','id'].flatMap((locale, index) => ['light','dark'].map(theme => ({ width: index % 2 ? 1920 : 390, theme, locale, edit: false }))));
+  for (const { width, theme, locale, edit } of cases) {
+    await context?.unrouteAll({ behavior: 'wait' }); await context?.close();
+    context = await browser.newContext({ viewport: { width, height: width < 400 ? 844 : 1000 }, isMobile: width < 400, hasTouch: width < 400 });
+    await context.route('**/*', routeLocal);
+    const page = await context.newPage();
+    page.on('pageerror', error => report.errors.push(error.stack));
     await page.goto(`${origin}/test/fixtures/admin-ui/index.html?mode=admin&locale=${locale}#/admin`);
     await page.evaluate(async theme => (await import('/src/frontend/composables/useTheme.js')).useTheme().setTheme(theme), theme);
     await page.locator('[data-page=alerts]').click();
+    assert.equal(await page.locator('.admin-rule-list').isVisible(), true);
+    assert.equal(await page.locator('section .admin-routing-preview').count(), 0, 'alerts must not contain a separate SSH source diagnostic block');
+    await page.locator('section > p[role=status]').waitFor();
+    assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), width < 400);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    report.checks.push({ width, theme, locale, coarse: width < 400, diagnosticsAbsent: true, uncertainVisible: true });
+    const alertShot = `${width}-${theme}-${locale}-alerts.png`;
+    await page.screenshot({ path: path.join(out, alertShot) }); report.screenshots.push(alertShot);
     const dialog = page.getByRole('dialog');
-    for (const type of ['sshLogin','panelLogin','terminalConnected']) {
+    for (const type of edit ? ['sshLogin','panelLogin','terminalConnected'] : []) {
       await page.locator('[data-action=add-rule]').click();
       await dialog.locator('[name=event]').selectOption(type);
       await dialog.locator('[name=name]').fill(`${width}-${theme}-${type}`);

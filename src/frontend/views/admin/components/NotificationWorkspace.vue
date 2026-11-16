@@ -1,7 +1,7 @@
 <template>
   <div v-show="active" class="admin-notification-workspace">
     <p v-if="busy && !config" role="status">{{ trans.loading }}</p>
-    <template v-if="config"><AdminNotifications v-show="activeTab === 'notifications'" :trans="trans" :config="config" :busy="busy || locked" @add="openChannel()" @edit="openChannel" @toggle="toggleChannel" @test="testChannel" @remove="removeChannel" @save="save()" @navigate="$emit('navigate', $event)" /><AdminAlerts :event-status="eventStatus" @refresh-events="refreshEvents" v-show="activeTab === 'alerts'" :trans="trans" :config="config" :servers="servers" :busy="busy || locked" @add="openRule()" @edit="openRule" @toggle="toggleRule" @remove="removal = { kind: 'rule', value: $event }" @navigate="$emit('navigate', $event)" /></template>
+    <template v-if="config"><AdminNotifications v-show="activeTab === 'notifications'" :trans="trans" :config="config" :busy="busy || locked" @add="openChannel()" @edit="openChannel" @toggle="toggleChannel" @test="testChannel" @remove="removeChannel" @save="save()" @navigate="$emit('navigate', $event)" /><AdminAlerts :event-status="eventStatus" v-show="activeTab === 'alerts'" :trans="trans" :config="config" :servers="servers" :busy="busy || locked" @add="openRule()" @edit="openRule" @toggle="toggleRule" @remove="removal = { kind: 'rule', value: $event }" @navigate="$emit('navigate', $event)" /></template>
     <template v-if="!channel && !rule"><p v-if="error" class="admin-notification-error" role="alert" :data-error="error">{{ trans[errorKeys[error]] }}</p><button v-if="error" class="btn" data-action="recover" :disabled="busy" @click="load">{{ trans.adminRefreshNotification }}</button><p v-if="result" role="status">{{ trans.operationSuccess }}</p></template>
     <NotificationDialog :locked="locked" v-if="channel" :draft="channel" :trans="trans" :busy="busy" :error="error" :result="result" @save="saveChannel" @test="testChannel" @close="closeDraft" @recover="load" />
     <AlertDialog :locked="locked" v-if="rule" :draft="rule" :previous="config.rules.find(r => r.id === rule.id)" :trans="trans" :channels="config.channels" :servers="servers" :busy="busy" :error="error" @save="saveRule" @close="closeDraft" @recover="load" />
@@ -19,7 +19,7 @@ import { useNotificationConfig } from '../composables/useNotificationConfig.js'
 import { newChannel, channelDraft, channelPayload, ruleOptions, ruleReady } from '../composables/notificationPresentation.js'
 const props = defineProps({ trans: Object, activeTab: String, servers: Array, selectedApiIndex: Number, requestOwner: Function })
 const emit = defineEmits(['navigate', 'config'])
-const { config, busy, locked, error, result, load, save, test, eventStatus, refreshEvents } = useNotificationConfig(props)
+const { config, busy, locked, error, result, load, save, test, eventStatus } = useNotificationConfig(props)
 const active = computed(() => ['notifications', 'alerts'].includes(props.activeTab))
 const channel = ref(null), rule = ref(null), removal = ref(null)
 const discardDraft = () => { if (channel.value) channel.value.secrets = {}; channel.value = null; rule.value = null; removal.value = null }
