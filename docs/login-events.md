@@ -8,9 +8,9 @@
 - 终端连接成功指已鉴权的 Agent 发送 `ready`，Broker 校验当前会话、连接、浏览器及凭据代次，并持久化 `running`。此前的 `terminal_audit.start` 不代表此成功事件。
 - SSH 成功指 OpenSSH 写出 `Accepted … for … from …` 认证成功记录；不要求随后打开交互式 shell。失败尝试、登出和本系统 PTY 输出不属于 SSH 登录事件。
 
-## SSH 需要尚未发布的 schema 10 Agent
+## SSH 需要 v1.4.0 / schema 10 Agent
 
-本源码新增 `ssh_login_enabled=0|1` 和私有上报 `ssh_events.version=1`，配置协议升为 **schema 10**。已发布的 v1.3.0/schema 9 不包含采集器。需要先合并、部署 Worker，再发布和升级包含 schema 10 的 Agent；本阶段不发布二进制或重装节点。
+`ssh_login_enabled=0|1` 和私有上报 `ssh_events.version=1` 使用 **schema 10**，采集器已随 [v1.4.0](https://github.com/emailtq/cfsm-agent/releases/tag/v1.4.0) 发布。先升级配套 Worker，再升级 Agent；v1.3.0/schema 9 不包含采集器。已启用自动更新的节点按既有周期升级，其余节点从后台安装／更新入口升级；发布不主动重装节点。
 
 Worker 仍按原格式下发 schema 3–9 配置；没有 SSH 告警的节点不需要开启采集。面板／终端事件不依赖新的 SSH 采集器。新 Agent 继续接受原有 schema 7–9 配置及原配置入口。
 
