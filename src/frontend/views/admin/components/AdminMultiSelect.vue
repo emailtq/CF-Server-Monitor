@@ -1,5 +1,5 @@
 <template>
-  <div ref="root" class="admin-picker" :data-side="side" :data-open="open ? '' : undefined" @keydown="keydown">
+  <div ref="root" class="admin-picker" :data-open="open ? '' : undefined" @keydown="keydown">
     <input ref="trigger" v-model="query" type="search" autocomplete="off" class="admin-picker-summary" :title="summary" :placeholder="summary" :aria-label="(label || t('adminSelectItems')) + ' · ' + t('adminSearchOptions')" role="combobox" :aria-expanded="open" :aria-controls="open ? menuId : undefined" :aria-activedescendant="open && activeId ? activeId : undefined" aria-autocomplete="list" aria-haspopup="listbox" @click="show" @input="activeId = ''; show()" />
     <button type="button" class="admin-picker-arrow" tabindex="-1" :aria-label="label || t('adminSelectItems')" :aria-expanded="open" @mousedown.prevent @click="toggle"><AdminIcon name="chevron-down" /></button>
     <div v-if="open" ref="menu" class="admin-picker-menu" :style="menuStyle" @mousedown.prevent>
@@ -32,7 +32,6 @@ const menuStyle = ref({})
 const open = ref(false)
 const query = ref('')
 const activeId = ref('')
-const side = ref('down')
 const listHeight = ref(200)
 const menuId = `admin-picker-${crypto.randomUUID()}`
 const chosen = computed(() => props.modelValue.map(value => props.options.find(o => o.value === value) || { value, label: value }))
@@ -57,21 +56,19 @@ const position = (closeOffscreen = false) => {
   const visibleBottom = Math.min(bottom, container ? container.top + scrollport.clientTop + scrollport.clientHeight : bottom)
   // Keyboard panning must not dismiss the input's active search.
   if (closeOffscreen === true && document.activeElement !== trigger.value && (rect.bottom <= visibleTop || rect.top >= visibleBottom)) { close(); return }
-  const chrome = menu.value.offsetHeight - list.value.offsetHeight
+  const chrome = menu.value.querySelector('.admin-picker-count').offsetHeight + menu.value.clientTop * 2
   const below = bottom - rect.bottom - 4
-  const above = rect.top - top - 4
-  side.value = below < chrome + 200 && above > below ? 'up' : 'down'
-  const space = Math.max(above, below)
-  const rowHeight = window.matchMedia('(pointer: coarse)').matches ? 44 : 38
-  listHeight.value = Math.max(rowHeight, Math.min(200, space - chrome))
-  const height = chrome + Math.min(list.value.scrollHeight, listHeight.value)
+  // CF menus always open below; keyboard space shrinks the list, never moves focus or flips it.
+  listHeight.value = Math.max(0, Math.min(200, below - chrome))
   const left = (viewport?.offsetLeft || 0) + 16
   const width = Math.min(rect.width, (viewport?.width || innerWidth) - 32)
   // Fixed positioning escapes scroll-body clipping; DOM ownership stays in the dialog.
   menuStyle.value = {
     width: `${width}px`,
     left: `${Math.max(left, Math.min(rect.left, left + (viewport?.width || innerWidth) - 32 - width))}px`,
-    top: `${Math.max(top, Math.min(side.value === 'up' ? rect.top - 4 - height : rect.bottom + 4, bottom - height))}px`
+    top: `${rect.bottom + 4}px`,
+    maxHeight: `${Math.max(0, below)}px`,
+    visibility: below > 0 ? undefined : 'hidden'
   }
 }
 const show = async () => {

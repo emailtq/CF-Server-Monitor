@@ -57,7 +57,7 @@
 .admin-ui .admin-group-popover-enter-active, .admin-ui .admin-group-popover-leave-active { transition: opacity 150ms, scale 150ms; }
 .admin-ui .admin-group-popover-enter-from, .admin-ui .admin-group-popover-leave-to { opacity: 0; scale: .95; }
 .admin-ui .admin-dialog-edit .admin-group-popover-enter-active, .admin-ui .admin-dialog-edit .admin-group-popover-leave-active { transition: opacity 150ms, transform 150ms; }
-.admin-ui .admin-dialog-edit .admin-group-popover-enter-from { scale: 1; transform: translateY(var(--admin-group-enter-y, -8px)) scale(.95); }
+.admin-ui .admin-dialog-edit .admin-group-popover-enter-from { scale: 1; transform: translateY(-8px) scale(.95); }
 .admin-ui .admin-dialog-edit .admin-group-popover-leave-to { scale: 1; transform: scale(.95); }
 .admin-ui.admin-group-dialog-enter-active, .admin-ui.admin-group-dialog-leave-active { transition: opacity 200ms; }
 .admin-ui.admin-group-dialog-enter-active .admin-dialog-group, .admin-ui.admin-group-dialog-leave-active .admin-dialog-group { transition: scale 200ms; }

@@ -99,7 +99,7 @@ watch(() => props.open, async open => {
   if (!open) { if (!['terminal', 'group'].includes(props.size)) release(); return }
   if (registered) {
     await nextTick() // A reversed leave remounts the section without replacing its stack owner.
-    if (registered && props.open && topmost() && props.size !== 'group') focusFirst()
+    if (registered && props.open && topmost() && props.size !== 'group' && !dialogElement()?.contains(document.activeElement)) focusFirst()
     return
   }
   previousFocus = document.activeElement
@@ -111,7 +111,8 @@ watch(() => props.open, async open => {
   if (!registered) return
   document.addEventListener('keydown', keydown, true)
   document.addEventListener('focusin', focusin)
-  if (props.size !== 'group') focusFirst()
+  // A consumer or the user may already own focus before this asynchronous open finishes.
+  if (props.size !== 'group' && topmost() && !dialogElement()?.contains(document.activeElement)) focusFirst()
 }, { immediate: true, flush: 'post' })
 onBeforeUnmount(release)
 </script>

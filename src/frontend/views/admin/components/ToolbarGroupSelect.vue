@@ -3,7 +3,7 @@
     <button ref="trigger" type="button" role="combobox" aria-autocomplete="none" class="toolbar-select admin-toolbar-group-trigger" :disabled="disabled" :title="summary" :aria-label="label" aria-haspopup="listbox" :aria-expanded="open" :aria-controls="open ? menuId : undefined" @pointerdown="triggerPointer" @click="triggerClick" @keydown="triggerKey">
       <span>{{ summary }}</span><AdminIcon name="chevron-down" />
     </button>
-    <Transition name="admin-select" @after-leave="finishClose"><div v-if="open" :id="menuId" ref="menu" class="admin-toolbar-group-menu" :data-side="side" role="listbox" tabindex="-1" :aria-label="label" :style="menuStyle" @contextmenu.prevent @focusin="recordFocus" @keydown="menuKey">
+    <Transition name="admin-select" @after-leave="finishClose"><div v-if="open" :id="menuId" ref="menu" class="admin-toolbar-group-menu" role="listbox" tabindex="-1" :aria-label="label" :style="menuStyle" @contextmenu.prevent @focusin="recordFocus" @keydown="menuKey">
       <div v-show="canUp" class="admin-toolbar-group-scroll is-up" aria-hidden="true" @pointerdown.prevent="startScroll(-1)" @pointermove="scrollMove(-1)" @pointerleave="stopScroll"><AdminIcon name="chevron-down" /></div>
       <div ref="viewport" class="admin-toolbar-group-viewport" @scroll="scrolledOptions">
         <button v-for="(option, index) in options" :key="option.value" type="button" role="option" :aria-selected="modelValue === option.value" tabindex="-1" :data-index="index" @click="select(option.value)" @pointerup="$event.pointerType === 'mouse' && select(option.value)" @pointermove="$event.pointerType === 'mouse' && $event.currentTarget.focus({ preventScroll: true })" @pointerleave="optionLeave">
@@ -21,7 +21,7 @@ import AdminIcon from './AdminIcon.vue'
 
 const props = defineProps({ modelValue: String, groups: Array, choices: Array, allLabel: String, label: String, active: Boolean, disabled: Boolean })
 const emit = defineEmits(['update:modelValue'])
-const root = ref(null), trigger = ref(null), menu = ref(null), viewport = ref(null), open = ref(false), menuStyle = ref({}), side = ref('bottom'), canUp = ref(false), canDown = ref(false)
+const root = ref(null), trigger = ref(null), menu = ref(null), viewport = ref(null), open = ref(false), menuStyle = ref({}), canUp = ref(false), canDown = ref(false)
 const menuId = `admin-toolbar-group-${crypto.randomUUID()}`
 const options = computed(() => props.choices || [{ value: '', label: props.allLabel }, ...props.groups.map(group => ({ value: group, label: group }))])
 const summary = computed(() => options.value.find(option => option.value === props.modelValue)?.label || props.allLabel)
@@ -99,13 +99,12 @@ const position = () => {
   menuStyle.value = { minWidth: `${Math.min(Math.max(128, rect.width) + 2, availableWidth)}px`, maxWidth: `${availableWidth}px` }
   const width = menu.value.offsetWidth
   if (rect.bottom <= top || rect.top >= bottom) { close(); return }
-  const below = bottom - rect.bottom, above = rect.top - top, wanted = (viewport.value?.scrollHeight || 0) + 2
-  const up = below < wanted && above > below
-  const height = Math.max(0, Math.min(wanted, up ? above : below))
-  side.value = up ? 'top' : 'bottom'
+  const below = bottom - rect.bottom - 4, wanted = (viewport.value?.scrollHeight || 0) + 2
+  const height = Math.max(0, Math.min(wanted, below))
   const menuLeft = Math.max(left, Math.min(rect.left + rect.width / 2 - width / 2, left + availableWidth - width))
   // CF's explicit long-label safety exception clamps Radix's intrinsic width to the viewport.
-  menuStyle.value = { ...menuStyle.value, maxHeight: `${height}px`, left: `${menuLeft}px`, top: `${up ? rect.top - 4 - height : rect.bottom + 4}px`, transformOrigin: `${rect.left + rect.width / 2 - menuLeft}px ${up ? 'bottom' : 'top'}` }
+  // In a short downward menu the native list gets the space, not two scroll-arrow rows.
+  menuStyle.value = { ...menuStyle.value, maxHeight: `${height}px`, left: `${menuLeft}px`, top: `${rect.bottom + 4}px`, transformOrigin: `${rect.left + rect.width / 2 - menuLeft}px top`, visibility: below >= 10 ? undefined : 'hidden', '--toolbar-scroll-controls-display': height >= 90 ? 'flex' : 'none' }
   nextTick(scrolledOptions)
 }
 const focus = index => {
@@ -198,7 +197,7 @@ onMounted(() => {
   document.addEventListener('scroll', scrolled, true)
   document.addEventListener('wheel', blockScroll, { passive: false })
   document.addEventListener('touchmove', blockScroll, { passive: false })
-  window.addEventListener('resize', windowClosed)
+  window.addEventListener('resize', position)
   window.addEventListener('blur', windowClosed)
   window.addEventListener('admin-picker-open', otherOpened)
   window.visualViewport?.addEventListener('resize', viewportChanged)
@@ -211,7 +210,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('scroll', scrolled, true)
   document.removeEventListener('wheel', blockScroll)
   document.removeEventListener('touchmove', blockScroll)
-  window.removeEventListener('resize', windowClosed)
+  window.removeEventListener('resize', position)
   window.removeEventListener('blur', windowClosed)
   window.removeEventListener('admin-picker-open', otherOpened)
   window.visualViewport?.removeEventListener('resize', viewportChanged)
@@ -240,11 +239,10 @@ onBeforeUnmount(() => {
 .admin-toolbar-group-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-toolbar-group-trigger svg { opacity: .5; color: var(--cf-muted); }
 .admin-toolbar-group-menu { position: fixed; z-index: 50; display: flex; flex-direction: column; width: max-content; overflow: hidden; border: 1px solid var(--cf-border); border-radius: 8px; background: var(--toolbar-popover); color: var(--cf-text); font-family: var(--toolbar-font); font-size: 16px; line-height: 24px; box-shadow: var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), var(--toolbar-empty-shadow), 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1); transform-origin: top center; pointer-events: auto; }
-.admin-toolbar-group-menu[data-side=top] { transform-origin: bottom center; }
 /* Stable siblings keep Vue from moving the focused viewport when a scroll arrow changes. */
 .admin-toolbar-group-viewport { min-height: 0; padding: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
 .admin-toolbar-group-viewport::-webkit-scrollbar { display: none; }
-.admin-toolbar-group-scroll { display: flex; flex-shrink: 0; justify-content: center; padding: 4px 0; cursor: default; }
+.admin-toolbar-group-scroll { display: var(--toolbar-scroll-controls-display, flex); flex-shrink: 0; justify-content: center; padding: 4px 0; cursor: default; }
 .admin-toolbar-group-scroll.is-up svg { transform: rotate(180deg); }
 .admin-toolbar-group-menu button { position: relative; display: flex; align-items: center; width: 100%; min-height: 32px; padding: 6px 32px 6px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font-size: 14px; line-height: 20px; text-align: left; cursor: default; }
 .admin-toolbar-group-menu button:focus { background: var(--cf-soft); outline: none; }
@@ -254,6 +252,4 @@ onBeforeUnmount(() => {
 .admin-select-leave-active { animation: admin-select-out 150ms; pointer-events: none; }
 @keyframes admin-select-in { from { opacity: 0; transform: translateY(-8px) scale(.95); } to { opacity: 1; transform: none; } }
 @keyframes admin-select-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(.95); } }
-.admin-select-enter-active[data-side=top] { animation-name: admin-select-in-up; }
-@keyframes admin-select-in-up { from { opacity: 0; transform: translateY(8px) scale(.95); } to { opacity: 1; transform: none; } }
 </style>

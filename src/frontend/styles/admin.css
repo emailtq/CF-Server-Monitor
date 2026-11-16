@@ -77,7 +77,7 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-ui.admin-ui .main-panel { margin: 0; padding: 0; border: 0; background: none; box-shadow: none; border-radius: 0; backdrop-filter: none; }
 .admin-ui.admin-ui.admin-ui .tab-content { padding: 0; animation: none; }
 .admin-ui.admin-ui.admin-ui .btn { display: inline-flex; justify-content: center; align-items: center; gap: 8px; height: 36px; min-height: 36px; padding: 8px 12px; border: 1px solid var(--cf-border); border-radius: 6px; color: var(--cf-text); background: var(--cf-panel); font-weight: 400; letter-spacing: normal; text-transform: none; text-decoration: none; box-shadow: 0 1px 2px #00000005; transition: none; }
-.admin-ui.admin-ui.admin-ui .btn:hover { background: var(--cf-soft); transform: none; box-shadow: none; }
+.admin-ui.admin-ui.admin-ui .btn:where(:not(.btn-primary, .btn-red, .login-btn, :disabled)):hover { background: var(--cf-soft); transform: none; box-shadow: none; }
 .admin-ui.admin-ui.admin-ui .btn-primary,
 .admin-ui.admin-ui.admin-ui .login-btn { background: var(--cf-brand-fill); color: var(--cf-on-brand); border-color: var(--cf-brand-fill); }
 .admin-ui.admin-ui.admin-ui .btn-red { color: var(--cf-red); }

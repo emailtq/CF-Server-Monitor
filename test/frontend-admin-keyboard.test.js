@@ -4,6 +4,15 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
+test('down-only menus, initial input focus and primary button states stay stable on mobile and desktop', { timeout: 180000 }, () => {
+  const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/picker-group.mjs', '--keyboard-paint-only'], {
+    encoding: 'utf8', timeout: 170000, windowsHide: true,
+    env: { ...process.env, PICKER_GROUP_REPORT_DIR: process.env.PICKER_GROUP_REPORT_DIR ? path.join(process.env.PICKER_GROUP_REPORT_DIR, 'keyboard-paint') : path.join(os.tmpdir(), 'cfsm-admin-ui-evidence', `keyboard-paint-${Date.now()}`) }
+  });
+  process.stdout.write(result.stdout || ''); process.stderr.write(result.stderr || '');
+  assert.equal(result.status, 0, result.stdout + result.stderr + (result.error || ''));
+});
+
 test('minimal keyboard layout ownership and group input focus survive continuous visual-only viewport events', { timeout: 180000 }, () => {
   const root = process.env.ADMIN_DIALOG_REPORT_DIR || path.join(os.tmpdir(), 'cfsm-admin-ui-evidence', `dialog-ime-${Date.now()}`);
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/dialogs.mjs', '--edge-keyboard', '--ime-layout'], { encoding: 'utf8', timeout: 170000, windowsHide: true, env: { ...process.env, ADMIN_DIALOG_REPORT_DIR: path.join(root, 'ime-layout') } });

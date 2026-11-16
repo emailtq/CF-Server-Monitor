@@ -37,9 +37,9 @@ const position = () => {
   if (!shown.value || !menu.value) return
   const rect = input.value.getBoundingClientRect(), viewport = window.visualViewport
   const top = (viewport?.offsetTop || 0) + 8, bottom = top + (viewport?.height || innerHeight) - 16
-  const height = Math.min(menu.value.scrollHeight + 2, 250, Math.max(rect.top - top, bottom - rect.bottom) - 4)
-  const up = bottom - rect.bottom < height + 4 && rect.top - top > bottom - rect.bottom
-  menuStyle.value = { left: `${rect.left}px`, top: `${up ? rect.top - height - 4 : rect.bottom + 4}px`, width: `${rect.width}px`, maxHeight: `${Math.max(0, height)}px`, transformOrigin: up ? 'bottom' : 'top', '--admin-group-enter-y': up ? '8px' : '-8px' }
+  const below = bottom - rect.bottom - 4
+  const height = Math.max(0, Math.min(menu.value.scrollHeight + 2, 250, below))
+  menuStyle.value = { left: `${rect.left}px`, top: `${rect.bottom + 4}px`, width: `${rect.width}px`, maxHeight: `${height}px`, transformOrigin: 'top', visibility: below >= 10 ? undefined : 'hidden' }
 }
 const key = event => {
   if (event.isComposing || event.keyCode === 229) return

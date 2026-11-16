@@ -7,6 +7,7 @@ import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import { pickerGroupD1 } from './picker-group-d1.mjs';
 import { pickerGroupVisual } from './picker-group-visual.mjs';
+import { keyboardPaint } from './keyboard-paint.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.ADMIN_UI_PLAYWRIGHT || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
@@ -19,7 +20,15 @@ const frames = p => p.evaluate(() => new Promise(resolve => requestAnimationFram
 const check = async (name, run) => { await run(); report.checks.push(name); console.log('PASS ' + name); };
 const shot = async (p, name) => {
   const coarse = await p.evaluate(() => matchMedia('(pointer:coarse)').matches), file = path.join(out, `${name}.png`);
-  await p.screenshot({ path: file, fullPage: false }); report.screenshots.push(file);
+  const cdp = await p.context().newCDPSession(p);
+  try {
+    const before = await p.evaluate(() => [innerWidth, innerHeight]);
+    const image = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    fs.writeFileSync(file, Buffer.from(image.data, 'base64'));
+    assert.deepEqual(await p.evaluate(() => [innerWidth, innerHeight]), before, 'capture must not restore a stale Playwright viewport');
+  }
+  finally { await cdp.detach(); }
+  report.screenshots.push(file);
   assert.equal(await p.evaluate(() => matchMedia('(pointer:coarse)').matches), coarse, 'viewport screenshot preserves actual pointer mode');
 };
 const open = async kind => {
@@ -38,7 +47,8 @@ try {
   });
   page = await context.newPage(); page.setDefaultTimeout(7000); page.on('pageerror', error => report.errors.push(error.stack));
   await page.goto(`${origin}/test/fixtures/admin-ui/dialogs.html?locale=zh#/admin`); await page.waitForFunction(() => window.dialogFixture);
-  if (!process.argv.includes('--visual-only') && !process.argv.includes('--motion-only')) {
+  if (process.argv.includes('--keyboard-paint-only')) await keyboardPaint({ page, context, open, frames, report, shot });
+  if (!process.argv.includes('--visual-only') && !process.argv.includes('--motion-only') && !process.argv.includes('--keyboard-paint-only')) {
     await open('alert');
     await page.evaluate(() => {
       window.pickerEvents = [];
