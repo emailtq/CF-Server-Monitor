@@ -5,12 +5,15 @@ import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import en from '../../../src/frontend/locales/en.js';
+import { downloadReferenceChecks } from './download-reference-checks.mjs';
+import { downloadCopyChecks } from './download-copy-checks.mjs';
+import { downloadReferenceAssets } from './download-reference.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const out = path.resolve(process.env.ADMIN_DOWNLOAD_REPORT_DIR || `.planning/2026-11-13-admin-ui-polish/task2/run-${Date.now()}`);
 fs.mkdirSync(out, { recursive: true });
 const report = { node: process.version, checks: [], errors: [], geometry: [], screenshots: [], actions: [], mockBoundary: 'actual mounted Vue + real frontend HTTP/ownership; synthetic issuer/GitHub/clipboard; controlled parent command only in ownership tests' };
-let server, browser, context, page, origin, httpOrigin;
+let server, browser, context, page, origin, httpOrigin, emulation;
 let tokens, permissions, actions, metadata, held = [], holdAction = '', resetError = '', readError = '', resetReply = '', loseReset = false, deferredMutation = false;
 const releaseHeld = () => held.splice(0).forEach(resolve => resolve());
 const count = action => actions.filter(item => item.action === action).length;
@@ -24,20 +27,33 @@ const swipeNotice = async (distance = -60) => {
 };
 const ready = () => page.waitForFunction(() => document.querySelector('[data-copy-command]')?.disabled === false);
 const idle = () => page.waitForFunction(() => !document.querySelector('[data-confirm-reissue]')?.disabled);
+const screenshot = async (p, file) => {
+  const cdp = await p.context().newCDPSession(p);
+  try {
+    const before = await p.evaluate(() => ({width:innerWidth,height:innerHeight,coarse:matchMedia('(pointer:coarse)').matches}));
+    const image = await cdp.send('Page.captureScreenshot', {format:'png',captureBeyondViewport:false});
+    fs.writeFileSync(file,Buffer.from(image.data,'base64'));
+    assert.deepEqual(await p.evaluate(() => ({width:innerWidth,height:innerHeight,coarse:matchMedia('(pointer:coarse)').matches})),before);
+    report.screenshots.push(file);
+  } finally { await cdp.detach(); }
+};
 const nextFrame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-const load = async ({ controlled = true, locale = 'en', width = 1440, dark = false } = {}) => {
+const load = async ({ controlled = true, locale = 'en', width = 1440, dark = false, http = false, openDownload = true } = {}) => {
   releaseHeld(); holdAction = resetError = readError = resetReply = ''; loseReset = deferredMutation = false;
   await page.goto('about:blank');
   tokens = { 'node-a': 'a'.repeat(64), 'node-b': 'b'.repeat(64) };
   permissions = { 'node-a': false, 'node-b': false }; actions = []; metadata = 0;
-  await page.setViewportSize({ width, height: 900 });
+  await page.setViewportSize({ width, height: width < 640 ? 844 : 900 });
+  await emulation.send('Emulation.setTouchEmulationEnabled', {enabled:width < 640});
   await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
-  await page.goto(`${origin}/admin?locale=${locale}${controlled ? '&controlled=1' : ''}#/admin`);
+  await page.goto(`${http ? httpOrigin : origin}/admin?locale=${locale}${controlled ? '&controlled=1' : ''}#/admin`);
+  assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches),width < 640);
   await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
   if (!controlled) {
     await page.locator('.server-row').first().waitFor();
-    await page.locator('[data-server-id=node-a]').getByRole('button', { name: (await import(`../../../src/frontend/locales/${locale}.js`)).default.copy, exact: true }).click();
+    if (openDownload) await page.locator('[data-server-id=node-a]').getByRole('button', { name: (await import(`../../../src/frontend/locales/${locale}.js`)).default.copy, exact: true }).click();
   }
+  if (!openDownload) return;
   await ready();
   await page.evaluate(dark => document.body.classList.toggle('light', !dark), dark);
   assert.equal(await dialog().evaluate(el => getComputedStyle(el).colorScheme), dark ? 'dark' : 'light');
@@ -52,17 +68,24 @@ const heldRequest = async () => {
   assert.ok(held.length > 0);
 };
 const check = async (name, fn) => {
+  if (process.argv.includes('--toast-reference') && !name.startsWith('exact reference Sonner')) return;
+  if (process.argv.includes('--actions-reference') && !name.startsWith('exact reference InstallDialog')) return;
   if (process.argv.includes('--exact-reference') && !name.startsWith('exact reference')) return;
+  if (process.argv.includes('--copy-feedback') && !name.startsWith('copy feedback')) return;
   if (process.argv.includes('--keyboard-lifetime') && !name.startsWith('exact reference keyboard')) return;
   try { await fn(); report.checks.push({ name, pass: true }); console.log(`PASS ${name}`); }
   catch (error) {
     report.checks.push({ name, pass: false, error: error.stack }); console.error(`FAIL ${name}\n${error.stack}`);
-    await page?.screenshot({ path: path.join(out, `failure-${report.checks.length}.png`) }).catch(() => {});
+    if (page) await screenshot(page, path.join(out, `failure-${report.checks.length}.png`)).catch(() => {});
     releaseHeld();
   }
 };
 try {
-  server = await createServer({ frontendExports: true, fixtureEntries: [path.resolve('test/fixtures/admin-ui/download.html')], cacheDir: path.join(out, '.cache'), plugins: [vue()], publicDir: path.resolve('public') });
+  if (!process.env.ADMIN_DOWNLOAD_REFERENCE_DIR && !process.argv.includes('--copy-feedback')) {
+    report.reference = await downloadReferenceAssets(out);
+    process.env.ADMIN_DOWNLOAD_REFERENCE_DIR = report.reference.dir;
+  }
+  server = await createServer({ frontendExports: true, fixtureEntries: [path.resolve('test/fixtures/admin-ui/download.html')], cacheDir: path.join(out, '.cache'), vueFixtureDevtools:true, plugins: [vue()], publicDir: path.resolve('public') });
   httpOrigin = `http://127.0.0.1:${server.httpServer.address().port}`; origin = httpOrigin.replace('http:', 'https:');
   browser = await chromium.launch({ headless: true, executablePath: process.env.ADMIN_UI_CHROMIUM || 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe' });
   report.chromium = browser.version();
@@ -79,11 +102,11 @@ try {
     };
     window.clearTimeout = id => { window.fixtureNoticeTimers.delete(id); cancel(id); };
   });
-  await context.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { window.copied = text } } }));
+  await context.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { configurable:true, value: { writeText: async text => { if (window.copyHold) await new Promise(resolve => {window.releaseCopy = resolve}); if (window.copyReject) throw new Error('denied'); window.copied = text } } }));
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
-    if (process.env.ADMIN_DOWNLOAD_REFERENCE_DIR && ['/reference.html', '/reference.js'].includes(url.pathname)) {
-      return route.fulfill({ contentType: url.pathname.endsWith('.html') ? 'text/html' : 'text/javascript', body: fs.readFileSync(path.join(process.env.ADMIN_DOWNLOAD_REFERENCE_DIR, url.pathname.slice(1))) });
+    if (process.env.ADMIN_DOWNLOAD_REFERENCE_DIR && ['/reference.html', '/reference.js', '/reference.css'].includes(url.pathname)) {
+      return route.fulfill({ contentType: url.pathname.endsWith('.html') ? 'text/html' : url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(process.env.ADMIN_DOWNLOAD_REFERENCE_DIR, url.pathname.slice(1))) });
     }
     if (url.origin === 'https://api.github.com') {
       metadata++;
@@ -94,7 +117,8 @@ try {
       const tag = url.pathname.includes('/tags/') ? decodeURIComponent(url.pathname.split('/tags/')[1]) : 'task2.synthetic';
       return route.fulfill({ json: { tag_name: tag, draft: false, assets: ['linux-amd64', 'darwin-arm64', 'windows-amd64.exe', 'freebsd-amd64'].map(platform => ({ name: 'cf-probe-' + platform, state: 'uploaded', browser_download_url: `https://github.com/emailtq/cfsm-agent/releases/download/${tag}/cf-probe-${platform}` })) } });
     }
-    if (url.origin !== origin) return route.abort();
+    if (url.origin !== origin && url.origin !== httpOrigin) return route.abort();
+    if (/^\/api\/nodes\/\d+\/token$/.test(url.pathname)) return route.fulfill({json:{token:'a'.repeat(64)}});
     if (url.pathname === '/admin/api') {
       const data = request.postDataJSON(); actions.push(data); report.actions.push({ action: data.action, serverId: data.serverId });
       if (['node_read_install', 'terminal_enable_install', 'node_reset_token'].includes(data.action)) {
@@ -118,15 +142,18 @@ try {
         if (data.action === 'node_reset_token' && resetReply) json.token = resetReply === 'same' ? oldToken : resetReply;
         return route.fulfill({ status: error ? 409 : 200, json }).catch(() => {});
       }
+      if (data.action === 'node_prepare_registration') return route.fulfill({json:{key:'f'.repeat(64),expiresAt:Date.now()+60000}});
       if (data.action === 'terminal_status') return route.fulfill({ json: { nodes: {} } });
-      return route.fulfill({ json: { settings: { site_title: 'Fixture', username: 'fixture', terminal_enabled: true }, servers: [{ id: 'node-a', name: 'Node A', os: 'Linux' }, { id: 'node-b', name: 'Node B', os: 'Windows' }], stats: { total: 2 } } });
+      return route.fulfill({ json: { settings: { site_title: 'Fixture', username: 'fixture', terminal_enabled: true, auto_discovery:true }, servers: [{ id: 'node-a', name: 'Node A', os: 'Linux', ip_v4:'192.0.2.1', note:'Fixture note',price:'2' }, { id: 'node-b', name: 'Node B', os: 'Windows' }], stats: { total: 2 } } });
     }
     if (url.pathname === '/api/config' || url.pathname === '/theme') return route.fulfill({ json: {} });
     const response = await route.fetch({ url: httpOrigin + (url.pathname === '/admin' ? '/test/fixtures/admin-ui/download.html' : url.pathname) + url.search });
     return route.fulfill({ response });
   });
-  page = await context.newPage(); page.setDefaultTimeout(7000); page.on('pageerror', error => report.errors.push(error.stack));
+  page = await context.newPage(); emulation = await context.newCDPSession(page); page.setDefaultTimeout(7000); page.on('pageerror', error => report.errors.push(error.stack));
 
+  await downloadCopyChecks({page,load,ready,noticeReady,nextFrame,check,screenshot,out});
+  await downloadReferenceChecks({page,context,origin,load,check,screenshot,out,report});
   await check('exact reference keyboard expansion, blur restoration and Escape resume preserve remaining lifetime', async () => {
     if (!process.env.ADMIN_DOWNLOAD_REFERENCE_DIR) return;
     const cases = [];
@@ -176,7 +203,7 @@ try {
         await toast().waitFor({state:'hidden',timeout:4000});
         const expiryAfterCollapse = Date.now() - started + 500;
         cases.push({kind,focused,visibleAfterHotkey,restoredAfterBlur,blurTrace,visibleAfterBlur,modalRemains,visibleAfterCollapse,expiryAfterCollapse});
-        await ref.screenshot({path:path.join(out, `keyboard-lifetime-${kind}.png`)});
+        await screenshot(ref,path.join(out, `keyboard-lifetime-${kind}.png`));
       } finally { if (kind === 'reference') await ref.close(); }
     }
     report.geometry.push({keyboardLifetime:cases});
@@ -195,7 +222,7 @@ try {
   });
   await check('exact reference Sonner success rendering matches actual locked React Toaster in both themes', async () => {
     if (!process.env.ADMIN_DOWNLOAD_REFERENCE_DIR) return;
-    const reference = await context.newPage();
+    const reference = await context.newPage(), refEmulation = await context.newCDPSession(reference);
     const observeEntry = selector => {
       window.toastEntryFrames = [];
       const observer = new MutationObserver(() => {
@@ -213,14 +240,15 @@ try {
     const snapshot = el => {
       const title = el.querySelector('[data-title], [data-credential-notice-text]'), icon = el.querySelector('[data-icon]'), svg = el.querySelector('svg'), style = getComputedStyle(el), text = getComputedStyle(title), r = el.getBoundingClientRect();
       const props = ['padding', 'borderRadius', 'borderWidth', 'borderStyle', 'borderColor', 'backgroundColor', 'color', 'boxShadow', 'fontFamily', 'fontSize', 'gap', 'transitionDuration', 'transitionTimingFunction', 'touchAction'];
-      return { layoutWidth: document.documentElement.getBoundingClientRect().width, width: r.width, height: r.height, x: r.x, y: r.y, css: Object.fromEntries(props.map(key => [key, style[key]])),
+      return { viewportHeight:innerHeight, coarse:matchMedia('(pointer:coarse)').matches, layoutWidth: document.documentElement.getBoundingClientRect().width, width: r.width, height: r.height, x: r.x, y: r.y, css: Object.fromEntries(props.map(key => [key, style[key]])),
         title: { text: title.textContent, fontWeight: text.fontWeight, lineHeight: text.lineHeight }, buttons: el.querySelectorAll('button').length,
         icon: icon ? { width: getComputedStyle(icon).width, height: getComputedStyle(icon).height, marginLeft: getComputedStyle(icon).marginLeft, marginRight: getComputedStyle(icon).marginRight } : null,
         svg: svg.outerHTML, transform: style.transform, opacity: style.opacity };
     };
     try {
-      for (const width of [320, 390, 1440]) for (const dark of [false, true]) {
-        await reference.setViewportSize({ width, height: 900 });
+      for (const width of [320, 360, 390, 1440, 1920]) for (const dark of [false, true]) {
+        await reference.setViewportSize({ width, height: width < 640 ? 844 : 900 });
+        await refEmulation.send('Emulation.setTouchEmulationEnabled', {enabled:width < 640});
         await reference.goto(`${origin}/reference.html?dark=${Number(dark)}`);
         await reference.waitForFunction(() => typeof window.referenceToast === 'function');
         await reference.evaluate(observeEntry, '[data-sonner-toast]');
@@ -228,7 +256,7 @@ try {
         const ref = reference.locator('[data-sonner-toast]'); await ref.waitFor();
         await ref.evaluate(async el => { await Promise.all(el.getAnimations().map(a => a.finished)); });
         const expected = await ref.evaluate(snapshot);
-        await reference.screenshot({ path: path.join(out, `reference-${width}-${dark ? 'dark' : 'light'}.png`) });
+        await screenshot(reference,path.join(out, `reference-${width}-${dark ? 'dark' : 'light'}.png`));
         report.geometry.push({ exactReference: true, width, dark, expected });
         fs.writeFileSync(path.join(out, `reference-${width}-${dark ? 'dark' : 'light'}.json`), JSON.stringify({ expected, dom: await ref.evaluate(el => el.parentElement.parentElement.outerHTML) }, null, 2));
         await load({ controlled: false, locale: 'zh', width, dark });
@@ -241,12 +269,27 @@ try {
         report.geometry.push({exactEntry:true,width,dark,motion});
         assert.ok(motion.reference.some(frame => frame.opacity < 1), 'actual reference must establish its entrance');
         assert.ok(motion.cf.some(frame => frame.opacity > 0 && frame.opacity < 1), 'CF must visibly enter, not appear instantly');
-        await page.screenshot({ path: path.join(out, `cf-${width}-${dark ? 'dark' : 'light'}.png`) });
+        await screenshot(page,path.join(out, `cf-${width}-${dark ? 'dark' : 'light'}.png`));
         report.geometry.push({ exactReference: true, width, dark, actual });
         // The user explicitly retains CF's thin-scrollbar layout rather than the reference root's native 15px gutter.
         const gutterDelta = actual.layoutWidth - expected.layoutWidth;
         const aligned = { ...expected, layoutWidth: actual.layoutWidth, width: expected.width + (width <= 600 ? gutterDelta : 0), x: expected.x + (width > 600 ? gutterDelta / 2 : 0) };
         assert.deepEqual(actual, aligned, 'CF must reproduce Sonner within its existing layout viewport; only the explicit scrollbar difference is normalized');
+        await reference.goto(`${origin}/reference.html?dark=${Number(dark)}`);
+        await reference.waitForFunction(() => typeof window.referenceError === 'function');
+        await reference.evaluate(() => window.referenceError());
+        const refError = reference.locator('[data-sonner-toast]'); await refError.waitFor();
+        await refError.evaluate(async el => {await Promise.all(el.getAnimations().map(animation => animation.finished));});
+        await load({controlled:false,locale:'zh',width,dark});
+        await page.evaluate(() => {window.copyReject = true});
+        await dialog().locator('[data-copy-command]').click(); await noticeReady();
+        const errorExpected = await refError.evaluate(snapshot), errorActual = await notice().evaluate(snapshot);
+        const delta = errorActual.layoutWidth - errorExpected.layoutWidth;
+        assert.deepEqual(errorActual,{...errorExpected,layoutWidth:errorActual.layoutWidth,width:errorExpected.width + (width <= 600 ? delta : 0),x:errorExpected.x + (width > 600 ? delta / 2 : 0)});
+        assert.equal(await notice().getAttribute('role'),'alert');
+        report.geometry.push({exactError:true,width,dark,expected:errorExpected,actual:errorActual});
+        await screenshot(reference,path.join(out,`reference-error-${width}-${dark ? 'dark':'light'}.png`));
+        await screenshot(page,path.join(out,`target-error-${width}-${dark ? 'dark':'light'}.png`));
         if (width === 1440 && dark) {
           const observeExit = el => new Promise(resolve => {
             const frames = [], observer = new MutationObserver(() => {
@@ -259,7 +302,7 @@ try {
               }; sample();
             }); observer.observe(el, {attributes:true});
           });
-          const [refExit, cfExit] = await Promise.all([ref.evaluate(observeExit), notice().evaluate(observeExit)]);
+          const [refExit, cfExit] = await Promise.all([refError.evaluate(observeExit), notice().evaluate(observeExit)]);
           for (const trace of [refExit, cfExit]) {
             assert.ok(trace.frames.some(frame => frame.opacity > 0 && frame.opacity < 1 && frame.y < 0), 'actual exit slides upward and fades');
             assert.ok(trace.elapsed >= 180 && trace.elapsed < 350, 'actual removed DOM lifetime follows the 200ms reference');
@@ -267,7 +310,7 @@ try {
           report.geometry.push({exactExit:true,refExit,cfExit});
         }
       }
-    } finally { await reference.close(); }
+    } finally { await refEmulation.detach(); await reference.close(); }
   });
   await check('owned rotation shows one nonblocking top notice, new command and no duplicate bottom success', async () => {
     await load(); const old = tokens['node-a']; await rotate();
@@ -287,7 +330,7 @@ try {
     for (const reply of ['same', 'invalid-fixture-token']) {
       await load(); resetReply = reply; await rotate();
       await page.locator('.admin-dialog-download-confirm').waitFor({ state: 'hidden' }); await ready();
-      assert.equal(await notice().count(), 0);
+      assert.equal(await notice().getAttribute('role'), 'alert');
       await dialog().locator('[data-credential-error]').waitFor();
       assert.ok((await command()).includes(tokens['node-a'])); assert.equal(count('node_read_install'), 2);
     }
@@ -358,7 +401,7 @@ try {
     assert.equal(await notice().count(), 0); assert.equal(await page.evaluate(() => window.fixtureNoticeTimers.size), 0);
   });
   await check('top notice fits all seven locales on mobile/desktop in both themes without intercepting the page', async () => {
-    for (const locale of ['zh', 'en', 'zh-TW', 'es', 'fr', 'id', 'ja']) for (const width of [320, 390, 1440]) for (const dark of [false, true]) {
+    for (const locale of ['zh', 'en', 'zh-TW', 'es', 'fr', 'id', 'ja']) for (const width of [320, 360, 390, 1440, 1920]) for (const dark of [false, true]) {
       await load({ controlled: false, locale, width, dark }); await rotate(); await ready();
       await page.locator('.admin-dialog-download-confirm').waitFor({ state: 'hidden' });
       await noticeReady();
@@ -378,7 +421,7 @@ try {
       report.geometry.push({ locale, width, dark, notice: geometry });
       if (locale === 'zh' || locale === 'en') {
         const shot = path.join(out, `notice-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
-        await page.screenshot({ path: shot }); report.screenshots.push(shot);
+        await screenshot(page, shot );
       }
     }
   });
@@ -416,7 +459,7 @@ try {
     const error = dialog().locator('[data-credential-error]'); await error.waitFor();
     assert.ok((await error.innerText()).includes('rotation_fixture_failed'));
     assert.equal(await dialog().locator('[data-credential-status]').count(), 0, 'failed request must not become success');
-    assert.equal(await notice().count(), 0);
+    assert.equal(await notice().getAttribute('role'), 'alert');
   });
   await check('confirmation cancel, focus trap and immediate single-request pending feedback', async () => {
     await load();
@@ -451,7 +494,7 @@ try {
     assert.equal(await dialog().locator('[data-copy-command]').isDisabled(), true); assert.ok(!(await command()).includes('a'.repeat(64)));
     releaseHeld(); await ready(); assert.ok((await command()).includes(tokens['node-a']));
     await dialog().locator('[data-credential-error]').waitFor(); assert.equal(await dialog().locator('[data-credential-status]').count(), 0);
-    assert.equal(await notice().count(), 0, 'reread after an uncertain reply is not rotation success');
+    assert.equal(await notice().getAttribute('role'), 'alert', 'reread after an uncertain reply remains an error');
     assert.equal(count('node_reset_token'), 1); assert.equal(count('node_read_install'), 2);
   });
   await check('lost reset and failed recovery block old command and show a real error', async () => {
@@ -459,7 +502,7 @@ try {
     await page.locator('.admin-dialog-download-confirm').waitFor({ state: 'hidden' });
     assert.equal(await dialog().locator('[data-copy-command]').isDisabled(), true); assert.ok(!(await command()).includes('a'.repeat(64)));
     await dialog().locator('[data-credential-error]').waitFor();
-    assert.equal(await notice().count(), 0);
+    assert.equal(await notice().getAttribute('role'), 'alert');
   });
   await check('close/reopen during pending reset waits for authority and cannot send a second reset', async () => {
     await load(); holdAction = 'node_reset_token'; deferredMutation = true; await rotate(); await heldRequest();
@@ -523,12 +566,15 @@ try {
       await load({ dark }); await dialog().locator('[data-terminal-reissue]').click();
       const contrast = await page.locator('[data-confirm-reissue]').evaluate(el => {
         const css = getComputedStyle(el), ctx = document.createElement('canvas').getContext('2d');
-        const luminance = color => {
+        const luminance = (color, base) => {
+          ctx.clearRect(0,0,1,1);
+          if (base) {ctx.fillStyle = base; ctx.fillRect(0,0,1,1);}
           ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1);
           const rgb = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map(value => { const c = value / 255; return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4 });
           return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
         };
-        const text = luminance(css.color), background = luminance(css.backgroundColor);
+        // The reference dark destructive fill is translucent; composite it over the real dialog, not the prior white text sample.
+        const text = luminance(css.color), background = luminance(css.backgroundColor,getComputedStyle(el.closest('.admin-dialog')).backgroundColor);
         return (Math.max(text, background) + .05) / (Math.min(text, background) + .05);
       });
       assert.ok(contrast >= 4.5, `confirmation text needs 4.5 contrast (${dark}: ${contrast})`);
@@ -547,7 +593,7 @@ try {
     assert.equal(await dialog().locator('[data-copy-command]').isEnabled(), true);
     await dialog().locator('[data-copy-command]').click(); assert.equal(await page.evaluate(() => window.copied), await command());
   });
-  for (const locale of ['zh', 'en', 'ja']) for (const width of [320, 360, 390, 1440]) for (const dark of [false, true]) await check(`readable full Admin geometry ${locale}/${width}/${dark ? 'dark' : 'light'}`, async () => {
+  for (const locale of ['zh', 'en', 'ja', 'fr']) for (const width of [320, 360, 390, 1440, 1920]) for (const dark of [false, true]) await check(`readable full Admin geometry ${locale}/${width}/${dark ? 'dark' : 'light'}`, async () => {
     await load({ controlled: false, locale, width, dark });
     for (const os of ['linux', 'unix', 'mac', 'windows', 'docker']) {
       await dialog().locator('[data-target-os]').selectOption(os);
@@ -583,24 +629,24 @@ try {
     assert.equal(await hint.evaluate(el => el.scrollWidth > el.clientWidth), false);
     await dialog().locator('[data-auto-update]').check();
     const shot = path.join(out, `download-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
-    await page.screenshot({ path: shot }); report.screenshots.push(shot);
+    await screenshot(page, shot );
     if (width === 320 || width === 390) {
       await dialog().locator('.admin-dialog-scroll').evaluate(el => { el.scrollTop = el.scrollHeight });
       const bottomShot = path.join(out, `download-bottom-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
-      await page.screenshot({ path: bottomShot }); report.screenshots.push(bottomShot);
+      await screenshot(page, bottomShot );
     }
     await dialog().locator('[data-terminal-reissue]').click();
-    assert.ok((await page.locator('.download-confirm-text').innerText()).length > 0);
+    assert.ok((await page.locator('.admin-dialog-download-confirm .admin-group-description').innerText()).length > 0);
     assert.equal(await page.locator('.admin-dialog-download-confirm').evaluate(el => el.scrollWidth > el.clientWidth), false);
     if (width === 320 || width === 1440) {
       const confirmShot = path.join(out, `confirm-${locale}-${width}-${dark ? 'dark' : 'light'}.png`);
-      await page.screenshot({ path: confirmShot }); report.screenshots.push(confirmShot);
+      await screenshot(page, confirmShot );
     }
   });
   assert.deepEqual(report.errors, []);
 } catch (error) { report.errors.push(error.stack); console.error(error.stack); }
 finally {
-  releaseHeld(); await browser?.close(); await server?.close();
+  releaseHeld(); await emulation?.detach(); await context?.close(); await browser?.close(); await server?.close();
   report.closed = true;
   fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
 }

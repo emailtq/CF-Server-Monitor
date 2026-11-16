@@ -86,7 +86,7 @@
       </div>
 
       <div class="form-group">
-        <div class="cmd-output-wrapper" :class="{ copied }">
+        <div class="cmd-output-wrapper">
           <span class="cmd-prompt">{{ targetOs === 'windows' ? 'PS' : '$' }}</span>
           <pre class="cmd-output">{{ installCommand }}</pre>
         </div>
@@ -95,13 +95,14 @@
     </template>
     <template #footer>
       <button @click="$emit('close')" class="btn">{{ trans.close }}</button>
-      <button :disabled="!installCommand" @click="$emit('copy-cmd')" class="btn btn-primary">{{ copied ? ' ' + trans.copied : ' ' + trans.copy }}</button>
+      <button :disabled="!installCommand" @click="$emit('copy-cmd')" class="btn btn-primary"><AdminIcon name="copy" />{{ trans.copy }}</button>
     </template>
   </AdminDialog>
 </template>
 
 <script setup>
 import AdminDialog from './AdminDialog.vue'
+import AdminIcon from './AdminIcon.vue'
 import { computed, ref, watch } from 'vue'
 import HelpTooltip from './AdminHelp.vue'
 import { checkAgentInstallRelease } from '../../../utils/agentInstallRelease.js'
@@ -116,7 +117,6 @@ const props = defineProps({
   autoUpdate: { type: Boolean, default: false },
   ghProxy: { type: String, default: '' },
   installCommand: { type: String, default: '' },
-  copied: { type: Boolean, default: false },
   commandError: { type: String, default: '' },
   apiIndex: { type: Number, default: 0 },
   requestOwner: { type: Function, default: undefined }

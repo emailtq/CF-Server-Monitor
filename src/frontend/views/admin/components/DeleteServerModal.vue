@@ -66,7 +66,7 @@
         </div>
       </div>
 
-      <div class="cmd-input-wrapper mb-3" :class="{ copied: uninstallCopied }">
+      <div class="cmd-input-wrapper mb-3">
         <span class="cmd-prompt">{{ deleteTargetOs === 'windows' ? 'PS' : '$' }}</span>
         <textarea
           v-if="deleteTargetOs === 'linux' && deleteVersion === 'go' && deleteInstallMode === 'cfsm-user'"
@@ -76,7 +76,7 @@
           rows="8"
         />
         <input v-else type="text" readonly :value="uninstallCommand" class="cmd-input flex-1">
-        <button @click="$emit('copy-uninstall')" class="btn btn-icon btn-green ml-2" :aria-label="trans.copy"></button>
+        <button @click="$emit('copy-uninstall')" class="btn admin-copy-action ml-2" :disabled="busy || !uninstallCommand"><AdminIcon name="copy" />{{ trans.copy }}</button>
       </div>
     </template>
     <template #footer>
@@ -88,6 +88,7 @@
 
 <script setup>
 import AdminDialog from './AdminDialog.vue'
+import AdminIcon from './AdminIcon.vue'
 import { computed, ref, watch } from 'vue'
 import HelpTooltip from './AdminHelp.vue'
 
@@ -101,8 +102,7 @@ const props = defineProps({
   deleteVersion: { type: String, default: 'go' },
   deleteInstallMode: { type: String, default: 'current-user' },
   deleteGhProxy: { type: String, default: '' },
-  uninstallCommand: { type: String, default: '' },
-  uninstallCopied: { type: Boolean, default: false }
+  uninstallCommand: { type: String, default: '' }
 })
 
 const emit = defineEmits([

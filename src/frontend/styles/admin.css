@@ -81,6 +81,8 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-ui.admin-ui .btn-primary,
 .admin-ui.admin-ui.admin-ui .login-btn { background: var(--cf-brand-fill); color: var(--cf-on-brand); border-color: var(--cf-brand-fill); }
 .admin-ui.admin-ui.admin-ui .btn-red { color: var(--cf-red); }
+.admin-ui.admin-ui.admin-ui .btn.admin-copy-action { border:0; background:transparent; box-shadow:none; height:32px; min-height:32px; padding:0 10px; gap:6px; border-radius:8px; font-size:14px; font-weight:500; line-height:20px; }
+.admin-ui.admin-ui.admin-ui .btn.admin-copy-action:hover { background:light-dark(var(--cf-soft),color-mix(in oklab,var(--cf-soft) 50%,transparent)); }
 .admin-ui.admin-ui.admin-ui :is(.form-input, .form-select, .toolbar-input, .toolbar-select, .login-input) { min-width: 0; min-height: 36px; padding: 7px 12px; border: 1px solid var(--cf-border); border-radius: 6px; color: var(--cf-text); background: var(--cf-panel); font-size: 14px; box-shadow: 0 1px 2px #00000005; }
 .admin-ui.admin-ui.admin-ui :is(input.form-input, select.form-select, .toolbar-input, .toolbar-select, .login-input) { height: 36px; }
 .admin-ui.admin-ui.admin-ui :is(.form-label, .section-subtitle, .section-title) { color: var(--cf-text); letter-spacing: normal; text-transform: none; font-size: 14px; }
@@ -244,7 +246,7 @@ body.admin-ui-surface::-webkit-scrollbar-thumb:hover,
 .admin-ui .admin-node-table .server-ip-list { display: grid; width: fit-content; max-width: none; gap: 2px; }
 .admin-ui .admin-node-table .server-ip-list .admin-copy-value { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .admin-ui .admin-node-table .admin-address-copy-icon { flex-shrink: 0; opacity: 0; transition: opacity 150ms; }
-.admin-ui .admin-node-table .admin-copy-value:is(:hover, :focus-visible, .spec-copied) .admin-address-copy-icon { opacity: 1; }
+.admin-ui .admin-node-table .admin-copy-value:is(:hover, :focus-visible) .admin-address-copy-icon { opacity: 1; }
 .admin-ui .admin-check-target { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 28px; min-height: 28px; cursor: pointer; }
 .admin-ui .admin-node-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .admin-ui .admin-node-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--cf-text); }

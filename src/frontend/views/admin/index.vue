@@ -38,9 +38,6 @@
           :site-generation="siteGeneration"
           :latest-agent-version="latestAgentVersion"
           :cache-refreshing="cacheRefreshing"
-          :copied-server-id="copiedServerId"
-          :copied-note-server-id="copiedNoteServerId"
-          :copied-spec-key="copiedSpecKey"
           @add-server="showAddModal = true; addError = ''"
           @groups="showGroupModal = true"
           @auto-discovery-cmd="openAutoDiscoveryModal"
@@ -187,7 +184,6 @@
         :delete-install-mode="deleteInstallMode"
         :delete-gh-proxy="deleteGhProxy"
         :uninstall-command="getUninstallCommand()"
-        :uninstall-copied="uninstallCopied"
         @close="closeDeleteModal"
         @confirm-delete="confirmDelete"
         @copy-uninstall="copyUninstallCmd"
@@ -212,7 +208,6 @@
         :auto-update="autoUpdate"
         :install-command="getCustomInstallCommand()"
         @close="closeCopyModal"
-        @copy-cmd="copyCustomCmd"
         @terminal-options="terminalInstallOptions = $event"
         @install-available="installCommandBlocked = !$event"
         @update:auto-update="autoUpdate = $event"
@@ -232,7 +227,6 @@
         :auto-update="autoDiscoveryAutoUpdate"
         :gh-proxy="autoDiscoveryGhProxy"
         :install-command="getAutoDiscoveryInstallCommand()"
-        :copied="autoDiscoveryCopied"
         :command-error="isValidRegistrationName(autoDiscoveryName) ? registrationError : 'invalidServerName'"
         :api-index="selectedApiIndex"
         :request-owner="requestOwner"
@@ -497,12 +491,14 @@
 
       <TerminalAccessModal v-if="terminalServer" :server="terminalServer" :api-index="selectedApiIndex" :trans="trans" @close="terminalServer = null" />
 
+      <AdminToast v-if="!showCopyModal" :notice="copyNotice" teleport />
     </AdminLayout>
   </div>
 </template>
 
 <script setup>
 import AdminDialog from './components/AdminDialog.vue'
+import AdminToast from './components/AdminToast.vue'
 import NotificationWorkspace from './components/NotificationWorkspace.vue'
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, inject, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -979,14 +975,10 @@ const batchEditEnabled = ref(Object.fromEntries(Object.keys(createBatchEditDefau
 const showDeleteModal = ref(false)
 const deleteServerId = ref('')
 
-const copiedServerId = ref(null)
-const copiedNoteServerId = ref(null)
-const copiedSpecKey = ref(null)
 const deleteTargetOs = ref('linux')
 const deleteVersion = ref('go')
 const deleteInstallMode = ref('current-user')
 const deleteGhProxy = ref('')
-const uninstallCopied = ref(false)
 const saving = ref(false)
 
 
@@ -1038,7 +1030,6 @@ const autoDiscoveryName = ref('')
 const autoDiscoveryVersion = ref('')
 const autoDiscoveryAutoUpdate = ref(false)
 const autoDiscoveryGhProxy = ref('')
-const autoDiscoveryCopied = ref(false)
 const autoDiscoveryBlocked = ref(true)
 const registrationKey = ref('')
 const registrationExpiresAt = ref(0)
@@ -1050,7 +1041,6 @@ const clearRegistrationKey = () => {
   registrationExpiryTimer = null
   registrationKey.value = registrationError.value = ''
   registrationExpiresAt.value = 0
-  autoDiscoveryCopied.value = false
 }
 const prepareRegistrationKey = async () => {
   clearRegistrationKey()
@@ -1091,46 +1081,26 @@ watch(isWssReportEnabled, (enabled) => {
   }
 })
 
-const copyServerNote = async (server) => {
+const copyNotice = ref(null)
+let copyEpoch = 0
+watch([activeTab, showCopyModal, showAutoDiscoveryModal, showDeleteModal, deleteServerId, deleteTargetOs, deleteVersion, deleteInstallMode, deleteGhProxy, requestOwner], () => { copyEpoch++; copyNotice.value = null }, {flush:'sync'})
+const copyWithNotice = async (text, current, done = trans.value.copySuccess) => {
+  const owner = requestOwner.value, epoch = copyEpoch
+  const copied = await copyTextToClipboard(text)
+  if (epoch !== copyEpoch || !owner() || !current()) return
+  copyNotice.value = {text:copied ? done : trans.value.copyFailed, type:copied ? 'success' : 'error'}
+}
+const copyServerNote = server => {
   const note = String(server?.note || '')
   if (!note.trim()) return
-
-  try {
-    const copied = await copyTextToClipboard(note)
-    if (!copied) {
-      alertMessage.value = trans.value.httpsRequired
-      return
-    }
-    copiedNoteServerId.value = server.id
-    setTimeout(() => {
-      if (copiedNoteServerId.value === server.id) {
-        copiedNoteServerId.value = null
-      }
-    }, 1500)
-  } catch (e) {
-    console.error('[ERROR] Copy note failed:', e)
-  }
+  return copyWithNotice(note, () => servers.value.some(row => row.id === server.id && row.note === server.note))
 }
-
-const copyServerSpec = async ({ key, text } = {}) => {
+const copyServerSpec = ({ key, text } = {}) => {
   const value = String(text || '').trim()
   if (!key || !value || value === '-') return
-
-  try {
-    const copied = await copyTextToClipboard(value)
-    if (!copied) {
-      alertMessage.value = trans.value.httpsRequired
-      return
-    }
-    copiedSpecKey.value = key
-    setTimeout(() => {
-      if (copiedSpecKey.value === key) {
-        copiedSpecKey.value = null
-      }
-    }, 1500)
-  } catch (e) {
-    console.error('[ERROR] Copy spec failed:', e)
-  }
+  const serverId = key.slice(0,key.lastIndexOf(':'))
+  const done = /:ip_v[46]$/.test(key) ? `${trans.value.copySuccess} ${value}` : trans.value.copySuccess
+  return copyWithNotice(value, () => servers.value.some(row => String(row.id) === serverId), done)
 }
 
 const handleLogin = async () => {
@@ -1271,7 +1241,6 @@ const resetAdminContext = () => {
   saving.value = adding.value = editSaving.value = deleting.value = batchEditing.value = cacheRefreshing.value = dbLoading.value = d1UsageLoading.value = false
   savedAutoDiscovery.value = false
   loginForm.value = { username: '', password: '' }
-  copiedServerId.value = copiedNoteServerId.value = copiedSpecKey.value = null
   copyServerId.value = currentServerName.value = deleteServerId.value = ''
   targetOs.value = deleteTargetOs.value = autoDiscoveryTargetOs.value = 'linux'
   installMode.value = deleteInstallMode.value = autoDiscoveryInstallMode.value = 'current-user'
@@ -1284,7 +1253,7 @@ const resetAdminContext = () => {
   resetDay.value = 1
   connectionMode.value = 'auto'
   pingMode.value = 'tcp'
-  autoUpdate.value = autoDiscoveryAutoUpdate.value = autoDiscoveryCopied.value = uninstallCopied.value = false
+  autoUpdate.value = autoDiscoveryAutoUpdate.value = false
   orderRevision++
   orderSaving = Promise.resolve()
 }
@@ -1902,7 +1871,6 @@ const openAutoDiscoveryModal = () => {
     return
   }
 
-  autoDiscoveryCopied.value = false
   showAutoDiscoveryModal.value = true
   void prepareRegistrationKey()
 }
@@ -1911,33 +1879,11 @@ const closeAutoDiscoveryModal = () => {
   showAutoDiscoveryModal.value = false
 }
 
-const copyAutoDiscoveryCmd = async () => {
+const copyAutoDiscoveryCmd = () => {
   const command = getAutoDiscoveryInstallCommand()
   if (!command) return
-  const sequence = registrationSequence, owner = requestOwner.value
-  const copied = await copyTextToClipboard(command)
-  if (sequence !== registrationSequence || !showAutoDiscoveryModal.value || !owner()) return
-  if (!copied) {
-    alertMessage.value = trans.value.httpsRequired
-    return
-  }
-
-  autoDiscoveryCopied.value = true
-  setTimeout(() => {
-    autoDiscoveryCopied.value = false
-  }, 1500)
-}
-
-const copyCustomCmd = async () => {
-  const cmd = getCustomInstallCommand()
-  if (!cmd) return
-  const owner = requestOwner.value, serverId = copyServerId.value
-  const copied = await copyTextToClipboard(cmd)
-  if (!owner() || !showCopyModal.value || serverId !== copyServerId.value) return
-  if (!copied) {
-    alertMessage.value = trans.value.httpsRequired
-    return
-  }
+  const sequence = registrationSequence
+  return copyWithNotice(command, () => sequence === registrationSequence && showAutoDiscoveryModal.value && command === getAutoDiscoveryInstallCommand())
 }
 
 const closeCopyModal = () => {
@@ -1946,18 +1892,10 @@ const closeCopyModal = () => {
   void refreshTerminalStatuses()
 }
 
-const copyUninstallCmd = async () => {
-  const cmd = getUninstallCommand()
-  const copied = await copyTextToClipboard(cmd)
-  if (!copied) {
-    alertMessage.value = trans.value.httpsRequired
-    return
-  }
-
-  uninstallCopied.value = true
-  setTimeout(() => {
-    uninstallCopied.value = false
-  }, 1500)
+const copyUninstallCmd = () => {
+  const command = getUninstallCommand(), serverId = deleteServerId.value
+  if (!command) return
+  return copyWithNotice(command, () => showDeleteModal.value && serverId === deleteServerId.value && command === getUninstallCommand())
 }
 
 // 逐台月流量告警阈值：空/未设置 → null（跟随全局）；否则夹取 0..100 整数（0 = 该服务器显式关闭）
@@ -2187,7 +2125,6 @@ const openDeleteModal = (id) => {
   deleteVersion.value = 'go'
   deleteInstallMode.value = 'current-user'
   deleteGhProxy.value = ''
-  uninstallCopied.value = false
   showDeleteModal.value = true
 }
 

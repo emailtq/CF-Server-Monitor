@@ -147,7 +147,11 @@ try {
         await page.waitForFunction(() => window.copiedValues.length === 1);
         assert.deepEqual(await page.evaluate(() => window.copiedValues), [fullV6]);
         assert.equal(await address.getAttribute('title'), fullV6);
-        assert.ok((await address.getAttribute('class')).includes('spec-copied'));
+        const notice = page.locator('[data-credential-notice]'); await notice.waitFor();
+        assert.equal(await notice.getAttribute('role'),'status');
+        assert.ok((await notice.innerText()).length > 0);
+        assert.ok(!(await address.getAttribute('class')).includes('spec-copied'));
+        assert.equal(await address.locator('svg rect').count(),1,'copy icon remains a copy icon, never a temporary check');
         await page.keyboard.press('Tab'); await address.focus();
         assert.equal(await address.evaluate(el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle === 'solid'), true);
         await page.keyboard.press('Enter'); await page.keyboard.press('Space');

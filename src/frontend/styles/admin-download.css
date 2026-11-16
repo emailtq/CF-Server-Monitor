@@ -5,8 +5,8 @@
 .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) .admin-dialog-head { margin:0; }
 .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) h2 { line-height:18px; }
 .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) .admin-dialog-footer { margin:0; }
-.admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) .btn { border-radius:8px; font-weight:500; }
-.admin-ui.admin-ui.admin-ui .admin-dialog-download [data-copy-command]:hover { background:var(--cf-brand-fill); color:var(--cf-on-brand); }
+.admin-ui.admin-ui.admin-ui :is(.admin-dialog-download, .admin-dialog-download-confirm) .btn { border-radius:8px; font-weight:500; line-height:20px; transition:all 150ms cubic-bezier(.4,0,.2,1); }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download [data-copy-command]:hover { background:color-mix(in oklab,var(--cf-brand-fill) 90%,transparent); color:var(--cf-on-brand); }
 .admin-ui.admin-ui.admin-ui .admin-dialog-download :is(.form-select,.form-input) { border-radius:8px; width:100%; }
 .admin-ui .download-body { display:flex; flex-direction:column; gap:20px; }
 .admin-ui .download-options { display:flex; flex-direction:column; gap:12px; }
@@ -28,51 +28,7 @@
 .admin-ui .download-error { color:var(--cf-red); font-size:12px; margin:0; }
 .admin-ui .download-status { color:var(--cf-muted); font-size:12px; margin:0; }
 .admin-ui .download-option-control small { overflow-wrap:anywhere; margin:0; }
-.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .btn-danger { background:light-dark(var(--cf-red),color-mix(in srgb,var(--cf-red) 60%,var(--cf-panel))); border-color:transparent; color:white; }
-.admin-ui .download-confirm-text { margin:0; color:var(--cf-muted); font-size:14px; }
-/*! Single-success rendering adapted from Sonner 2.0.8.
-MIT License
-
-Copyright (c) 2023 Emil Kowalski
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-.admin-ui .download-credential-toaster { position:fixed; top:24px; left:50%; transform:translateX(-50%); width:356px; box-sizing:border-box; padding:0; margin:0; list-style:none; outline:none; z-index:999999999; font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji"; line-height:1.5; transition:transform 400ms ease; }
-.admin-ui .download-credential-notice { position:absolute; top:0; width:356px; opacity:1; transform:translateY(0); touch-action:none; box-sizing:border-box; outline:none; overflow-wrap:anywhere; padding:16px; border:1px solid light-dark(hsl(0 0% 93%),hsl(0 0% 20%)); border-radius:8px; background:light-dark(#fff,#000); color:light-dark(hsl(0 0% 9%),hsl(0 0% 99%)); box-shadow:0 4px 12px #0000001a; font-size:13px; display:flex; align-items:center; gap:6px; transition:transform 400ms,opacity 400ms,height 400ms,box-shadow 200ms; }
-.admin-ui .download-credential-notice:focus-visible { box-shadow:0 4px 12px #0000001a,0 0 0 2px #0003; }
-.admin-ui .download-credential-notice > * { transition:opacity 400ms; }
-.admin-ui .download-credential-notice [data-title] { font-weight:500; line-height:1.5; color:inherit; }
-.admin-ui .download-credential-notice [data-icon] { display:flex; height:16px; width:16px; position:relative; justify-content:flex-start; align-items:center; flex-shrink:0; margin-left:-3px; margin-right:4px; }
-.admin-ui .download-credential-notice [data-icon] > * { flex-shrink:0; }
-.admin-ui .download-credential-notice [data-icon] svg { margin-left:-1px; margin-right:0; }
-.admin-ui .download-credential-notice [data-content] { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
-.admin-ui .download-credential-notice:is(.download-notice-enter-from,.download-notice-leave-to) { transform:translateY(-100%); opacity:0; }
-.admin-ui .download-credential-notice.is-swiping { transform:translateY(var(--download-swipe)); transition:none; user-select:none; }
-.admin-ui .download-credential-notice.is-swipe-out { animation:download-notice-swipe 200ms ease-out forwards; }
-@keyframes download-notice-swipe { from { transform:translateY(var(--download-swipe)); opacity:1; } to { transform:translateY(calc(var(--download-swipe) - 100%)); opacity:0; } }
-@media(max-width:600px) {
-  .admin-ui .download-credential-toaster { top:16px; left:16px; right:16px; width:100%; transform:none; }
-  .admin-ui .download-credential-notice { left:0; right:0; width:calc(100% - 32px); }
-}
-@media(prefers-reduced-motion:reduce) {
-  .admin-ui .download-credential-notice,.admin-ui .download-credential-notice > * { transition:none !important; animation:none !important; }
-}
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .btn-danger { background:light-dark(var(--cf-red),color-mix(in oklab,var(--cf-red) 60%,transparent)); border-color:transparent; color:white; }
 @media(prefers-reduced-motion:reduce) {
   .admin-ui.admin-ui.admin-ui input.download-switch, .admin-ui input.download-switch::before { transition:none; }
 }
@@ -82,4 +38,23 @@ SOFTWARE.
   .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download,.admin-dialog-download-confirm) .admin-dialog-footer .btn { width:100%; }
   .admin-ui .download-option-row:not(.download-switch-row) { flex-direction:column; gap:8px; align-items:stretch; }
   .admin-ui .download-option-row > :is(.form-input,.form-select,.download-option-control) { flex:none; width:100%; }
+}
+
+.admin-ui .download-option-row.download-reissue-row { flex-direction:row; gap:16px; align-items:flex-start; }
+.admin-ui.admin-ui.admin-ui .download-reissue { height:32px; min-height:32px; padding:0 12px; gap:6px; border-color:light-dark(var(--cf-border),oklch(1 0 0 / 15%)); box-shadow:0 1px 2px #0000000d; background:light-dark(var(--cf-panel),oklch(1 0 0 / 4.5%)); }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download .download-reissue:hover { background:light-dark(var(--cf-soft),oklch(1 0 0 / 7.5%)); box-shadow:0 1px 2px #0000000d; }
+.admin-ui.admin-ui.admin-ui .download-ghost { border:0; background:transparent; box-shadow:none; padding:8px 16px; }
+.admin-ui.admin-ui.admin-ui :is(.admin-dialog-download,.admin-dialog-download-confirm) .download-ghost:hover { background:light-dark(var(--cf-soft),color-mix(in oklab,var(--cf-soft) 50%,transparent)); }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .admin-dialog-head { display:flex; flex-direction:column; gap:8px; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .admin-group-description { margin:0; color:var(--cf-muted); font-size:14px; line-height:1.625; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .admin-dialog-body { display:none; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .admin-dialog-footer { border-top:1px solid var(--cf-border); padding-top:16px; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .btn-danger:hover { background:light-dark(color-mix(in oklab,var(--cf-red) 90%,transparent),color-mix(in oklab,var(--cf-red) 60%,transparent)); color:white; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download [data-copy-command] { border:0; padding:8px 12px; box-shadow:none; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .btn-danger { border:0; padding:8px 16px; box-shadow:none; }
+.admin-ui.admin-ui.admin-ui :is(.admin-dialog-download,.admin-dialog-download-confirm) .btn:focus-visible { outline:none; border-color:light-dark(oklch(.704 .04 256.788),oklch(.551 .027 264.364)); box-shadow:0 0 0 3px light-dark(oklch(.704 .04 256.788 / 50%),oklch(.551 .027 264.364 / 50%)); }
+.admin-ui.admin-ui.admin-ui .download-reissue:focus-visible { box-shadow:0 0 0 3px light-dark(oklch(.704 .04 256.788 / 50%),oklch(.551 .027 264.364 / 50%)),0 1px 2px #0000000d; }
+.admin-ui.admin-ui.admin-ui .admin-dialog-download-confirm .btn-danger:focus-visible { box-shadow:0 0 0 3px light-dark(color-mix(in oklab,var(--cf-red) 20%,transparent),color-mix(in oklab,var(--cf-red) 40%,transparent)); }
+@media(prefers-reduced-motion:reduce) {
+  .admin-ui.admin-ui.admin-ui :is(.admin-dialog-download,.admin-dialog-download-confirm) .btn { transition:none; }
 }

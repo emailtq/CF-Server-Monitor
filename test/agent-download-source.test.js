@@ -33,14 +33,14 @@ function commands(overrides = {}) {
     autoDiscoveryGhProxy: {value:''}, autoDiscoveryName: {value:''}, autoDiscoveryVersion: {value:''},
     autoDiscoveryAutoUpdate: {value:false}, registrationExpiresAt: {value:Date.now()+900000},
     autoDiscoveryBlocked: {value:false}, registrationSequence:0, requestOwner:{value:()=>true},
-    showAutoDiscoveryModal:{value:true}, autoDiscoveryCopied:{value:false}, alertMessage:{value:''},
+    showAutoDiscoveryModal:{value:true}, copyNotice:{value:null}, copyEpoch:0,
     copyTextToClipboard:async text=>{clipboard.push(text);return true;}, setTimeout:()=>{},
     ...overrides
   });
   const start = admin.indexOf('const buildGhRawUrl =');
   const end = admin.indexOf('const openAutoDiscoveryModal =', start);
   assert.ok(start >= 0 && end > start);
-  vm.runInContext(admin.slice(start, end) + '\n' + declaration('getUninstallCommand') + '\n' + declaration('copyAutoDiscoveryCmd'), context);
+  vm.runInContext(admin.slice(start, end) + '\n' + declaration('getUninstallCommand') + '\n' + declaration('copyWithNotice') + '\n' + declaration('copyAutoDiscoveryCmd'), context);
   return {
     install: () => vm.runInContext('getCustomInstallCommand()', context),
     uninstall: () => vm.runInContext('getUninstallCommand()', context),

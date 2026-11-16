@@ -151,7 +151,7 @@ try {
     }
     lostReset=true;const old=tokens['node-a'];await dialog.locator('[data-terminal-reissue]').click();await page.locator('[data-confirm-reissue]').click();await page.locator('.admin-dialog-download-confirm').waitFor({state:'hidden'});await ready();
     assert.ok((await command()).includes(tokens['node-a']));assert.ok(!(await command()).includes(old));
-    assert.equal(await page.locator('[data-credential-notice]').count(),0,'uncertain reply is not a successful rotation');await close();
+    assert.equal(await page.locator('[data-credential-notice]').getAttribute('role'),'alert','uncertain reply retains error feedback, never successful rotation');await close();
     assert.equal(await page.locator('[data-credential-notice]').count(),0);
   });
   await check('changing OS or language during pending enable always matches the checkbox and token',async()=>{
@@ -254,8 +254,8 @@ try {
     for(const width of [320,390,1440]) for(const light of [true,false]) await check(`frozen download geometry ${locale}/${width}/${light?'light':'dark'}`,async()=>{
       await page.setViewportSize({width,height:900});await page.evaluate(light=>document.body.classList.toggle('light',light),light);
       await page.locator('[data-server-id=node-a] .action-btns button').nth(1).click();await ready();
-      const geometry=await dialog.evaluate(d=>{const css=getComputedStyle(d),h=getComputedStyle(d.querySelector('h2')),cmd=getComputedStyle(d.querySelector('pre'));return {width:d.getBoundingClientRect().width,padding:css.padding,radius:css.borderRadius,font:h.fontSize,weight:h.fontWeight,line:h.lineHeight,commandFont:cmd.fontSize,commandLine:cmd.lineHeight,commandFamily:cmd.fontFamily,footer:getComputedStyle(d.querySelector('footer')).flexDirection,overflow:d.scrollWidth>d.clientWidth};});
-      assert.ok(Math.abs(geometry.width-Math.min(576,width-32))<2);assert.equal(geometry.padding,'24px');assert.equal(geometry.radius,'10px');assert.equal(geometry.font,'18px');assert.equal(geometry.weight,'600');assert.equal(geometry.line,'18px');assert.equal(geometry.commandFont,'12px');assert.equal(geometry.commandLine,'19.5px');assert.ok(geometry.commandFamily.includes('monospace'));assert.equal(geometry.footer,width<640?'column-reverse':'row');assert.equal(geometry.overflow,false);
+      const geometry=await dialog.evaluate(d=>{const css=getComputedStyle(d),scroll=getComputedStyle(d.querySelector('.admin-dialog-scroll')),h=getComputedStyle(d.querySelector('h2')),cmd=getComputedStyle(d.querySelector('pre'));return {width:d.getBoundingClientRect().width,padding:css.padding,scrollTop:scroll.paddingTop,scrollLeft:scroll.paddingLeft,scrollRightInset:parseFloat(scroll.paddingRight)+parseFloat(scroll.getPropertyValue('--admin-scrollbar-hit')),radius:css.borderRadius,font:h.fontSize,weight:h.fontWeight,line:h.lineHeight,commandFont:cmd.fontSize,commandLine:cmd.lineHeight,commandFamily:cmd.fontFamily,footer:getComputedStyle(d.querySelector('footer')).flexDirection,overflow:d.scrollWidth>d.clientWidth};});
+      assert.ok(Math.abs(geometry.width-Math.min(576,width-32))<2);assert.equal(geometry.padding,'0px');assert.equal(geometry.scrollTop,'24px');assert.equal(geometry.scrollLeft,'24px');assert.equal(geometry.scrollRightInset,24);assert.equal(geometry.radius,'10px');assert.equal(geometry.font,'18px');assert.equal(geometry.weight,'600');assert.equal(geometry.line,'18px');assert.equal(geometry.commandFont,'12px');assert.equal(geometry.commandLine,'19.5px');assert.ok(geometry.commandFamily.includes('monospace'));assert.equal(geometry.footer,width<640?'column-reverse':'row');assert.equal(geometry.overflow,false);
       report.geometry ||= [];report.geometry.push({locale,width,light,...geometry});
       if(width===320 || locale==='zh') await page.screenshot({path:path.join(out,`download-${locale}-${width}-${light?'light':'dark'}.png`)});
       await dialog.locator('footer button').first().click();await dialog.waitFor({state:'hidden'});
@@ -268,6 +268,7 @@ try {
   releaseLogout?.();
   held.splice(0).forEach(resolve=>resolve());
   await browser?.close(); await server?.close();
+  report.closed = true;
   fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));
 }
 if (report.errors.length) { console.error(report.errors.join('\n')); process.exitCode=1; }

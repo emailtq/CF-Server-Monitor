@@ -120,7 +120,7 @@ class Screen {
   onResize(fn) { this.handlers.resize = fn; return { dispose() {} } }
   onScroll() { return { dispose() {} } }
   onWriteParsed() { return { dispose() {} } }
-  attachCustomKeyEventHandler() {}
+  attachCustomKeyEventHandler(handler) { this.keyHandler = handler }
   write(data, cb) {
     this.callbacks.push({ data, cb: () => {
       if (!this.disposed) this.visible += new TextDecoder().decode(data)
@@ -428,6 +428,39 @@ test('copy without a terminal selection never overwrites the operator clipboard'
   } finally {
     if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor)
     else delete globalThis.navigator
+  }
+}))
+
+test('terminal selection and Ctrl+Shift+C use truthful focus-safe clipboard paths', () => fixture(async ({ create, open }) => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const copied = []
+  const t = create(); await open(t)
+  const screen = Screen.instances.at(-1), focuses = screen.focusCalls
+  screen.hasSelection = () => true
+  screen.getSelection = () => 'selected terminal transcript'
+  try {
+    Object.defineProperty(globalThis, 'navigator', { configurable:true, value:{clipboard:{writeText:async text => copied.push(text)}} })
+    assert.equal(await t.copySelection(),true)
+    assert.equal(screen.keyHandler({ctrlKey:true,shiftKey:true,code:'KeyC',type:'keydown'}),false)
+    await Promise.resolve()
+    assert.deepEqual(copied,['selected terminal transcript','selected terminal transcript'])
+    navigator.clipboard.writeText = async () => { throw new Error('denied') }
+    assert.equal(await t.copySelection(),false)
+    Object.defineProperty(globalThis, 'navigator', { configurable:true, value:{} })
+    let listener
+    Object.assign(document, {
+      addEventListener: (name, fn) => { assert.equal(name,'copy'); listener = fn },
+      removeEventListener: (name, fn) => { assert.equal(listener,fn); listener = null },
+      execCommand: () => { listener({clipboardData:{setData:(type,text) => copied.push(text)},preventDefault(){}}); return true }
+    })
+    window.location.protocol = 'http:'
+    assert.equal(await t.copySelection(),true); assert.equal(listener,null)
+    document.execCommand = () => false
+    assert.equal(await t.copySelection(),false); assert.equal(listener,null)
+    assert.equal(copied.at(-1),'selected terminal transcript')
+    assert.equal(screen.hasSelection(),true); assert.equal(screen.focusCalls,focuses)
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis,'navigator',descriptor); else delete globalThis.navigator
   }
 }))
 

@@ -19,7 +19,7 @@
               <button type="button" class="drag-handle" :disabled="sortingDisabled" :aria-label="trans.dragSort + ': ' + server.name" :title="trans.dragSort" draggable="false" @pointerdown="handlePointerDown($event, server.id)" @keydown="handleKeyDown($event, server.id)" @blur="$event.currentTarget.removeAttribute('data-pointer-focus')"><AdminIcon name="grip-vertical" /></button>
               <div><div class="server-info"><img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(String(server.region || 'xx').trim().replace(/^UK$/i, 'GB')) + '.svg')" :alt="server.region || 'xx'" class="flag-img"><button class="server-name-link" :title="server.name" @click="$emit('edit', server)">{{ server.name }}<template v-if="getAdminCountryCode(server.region)">&#8199;<span class="admin-country-code">{{ getAdminCountryCode(server.region) }}</span></template></button></div><div class="server-secondary admin-node-metadata" :title="server.os || getOSName(server.os)"><span class="admin-node-os"><OsIcon :os="server.os" /><span>{{ formatAdminOS(server.os) }}</span></span><span class="admin-node-group">{{ server.server_group || trans.default }}</span></div></div>
             </div></td>
-            <td><div v-if="getServerIpRows(server).length" class="server-ip-list"><button v-for="ip in getServerIpRows(server)" :key="ip.copyField" type="button" class="admin-copy-value" :class="{ 'spec-copied': isSpecCopied(server, ip.copyField) }" :title="ip.address" :aria-label="trans.copy + ': ' + ip.address" @click="emitCopySpec(server, ip.copyField, ip.address)">{{ formatAdminAddress(ip.address) }}<svg class="admin-address-copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path v-if="isSpecCopied(server, ip.copyField)" d="m9 12 2 2 4-4" /><template v-else><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></template></svg></button></div><span v-else>-</span></td>
+            <td><div v-if="getServerIpRows(server).length" class="server-ip-list"><button v-for="ip in getServerIpRows(server)" :key="ip.copyField" type="button" class="admin-copy-value" :title="ip.address" :aria-label="trans.copy + ': ' + ip.address" @click="emitCopySpec(server, ip.copyField, ip.address)">{{ formatAdminAddress(ip.address) }}<svg class="admin-address-copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg></button></div><span v-else>-</span></td>
             <td><div class="admin-status-stack"><span class="admin-node-status" :class="{ 'is-offline': !server.is_online }">{{ server.is_online ? trans.online : trans.offline }}</span><span v-if="isEnabledFlag(server.is_hidden)" class="admin-private-status">{{ trans.adminPrivateNode }}</span><span v-if="!server.is_online && server.timestamp" class="server-secondary">{{ offlineAge(server) }}</span></div></td>
             <td><span class="admin-traffic-used" :class="{ 'admin-near-limit': trafficBytes(server) !== null && server.traffic_limit > 0 && trafficBytes(server) / (server.traffic_limit * 1024 ** 3) >= 0.8 }">{{ formatTraffic(server) }}</span> <small class="server-secondary admin-traffic-limit">/ {{ server.traffic_limit ? server.traffic_limit + ' GB' : '-' }}</small></td>
             <td><button class="admin-copy-value" @click="emitCopySpec(server, 'price', formatServerPrice(server))">{{ formatServerPrice(server) }}</button><small class="server-secondary admin-expiry-inline">{{ server.expire_date || '-' }}</small></td>
@@ -63,10 +63,7 @@ const props = defineProps({
   siteGeneration: { type: Number, default: 0 },
   terminalStatuses: { type: Object, default: () => ({}) },
   latestAgentVersion: { type: String, default: '' },
-  cacheRefreshing: { type: Boolean, default: false },
-  copiedServerId: { type: [String, Number], default: null },
-  copiedNoteServerId: { type: [String, Number], default: null },
-  copiedSpecKey: { type: String, default: null }
+  cacheRefreshing: { type: Boolean, default: false }
 })
 
 const newServerName = defineModel('newServerName', { type: String, default: '' })
@@ -102,7 +99,6 @@ watch([() => props.selectedApiIndex, () => props.siteGeneration], () => { search
 watch(() => props.groups, groups => { if (filterGroup.value && !groups.includes(filterGroup.value)) filterGroup.value = '' })
 
 const getSpecCopyKey = (server, field) => `${server.id}:${field}`
-const isSpecCopied = (server, field) => props.copiedSpecKey === getSpecCopyKey(server, field)
 const emitCopySpec = (server, field, value) => {
   const text = String(value || '').trim()
   if (!text || text === '-') return

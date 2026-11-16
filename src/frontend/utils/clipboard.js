@@ -1,25 +1,18 @@
 export const copyTextToClipboard = async (text) => {
-  if (typeof window === 'undefined' || window.location.protocol !== 'https:') {
-    return false
-  }
-
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text)
       return true
     } catch (_) {
-      // Fall back to the textarea path below.
+      return false
     }
   }
 
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
-  return true
+  if (typeof document === 'undefined') return false
+  // Plain HTTP: fill the native copy event without disturbing input/xterm focus or selection.
+  const put = event => { event.clipboardData?.setData('text/plain', text); event.preventDefault() }
+  document.addEventListener('copy', put)
+  try { return document.execCommand('copy') === true }
+  catch (_) { return false }
+  finally { document.removeEventListener('copy', put) }
 }

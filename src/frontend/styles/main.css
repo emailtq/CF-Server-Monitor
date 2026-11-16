@@ -1944,20 +1944,12 @@ body::before {
     cursor: pointer;
 }
 
-.note-text.note-copied,.spec-text.spec-copied {
-    color: var(--accent-green);
-}
-
 .server-ip-list {
     display: inline-flex;
     flex-direction: column;
     gap: 2px;
     max-width: 142px;
     color: var(--text-secondary);
-}
-
-.server-ip-line.spec-copied {
-    color: var(--accent-green);
 }
 
 .server-ip-line {
@@ -3406,19 +3398,6 @@ body::before {
     outline: none;
 }
 
-.cmd-input-wrapper.copied {
-    border-color: var(--accent-green);
-    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.15);
-}
-
-.cmd-input-wrapper.copied .cmd-prompt {
-    color: var(--accent-green);
-}
-
-.cmd-input-wrapper.copied .cmd-input {
-    color: var(--accent-green);
-}
-
 .cmd-output-wrapper {
     display: none;
     align-items: flex-start;
@@ -3440,16 +3419,6 @@ body::before {
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
-}
-
-.cmd-output-wrapper.copied {
-    border-color: var(--accent-green);
-    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.15);
-}
-
-.cmd-output-wrapper.copied .cmd-prompt,
-.cmd-output-wrapper.copied .cmd-output {
-    color: var(--accent-green);
 }
 
 .config-list {
@@ -4856,33 +4825,6 @@ body.mikus-theme .mikus-stats-mascot-img {
 
 .form-row .form-group {
     flex: 1;
-}
-
-.cmd-input-wrapper.copyable {
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.cmd-input-wrapper.copyable:hover {
-    border-color: var(--accent-cyan);
-}
-
-.cmd-input-wrapper.copyable .copy-hint {
-    margin-left: auto;
-    padding: 2px 8px;
-    background: var(--bg-hover);
-    border-radius: 3px;
-    font-size: 11px;
-    color: var(--text-secondary);
-    transition: all 0.2s;
-}
-
-.cmd-input-wrapper.copyable:hover .copy-hint {
-    color: var(--accent-cyan);
-}
-
-.cmd-input-wrapper.copied .copy-hint {
-    color: var(--accent-green);
 }
 
 .checkbox-accent-green {
