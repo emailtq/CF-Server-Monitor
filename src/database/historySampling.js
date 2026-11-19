@@ -4,12 +4,13 @@ export function shouldUseSparseHistorySampling(queryHours) {
   return queryHours > SPARSE_HISTORY_MIN_HOURS;
 }
 
-function buildSampleJsonExpression(tableName, jsonColumns, sampleOrder) {
+function buildSampleJsonExpression(tableName, jsonColumns, sampleOrder, scoped) {
   return `(
     SELECT json_object(${jsonColumns})
     FROM ${tableName}
     WHERE id >= ranges.start_id
       AND id < ranges.end_id
+      ${scoped ? 'AND server_id = (SELECT id FROM requested_server)' : ''}
     ORDER BY id ${sampleOrder}
     LIMIT 1
   )`;
@@ -24,7 +25,8 @@ export function buildSparseHistoryQuery({
   idPrefix,
   oldTableExists,
   tableBoundary,
-  sampleOrder = 'ASC'
+  sampleOrder = 'ASC',
+  serverId = null
 }) {
   const columnList = columns.split(',').map(column => column.trim()).filter(Boolean);
   const jsonColumns = ['timestamp', ...columnList]
@@ -40,11 +42,13 @@ export function buildSparseHistoryQuery({
     idPrefix,
     idPrefix
   ];
-  const currentSample = buildSampleJsonExpression('metrics_history', jsonColumns, normalizedSampleOrder);
+  const scoped = serverId !== null;
+  if (scoped) bindValues.push(serverId);
+  const currentSample = buildSampleJsonExpression('metrics_history', jsonColumns, normalizedSampleOrder, scoped);
   let sampleExpression = currentSample;
 
   if (oldTableExists) {
-    const oldSample = buildSampleJsonExpression('metrics_history_old', jsonColumns, normalizedSampleOrder);
+    const oldSample = buildSampleJsonExpression('metrics_history_old', jsonColumns, normalizedSampleOrder, scoped);
     sampleExpression = `COALESCE(
         CASE WHEN ranges.range_start < ? THEN ${oldSample} END,
         CASE WHEN ranges.range_end > ? THEN ${currentSample} END
@@ -88,7 +92,7 @@ export function buildSparseHistoryQuery({
             ) AS INTEGER
           ) AS end_id
         FROM sample_ranges
-      )
+      )${scoped ? ', requested_server(id) AS (VALUES (?))' : ''}
       SELECT ${sampleExpression} AS sample_json
       FROM id_ranges AS ranges
       ORDER BY ranges.range_start ASC

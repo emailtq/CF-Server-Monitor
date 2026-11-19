@@ -1,6 +1,7 @@
 import { DEFAULT_SITE_TITLE } from '../utils/config.js';
 import { createNotFoundResponse } from '../utils/errors.js';
 import { loadMonitorCompatSnapshot } from '../services/monitorCompatSnapshot.js';
+import { loadMonitorCompatHistory } from '../services/monitorCompatHistory.js';
 
 const DNS_HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const NO_STORE = { 'Cache-Control': 'no-store' };
@@ -55,19 +56,29 @@ export async function handleMonitorCompat(request, env, url) {
   if (typeof host !== 'string' || host.length > 253 || !DNS_HOSTNAME.test(host) ||
       url.hostname !== host.toLowerCase()) return null;
 
-  if (url.pathname !== '/api/me' && url.pathname !== '/api/nodes') return createNotFoundResponse();
+  const isMe = url.pathname === '/api/me';
+  const isNodes = url.pathname === '/api/nodes';
+  const isDefaultConfig = url.pathname === '/api/themes/default/config';
+  const historyId = Number(/^\/api\/nodes\/([1-9]\d*)\/metrics$/.exec(url.pathname)?.[1]);
+  const isHistory = Number.isSafeInteger(historyId);
+  if (!isMe && !isNodes && !isDefaultConfig && !isHistory) return createNotFoundResponse();
   if (request.method !== 'GET') {
     return Response.json({ error: 'Method Not Allowed' }, { status: 405, headers: { Allow: 'GET' } });
   }
 
   const { status, siteName, display } = await loadMonitorCompatAccess(env.DB);
-  if (url.pathname === '/api/nodes') {
+  if (!isMe) {
     if (status !== 200) {
       const error = status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Service Unavailable';
       return Response.json({ error }, { status, headers: NO_STORE });
     }
     try {
-      return Response.json(await loadMonitorCompatSnapshot(env, { display }), { headers: NO_STORE });
+      if (isDefaultConfig) return Response.json({}, { headers: NO_STORE });
+      if (isNodes) return Response.json(await loadMonitorCompatSnapshot(env, { display }), { headers: NO_STORE });
+      const result = await loadMonitorCompatHistory(env.DB, historyId, url.searchParams);
+      if (result === null) return createNotFoundResponse();
+      if (result === false) return Response.json({ error: 'Invalid history query' }, { status: 400, headers: NO_STORE });
+      return Response.json(result, { headers: NO_STORE });
     } catch {
       return Response.json({ error: 'Service Unavailable' }, { status: 503, headers: NO_STORE });
     }

@@ -34,7 +34,8 @@ export function migrateLatencyConfig(settings, servers, now = Date.now()) {
 }
 
 async function readDocument(db) {
-  const { results } = await db.prepare("SELECT key,value FROM settings WHERE key='latency_tasks' OR key GLOB 'latency_tasks:document:*' ORDER BY key").all();
+  const { success, results } = await db.prepare("SELECT key,value FROM settings WHERE key='latency_tasks' OR key GLOB 'latency_tasks:document:*' ORDER BY key").all();
+  if (!success) throw new AppError('latency_config_invalid', 503);
   const row = results.find(row => row.key === key);
   if (!row) return null;
   const header = JSON.parse(row.value);
@@ -42,6 +43,10 @@ async function readDocument(db) {
   const document = JSON.parse(serialized);
   if (document.version !== 1 || !Array.isArray(document.tasks)) throw new AppError('latency_config_invalid', 503);
   return { raw: row.value, serialized, document };
+}
+
+export async function readLatencyTaskDocument(db) {
+  return (await readDocument(db))?.document ?? null;
 }
 
 export async function loadLatencyTasks(db) {

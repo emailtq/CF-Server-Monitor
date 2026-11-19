@@ -20,9 +20,9 @@
 
 ## C. 历史与每主题只读配置
 
-- [ ] 新增历史数据转换，接 `GET /api/nodes/:id/metrics?hours=&points=&series=`，只走映射并再校验节点可见性；默认 6 小时，保持 CF 匿名 ≤24 小时，限制点数／并发和缓存，沿用 D1 现有采样。响应 `{metrics,ping,probes,loss,step}`，区分无样本和超时，不声称 CF 有精确窗口丢包、延迟中位数或 min–max。首期兼容已知 CF 采样窗口及延迟任务的公开标签，无权或查询异常不伪装成正常空数据。
-- [ ] 接 `GET /api/themes/:short/config`。只读已知公开主题的按 `short` 隔离配置，不把 CF 全局 `theme_options` 或任意配置暴露给主题；首期 Default 提供 `{}` 走原包默认值。主题安装、管理写入留待主题管理阶段。
-- [ ] 注册 `test/monitor-compat-history.test.js`。覆盖历史范围与预算、授权、节点删除、资源／探测输出、缺省配置及旧历史接口回归。
+- [x] 新增历史数据转换，接 `GET /api/nodes/:id/metrics?hours=&points=&series=`，只走映射并再校验节点可见性；默认 6 小时，保持 CF 匿名 ≤24 小时，限制点数／并发和缓存，沿用 D1 现有采样。响应 `{metrics,ping,probes,loss,step}`，区分无样本和超时，不声称 CF 有精确窗口丢包、延迟中位数或 min–max。首期兼容已知 CF 采样窗口及延迟任务的公开标签，无权或查询异常不伪装成正常空数据。
+- [x] 接 `GET /api/themes/:short/config`。只读已知公开主题的按 `short` 隔离配置，不把 CF 全局 `theme_options` 或任意配置暴露给主题；首期 Default 提供 `{}` 走原包默认值。主题安装、管理写入留待主题管理阶段。
+- [x] 注册 `test/monitor-compat-history.test.js`。覆盖历史范围与预算、授权、节点删除、资源／探测输出、缺省配置及旧历史接口回归。
 
 ## D. 共享实时快照与最终集成
 
