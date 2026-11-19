@@ -14,9 +14,9 @@
 
 ## B. 稳定节点 ID 与公开快照
 
-- [ ] 新增 `src/database/monitorCompatIds.js` 和 `src/services/monitorCompatSnapshot.js`，接 `GET /api/nodes`。在 D1 独立持久化 UUID → 正整数（唯一、并发幂等；下线保留映射，不复用历史分区编号）；按批补齐，不能每节点执行一次数据库查询，也不修改 Agent ID、历史分区或备份格式。
-- [ ] 复用现有最新 D1 指标与 DO 最新上报数据，按时间排序取新，使用公开字段白名单、隐藏节点筛选及 CF 的在线定义。对齐快照 `{nodes,admin:false}` 与 Default v1.4.3 的实际字段。时间戳用秒、容量用字节、速率和累计字节分别映射；可靠来源缺失时不填虚假指标，不泄露私有备注、凭据、终端状态、原始 Agent payload。未支持的流量、地址等信息按上游允许的缺省形态处理，并记录字段差异。
-- [ ] 注册 `test/monitor-compat-nodes.test.js`。真实 D1 测持久映射、重复／并发补齐、删除不可复用；测试成品快照、排序、隐藏排除、单位、过期及缺数。
+- [x] 新增 `src/database/monitorCompatIds.js` 和 `src/services/monitorCompatSnapshot.js`，接 `GET /api/nodes`。在 D1 独立持久化 UUID → 正整数（唯一、并发幂等；下线保留映射，不复用历史分区编号）；按批补齐，不能每节点执行一次数据库查询，也不修改 Agent ID、历史分区或备份格式。
+- [x] 复用现有最新 D1 指标与 DO 最新上报数据，按时间排序取新，使用公开字段白名单、隐藏节点筛选及 CF 的在线定义。对齐快照 `{nodes,admin:false}` 与 Default v1.4.3 的实际字段。时间戳用秒、容量用字节、速率和累计字节分别映射；可靠来源缺失时不填虚假指标，不泄露私有备注、凭据、终端状态、原始 Agent payload。未支持的流量、地址等信息按上游允许的缺省形态处理，并记录字段差异。
+- [x] 注册 `test/monitor-compat-nodes.test.js`。真实 D1 测持久映射、重复／并发补齐、删除不可复用；测试成品快照、排序、隐藏排除、单位、过期及缺数。
 
 ## C. 历史与每主题只读配置
 

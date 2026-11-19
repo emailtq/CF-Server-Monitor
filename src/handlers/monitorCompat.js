@@ -1,7 +1,9 @@
 import { DEFAULT_SITE_TITLE } from '../utils/config.js';
 import { createNotFoundResponse } from '../utils/errors.js';
+import { loadMonitorCompatSnapshot } from '../services/monitorCompatSnapshot.js';
 
 const DNS_HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+const NO_STORE = { 'Cache-Control': 'no-store' };
 
 export async function loadMonitorCompatAccess(db) {
   const unavailable = { status: 503, siteName: DEFAULT_SITE_TITLE };
@@ -12,9 +14,13 @@ export async function loadMonitorCompatAccess(db) {
         CASE WHEN key IN ('site_options', 'appearance_options') THEN json_type(value) END AS group_type,
         CASE WHEN key = 'site_options' THEN value -> '$.is_public' END AS is_public,
         CASE WHEN key = 'site_options' THEN value -> '$.turnstile_enabled' END AS turnstile_enabled,
+        CASE WHEN key = 'site_options' THEN value -> '$.show_price' END AS show_price,
+        CASE WHEN key = 'site_options' THEN value -> '$.show_expire' END AS show_expire,
+        CASE WHEN key = 'site_options' THEN value -> '$.show_tf' END AS show_tf,
         CASE WHEN key = 'appearance_options' THEN value -> '$.site_title' END AS site_title,
-        CASE WHEN key IN ('is_public', 'turnstile_enabled', 'site_title') THEN value END AS legacy_value
-      FROM settings WHERE key IN ('site_options', 'appearance_options', 'is_public', 'turnstile_enabled', 'site_title')
+        CASE WHEN key NOT IN ('site_options', 'appearance_options') THEN value END AS legacy_value
+      FROM settings WHERE key IN ('site_options', 'appearance_options', 'is_public', 'turnstile_enabled',
+        'site_title', 'show_price', 'show_expire', 'show_tf')
     `).all();
     if (!success) return unavailable;
 
@@ -32,8 +38,13 @@ export async function loadMonitorCompatAccess(db) {
     if (turnstile === 'true' || turnstile === true) return { status: 403, siteName };
     if (turnstile !== undefined && turnstile !== 'false' && turnstile !== false) return unavailable;
 
-    const isPublic = setting('site_options', 'is_public') === 'true';
-    return { status: isPublic ? 200 : 401, siteName };
+    if (setting('site_options', 'is_public') !== 'true') return { status: 401, siteName };
+    const enabled = key => [undefined, true, 'true'].includes(setting('site_options', key));
+    return {
+      status: 200,
+      siteName,
+      display: { showPrice: enabled('show_price'), showExpire: enabled('show_expire'), showTraffic: enabled('show_tf') }
+    };
   } catch {
     return unavailable;
   }
@@ -44,17 +55,28 @@ export async function handleMonitorCompat(request, env, url) {
   if (typeof host !== 'string' || host.length > 253 || !DNS_HOSTNAME.test(host) ||
       url.hostname !== host.toLowerCase()) return null;
 
-  if (url.pathname !== '/api/me') return createNotFoundResponse();
+  if (url.pathname !== '/api/me' && url.pathname !== '/api/nodes') return createNotFoundResponse();
   if (request.method !== 'GET') {
     return Response.json({ error: 'Method Not Allowed' }, { status: 405, headers: { Allow: 'GET' } });
   }
 
-  const { status, siteName } = await loadMonitorCompatAccess(env.DB);
+  const { status, siteName, display } = await loadMonitorCompatAccess(env.DB);
+  if (url.pathname === '/api/nodes') {
+    if (status !== 200) {
+      const error = status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Service Unavailable';
+      return Response.json({ error }, { status, headers: NO_STORE });
+    }
+    try {
+      return Response.json(await loadMonitorCompatSnapshot(env, { display }), { headers: NO_STORE });
+    } catch {
+      return Response.json({ error: 'Service Unavailable' }, { status: 503, headers: NO_STORE });
+    }
+  }
   return Response.json({
     authed: false,
     github: false,
     public_page: status === 200,
     site_name: siteName,
     history_days: 1
-  }, { headers: { 'Cache-Control': 'no-store' } });
+  }, { headers: NO_STORE });
 }

@@ -101,7 +101,7 @@ function attachLatencyHistoryToServers(servers, latencyHistory) {
   }
 }
 
-async function getDurableRealtimeState(env, serverIds) {
+export async function getDurableRealtimeState(env, serverIds) {
   const empty = { latestReportUpdates: [] };
   if (!env.METRICS_BROADCASTER || !Array.isArray(serverIds) || serverIds.length === 0) return empty;
 
