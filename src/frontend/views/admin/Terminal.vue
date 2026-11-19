@@ -3,8 +3,17 @@
     <section class="terminal-panel">
       <header class="terminal-topbar">
         <span class="terminal-node-name" :title="node?.name || serverId">{{ node?.name || serverId }}</span>
+        <button class="admin-icon-button terminal-search-toggle" data-terminal-search :aria-label="trans.terminalSearch" :title="trans.terminalSearch" :aria-expanded="searchOpen" @click="toggleSearch"><AdminIcon name="search" /></button>
         <button class="admin-icon-button" data-terminal-menu :aria-label="trans.terminalMenu" :aria-expanded="showMenu" aria-haspopup="dialog" @click="showMenu = true"><AdminIcon name="settings" /></button>
       </header>
+      <div v-if="searchOpen" class="terminal-search" role="search" :aria-label="trans.terminalSearch" @keydown="searchKey">
+        <input ref="searchInput" data-terminal-search-input class="form-input" :value="searchQuery" :aria-label="trans.terminalSearch" :placeholder="trans.terminalSearch" autocomplete="off" autocapitalize="off" spellcheck="false" @input="terminal.findOutput($event.target.value, false, true)">
+        <button class="btn" data-terminal-search-previous :aria-label="trans.terminalSearchPrevious" :title="trans.terminalSearchPrevious" :disabled="!searchQuery" @click="terminal.findOutput(searchQuery, true)">↑</button>
+        <button class="btn" data-terminal-search-next :aria-label="trans.terminalSearchNext" :title="trans.terminalSearchNext" :disabled="!searchQuery" @click="terminal.findOutput()">↓</button>
+        <button class="btn" data-terminal-search-clear :aria-label="trans.terminalSearchClear" :title="trans.terminalSearchClear" :disabled="!searchQuery" @click="terminal.clearSearch(); searchInput?.focus()">×</button>
+        <button class="btn" data-terminal-search-close :aria-label="trans.close" :title="trans.close" @click="closeSearch"><AdminIcon name="x" /></button>
+        <p class="terminal-search-scope" role="status"><span v-if="searchQuery && !searchFound" data-terminal-search-empty>{{ trans.terminalSearchEmpty }}</span><span v-else>{{ trans.terminalSearchScope }}</span></p>
+      </div>
       <div class="terminal-workspace">
         <div ref="host" class="terminal-screen" :aria-label="trans.terminalTitle"><pre v-if="finalOutput" class="terminal-final-output">{{ finalOutput }}</pre></div>
         <button v-if="readingHistory" class="btn terminal-bottom" data-terminal-bottom @click="terminal.scrollToBottom"><AdminIcon name="chevron-down" />{{ trans.terminalScrollBottom }}</button>
@@ -56,9 +65,14 @@
         <label>{{ trans.language }}<select class="form-select terminal-language" :value="currentLang" @change="setLanguage($event.target.value)"><option v-for="language in LANGUAGES" :key="language.code" :value="language.code">{{ language.nativeLabel }}</option></select></label>
         <label>{{ trans.theme }}<select class="form-select terminal-theme" :value="currentTheme" @change="setTheme($event.target.value)"><option value="auto">{{ trans.themeAuto }}</option><option value="light">{{ trans.themeLight }}</option><option value="dark">{{ trans.themeDark }}</option></select></label>
         <div class="terminal-font-size"><span>{{ trans.terminalFontSize }}</span><div><button class="btn" data-terminal-font-decrease :disabled="fontSize <= 10" @click="terminal.setFontSize(fontSize - 1)">−</button><output data-terminal-font-value>{{ fontSize }}px</output><button class="btn" data-terminal-font-increase :disabled="fontSize >= 32" @click="terminal.setFontSize(fontSize + 1)">+</button><button class="btn" data-terminal-font-reset @click="terminal.setFontSize(14)">{{ trans.terminalFontReset }}</button></div></div>
+        <div class="terminal-export"><button class="btn" data-terminal-export @click="exportScreen"><AdminIcon name="download" />{{ trans.terminalExportScreen }}</button><p>{{ trans.terminalExportScope }}</p><p v-if="exportError" role="status" class="terminal-error">{{ trans[exportError] }}</p></div>
         <details class="terminal-session"><summary tabindex="0">{{ trans.terminalSessionDetails }}</summary><div>{{ trans['terminalState_' + status] }}</div><div v-if="sessionId">{{ sessionId }}</div><div>{{ node?.region || '-' }} / {{ node?.os || '-' }}</div><div v-if="availability">{{ availability.connected ? trans.terminalAgentConnected : trans.terminalAgentOffline }} / {{ availability.supported ? trans.terminalSupported : trans.terminalUnsupported }}</div></details>
         <p class="terminal-risk">{{ trans.terminalRisk }}</p><p class="terminal-risk">{{ trans.terminalLimits }}</p>
       </div>
+    </AdminDialog>
+    <AdminDialog :open="!!linkTarget" :title="trans.terminalLinkConfirm" @close="linkTarget = ''" @after-leave="terminal.focus()">
+      <p class="terminal-link-target" data-terminal-link-target dir="ltr">{{ linkTarget }}</p>
+      <template #footer><button class="btn" data-terminal-link-cancel @click="linkTarget = ''">{{ trans.cancel }}</button><button class="btn" data-terminal-link-copy @click="copyLink">{{ trans.terminalLinkCopy }}</button><button class="btn btn-primary" data-terminal-link-open @click="openLink">{{ trans.terminalLinkOpen }}</button></template>
     </AdminDialog>
     <TerminalAccessModal v-if="showAccess" :server="node || { id: serverId }" :api-index="apiIndex" :trans="trans" @close="showAccess = false; refreshStatus()" />
   </main>
@@ -72,6 +86,8 @@ import AdminIcon from './components/AdminIcon.vue'
 import TerminalAccessModal from './components/TerminalAccessModal.vue'
 import { useTerminal } from '../../composables/useTerminal.js'
 import { adminApi, getTerminalBase } from '../../utils/api.js'
+import { copyTextToClipboard } from '../../utils/clipboard.js'
+import { terminalWebUrl } from '../../utils/terminalOutput.js'
 import { useTheme } from '../../composables/useTheme.js'
 import { isAdminLoggedIn } from '../../utils/http.js'
 import { useTranslation, currentLang, LANGUAGES, setLanguage } from '../../utils/i18n.js'
@@ -85,7 +101,10 @@ const { currentTheme, setTheme } = useTheme()
 const serverId = String(route.params.id || '')
 const apiIndex = route.query.apiIndex === undefined ? 0 : /^\d+$/.test(String(route.query.apiIndex)) ? Number(route.query.apiIndex) : NaN
 const terminal = useTerminal({ serverId, apiIndex })
-const { status, errorCode, sessionId, finalOutput, readingHistory, fontSize } = terminal
+const { status, errorCode, sessionId, finalOutput, readingHistory, fontSize, searchQuery, searchFound, linkTarget } = terminal
+const searchOpen = ref(false)
+const searchInput = ref(null)
+const exportError = ref('')
 const host = ref(null)
 const connected = ref(false)
 const mobile = ref(null)
@@ -116,6 +135,39 @@ let themeObserver
 let pendingAccess = false
 
 const back = () => router.push({ path: '/admin', query: { apiIndex: String(apiIndex) } })
+const closeSearch = () => { terminal.clearSearch(); searchOpen.value = false; terminal.focus() }
+const toggleSearch = async () => {
+  if (searchOpen.value) { closeSearch(); return }
+  searchOpen.value = true
+  await nextTick()
+  searchInput.value?.focus()
+}
+const searchKey = event => {
+  if (event.isComposing || event.keyCode === 229) return
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch() }
+  if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); terminal.findOutput(searchQuery.value, event.shiftKey) }
+}
+const exportScreen = () => {
+  exportError.value = ''
+  try { if (!terminal.exportScreen()) exportError.value = 'terminalExportEmpty' }
+  catch (_) { exportError.value = 'terminalExportFailed' }
+}
+const openLink = () => {
+  const target = terminalWebUrl(linkTarget.value)
+  linkTarget.value = ''
+  if (!target) return
+  try {
+    window.open(target, '_blank', 'noopener,noreferrer')
+  } catch (_) { uiError.value = 'terminal_link_failed' }
+}
+const copyLink = async () => {
+  const target = terminalWebUrl(linkTarget.value), owner = sessionId.value
+  if (!target) { linkTarget.value = ''; return }
+  const copied = await copyTextToClipboard(target)
+  if (!live || owner !== sessionId.value || linkTarget.value !== target) return
+  linkTarget.value = ''
+  if (!copied) uiError.value = 'terminal_clipboard_denied'
+}
 const openAccess = () => {
   pendingAccess = true
   showMenu.value = false
@@ -207,7 +259,7 @@ const mobileEnter = event => {
 const updateViewport = () => { viewportHeight.value = `${window.visualViewport?.height || window.innerHeight}px` }
 watch([() => route.params.id, () => route.query.apiIndex], () => { terminal.dispose(); back() })
 watch(showMenu, open => { if (open) pendingAccess = false }, { flush: 'sync' })
-watch(sessionId, () => { ctrl.value = alt.value = false; clearPasteDraft(); clearComposer() }, { flush: 'sync' })
+watch(sessionId, () => { ctrl.value = alt.value = false; clearPasteDraft(); clearComposer(); searchOpen.value = false; exportError.value = '' }, { flush: 'sync' })
 watch([status, errorCode, trans], ([state]) => {
   if (state === 'running') {
     connected.value = true
@@ -241,6 +293,11 @@ onBeforeUnmount(() => {
 .terminal-panel { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .terminal-topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 12px; min-height: 44px; flex-shrink: 0; border-bottom: 1px solid var(--cf-border); }
 .terminal-node-name { min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-search-toggle { margin-left: auto; }
+.terminal-search { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 4px; flex-shrink: 0; border-bottom: 1px solid var(--cf-border); }
+.terminal-page .terminal-search .form-input { flex: 1; min-width: 80px; width: 0; min-height: 44px !important; height: 44px !important; font-size: 16px; }
+.terminal-search-scope { flex-basis: 100%; margin: 0; color: var(--cf-muted); font-size: 12px; line-height: 1.4; }
+.terminal-link-target { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.6 var(--terminal-font, monospace); unicode-bidi: plaintext; }
 .terminal-topbar .admin-icon-button { width: 44px; height: 44px; flex-shrink: 0; background: transparent; }
 .terminal-topbar .admin-icon-button:hover, .terminal-topbar .admin-icon-button:active { background: transparent; }
 .terminal-workspace { position: relative; flex: 1; min-height: 0; display: flex; }
@@ -301,4 +358,6 @@ onBeforeUnmount(() => {
 .terminal-menu-panel .terminal-font-size output { min-width: 40px; text-align: center; }
 .terminal-menu-panel summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 .terminal-menu-panel .terminal-risk { margin: 0; font-size: 13px; line-height: 1.6; color: var(--cf-muted); }
+.terminal-export p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--cf-muted); }
+.terminal-export .terminal-error { color: var(--cf-red); }
 </style>

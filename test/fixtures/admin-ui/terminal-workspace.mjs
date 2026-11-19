@@ -7,6 +7,7 @@ import { createServer } from './notification-matrix-server.mjs';
 import en from '../../../src/frontend/locales/en.js';
 import { connectionChecks, refinementChecks, actualThumbChecks } from './terminal-refinement-checks.mjs';
 import { inputComfortChecks } from './terminal-input-comfort-checks.mjs';
+import { outputHelperChecks } from './terminal-output-helper-checks.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
@@ -27,6 +28,7 @@ const inputCredit = {
 const refinement = process.env.TERMINAL_REFINEMENT === '1';
 const thumbOnly = process.env.TERMINAL_THUMB_ONLY === '1';
 const comfortOnly = process.env.TERMINAL_INPUT_COMFORT_ONLY === '1';
+const outputOnly = process.env.TERMINAL_OUTPUT_HELPERS_ONLY === '1';
 const firstRemote = process.env.TERMINAL_REMOTE_OUTPUT_FILE ? fs.readFileSync(process.env.TERMINAL_REMOTE_OUTPUT_FILE) : Buffer.from('FIRST REMOTE LINE\r\n');
 report.remoteSource = process.env.TERMINAL_REMOTE_OUTPUT_FILE ? 'actual Go Linux PTY stdout probe; not an Alpine SSH login' : 'synthetic peer transcript';
 let releaseCreating, releaseStarting;
@@ -57,7 +59,7 @@ try {
   const touch = process.env.TERMINAL_WORKSPACE_POINTER !== 'fine';
   const dpr = Number(process.env.TERMINAL_WORKSPACE_DPR || 1);
   assert.ok([1, 1.25, 2].includes(dpr)); report.dpr = dpr;
-  context = await browser.newContext({ viewport: { width: thumbOnly && !touch ? 1440 : 390, height: thumbOnly && !touch ? 900 : 844 }, hasTouch: touch, isMobile: touch, deviceScaleFactor: dpr });
+  context = await browser.newContext({ viewport: { width: (thumbOnly || outputOnly) && !touch ? 1440 : 390, height: (thumbOnly || outputOnly) && !touch ? 900 : 844 }, hasTouch: touch, isMobile: touch, deviceScaleFactor: dpr });
   report.pointer = touch ? 'coarse' : 'fine';
   await context.addInitScript(() => {
     window.fixtureAck = 0;
@@ -110,7 +112,9 @@ try {
   await page.goto(`${origin}/admin#/admin/terminal/node-a?apiIndex=0`);
   if (refinement && !comfortOnly) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report, socket: () => socket, output, menu, firstRemote });
   await page.waitForFunction(() => window.fixtureScreen && !window.fixtureScreen.options.disableStdin);
-  if (comfortOnly) {
+  if (outputOnly) {
+    await outputHelperChecks({ page, context, report, check, output, out, menu, closeMenu, socket: () => socket, exports });
+  } else if (comfortOnly) {
     await inputComfortChecks({ page, report, check, output, out, menu, closeMenu, socket: () => socket, inputCredit });
   } else if (thumbOnly) {
     await actualThumbChecks({ page, context, report, check, state, output, out, PNG });

@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { adminApi, getTerminalBase, getTerminalSocketUrl } from '../utils/api.js'
 import { copyTextToClipboard } from '../utils/clipboard.js'
+import { terminalWebUrl, downloadTerminalScreen } from '../utils/terminalOutput.js'
 import { TERMINAL_LIMITS, parseTerminalControl, validateTerminalSize, validateTerminalDataFrame } from '../../shared/terminalProtocol.js'
 
 const BATCH_MS = 16
@@ -29,6 +30,9 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
   const finalOutput = ref('')
   const readingHistory = ref(false)
   const fontSize = ref(14)
+  const searchQuery = ref('')
+  const searchFound = ref(false)
+  const linkTarget = ref('')
   let epoch = 0
   let renderEpoch = 0
   let drainUntil = 0
@@ -50,6 +54,10 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
   let channel = null
   let historyDispose = null
   let rendererDrain = null
+  let searchAddon = null
+  let outputHelpersDispose = null
+  let resetSearchAddon = null
+  let searchSelection = ''
   const timers = new Map()
   const subscriptions = []
 
@@ -82,6 +90,10 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     observer = null
     historyDispose?.()
     historyDispose = null
+    outputHelpersDispose?.()
+    outputHelpersDispose = null
+    searchAddon = null
+    resetSearchAddon = null
     readingHistory.value = false
     host?.removeEventListener('paste', onPaste, true)
     host = null
@@ -112,6 +124,8 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     return new TextDecoder().decode(bytes.subarray(0, written))
   }
   const stop = (nextStatus = 'disconnected', reason = '', notify = true, keepScreen = false) => {
+    clearSearch()
+    linkTarget.value = ''
     rendererDrain?.(false)
     rendererDrain = null
     epoch++
@@ -215,7 +229,10 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     const cols = Math.max(1, Math.min(500, size.cols))
     const rows = Math.max(1, Math.min(500, size.rows))
     if (screen.cols === cols && screen.rows === rows) return
+    const selected = screen.cols === cols ? screen.getSelectionPosition() : null
     screen.resize(cols, rows)
+    // xterm clears selections on vertical resize; opening/closing local tools must keep them.
+    if (selected) screen.select(selected.start.x, selected.start.y, (selected.end.y - selected.start.y) * cols + selected.end.x - selected.start.x)
   }
   const refreshTheme = () => {
     if (!screen || !host || disposed) return false
@@ -224,6 +241,83 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     return true
   }
   const scrollToBottom = () => screen?.scrollToBottom()
+  const selectionPosition = () => JSON.stringify(screen?.getSelectionPosition())
+  const clearSearch = () => {
+    // Only remove our own selection, not a selection the user made after searching.
+    if (searchSelection && selectionPosition() === searchSelection) screen?.clearSelection()
+    searchSelection = ''
+    // Disposal also cancels the addon's queued output refresh, which could otherwise reselect later.
+    resetSearchAddon?.()
+    searchQuery.value = ''
+    searchFound.value = false
+  }
+  const findOutput = (query = searchQuery.value, previous = false, incremental = false) => {
+    if (!query) { clearSearch(); return false }
+    if (!screen || !searchAddon) return false
+    fitScreen()
+    searchQuery.value = query
+    const color = getComputedStyle(host).getPropertyValue('--cf-muted').trim()
+    searchFound.value = searchAddon[previous ? 'findPrevious' : 'findNext'](query, {
+      regex: false, caseSensitive: true, incremental,
+      decorations: { matchBorder: color, matchOverviewRuler: color, activeMatchBorder: color, activeMatchColorOverviewRuler: color }
+    })
+    searchSelection = screen.hasSelection() ? selectionPosition() : ''
+    return searchFound.value
+  }
+  const attachOutputHelpers = (SearchAddon, WebLinksAddon) => {
+    const renderer = screen
+    let buffer = renderer.buffer.active
+    let gesture = null
+    const activate = (event, text) => {
+      const click = gesture
+      gesture = null
+      if (!click || !click.released || performance.now() - click.at > 350 || event.button !== 0 || renderer.modes.mouseTrackingMode !== 'none' || renderer.hasSelection() || window.getSelection()?.toString()) return
+      const target = terminalWebUrl(text)
+      if (target) linkTarget.value = target
+    }
+    // Own every OSC8 target: otherwise xterm may fall back to a misleading HTTP label.
+    renderer.options.linkHandler = { activate, allowNonHttpProtocols: true }
+    renderer.loadAddon(new WebLinksAddon(activate))
+    const start = event => { gesture = event.isPrimary && event.button === 0 ? { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now(), released: false } : null }
+    const move = event => { if (gesture && (event.pointerId !== gesture.id || Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 8)) gesture = null }
+    const end = event => { move(event); if (gesture) gesture.released = true }
+    const cancel = () => { gesture = null }
+    const element = renderer.element
+    element.addEventListener('pointerdown', start, true)
+    element.addEventListener('pointermove', move, true)
+    element.addEventListener('pointerup', end, true)
+    element.addEventListener('pointercancel', cancel, true)
+    const results = () => {
+      searchSelection = renderer.hasSelection() ? selectionPosition() : ''
+      searchFound.value = renderer.hasSelection()
+    }
+    let resultListener
+    resetSearchAddon = () => {
+      resultListener?.dispose()
+      searchAddon?.dispose()
+      searchAddon = new SearchAddon({ highlightLimit: 1000 })
+      renderer.loadAddon(searchAddon)
+      resultListener = searchAddon.onDidChangeResults(results)
+    }
+    resetSearchAddon()
+    const parsed = renderer.onWriteParsed(() => {
+      if (buffer === renderer.buffer.active) return
+      buffer = renderer.buffer.active
+      resetSearchAddon()
+      searchSelection = ''
+      searchFound.value = false
+      if (searchQuery.value) findOutput(searchQuery.value, false, true)
+    })
+    return () => {
+      resultListener.dispose()
+      parsed.dispose()
+      element.removeEventListener('pointerdown', start, true)
+      element.removeEventListener('pointermove', move, true)
+      element.removeEventListener('pointerup', end, true)
+      element.removeEventListener('pointercancel', cancel, true)
+    }
+  }
+  const exportScreen = () => downloadTerminalScreen(screen ? snapshotRenderer() : finalOutput.value)
   const attachHistory = () => {
     const renderer = screen
     const element = screen.element
@@ -418,8 +512,8 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       if (!availability?.enabled) throw new Error('terminal_disabled')
       if (!availability.connected) throw new Error('terminal_agent_offline')
       if (!availability.supported || availability.protocol !== 1 || availability.platform !== 'linux') throw new Error('terminal_unsupported')
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
-        import('@xterm/xterm'), import('@xterm/addon-fit'), import('@xterm/xterm/css/xterm.css')
+      const [{ Terminal }, { FitAddon }, { SearchAddon }, { WebLinksAddon }] = await Promise.all([
+        import('@xterm/xterm'), import('@xterm/addon-fit'), import('@xterm/addon-search'), import('@xterm/addon-web-links'), import('@xterm/xterm/css/xterm.css')
       ])
       if (current !== epoch) return false
       host = container
@@ -443,6 +537,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
       }
       if (!screen) {
         screen = new Terminal({
+          allowProposedApi: true,
           cursorBlink: true, disableStdin: true, scrollback: 1000, screenReaderMode: true,
           overviewRuler: { width: parseFloat(style.getPropertyValue('--terminal-scrollbar-hit')) || 14 },
           fontFamily: style.getPropertyValue('--terminal-font').trim() || 'Consolas, "Liberation Mono", monospace', fontSize: 14,
@@ -452,6 +547,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
         screen.loadAddon(fit)
         screen.open(container)
         historyDispose = attachHistory()
+        outputHelpersDispose = attachOutputHelpers(SearchAddon, WebLinksAddon)
       }
       if (retained) { renderEpoch++; cancelTimer('drain'); drainUntil = 0 }
       setFontSize(14)
@@ -577,7 +673,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     channel.onmessage = event => { if (event.data?.type === 'logout') logoutEvent() }
   }
   return {
-    status, errorCode, sessionId, finalOutput, readingHistory, fontSize, open, resize, close, dispose, sendInput, paste, submitPaste, sendVirtualKey, setFontSize, refreshTheme, scrollToBottom,
+    status, errorCode, sessionId, finalOutput, readingHistory, fontSize, searchQuery, searchFound, linkTarget, findOutput, clearSearch, exportScreen, open, resize, close, dispose, sendInput, paste, submitPaste, sendVirtualKey, setFontSize, refreshTheme, scrollToBottom,
     focus: () => screen?.focus(),
     copySelection: () => screen?.hasSelection()
       ? copyTextToClipboard(screen.getSelection())
