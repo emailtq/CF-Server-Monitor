@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import en from '../../../src/frontend/locales/en.js';
 import { nativeScrollbar } from './scrollbar-assertions.mjs';
+import { inputComfortChecks } from './terminal-input-comfort-checks.mjs';
 
 export async function actualThumbChecks({ page, context, report, check, state, output, out, PNG }) {
   const coarse = report.pointer === 'coarse', cdp = await context.newCDPSession(page);
@@ -125,7 +126,7 @@ export async function connectionChecks({ page, check, releaseCreating, releaseSt
     assert.equal(report.ack, report.outputBytes);
   });
 }
-export async function refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, socket, PNG }) {
+export async function refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, socket, PNG, inputCredit }) {
   await check('leaving and reversed real menu reclaim outside focus and block remote keyboard input', async () => {
     const inputs = report.inputs.length;
     await menu();
@@ -467,6 +468,7 @@ export async function refinementChecks({ page, context, report, check, state, ou
     report.customPaint = samples;
     assert.ok(samples.every(s => s.width === (report.pointer === 'coarse' ? 20 : 14) && Math.abs(s.paintedCss - 3) <= .55 && (s.dpr !== 1 || s.paintedPhysical === 3) && Math.max(...s.rgb) - Math.min(...s.rgb) <= 2), JSON.stringify(samples));
   });
+  await inputComfortChecks({ page, report, check, output, out, menu, closeMenu, socket, inputCredit });
   await check('exit retains remote screen; compact dismissible notice never covers output', async () => {
     const bufferText = () => page.evaluate(() => { const b = window.fixtureScreen.buffer.active; return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true) || '').join('\n').trimEnd(); });
     const before = await bufferText(); socket().send('{"type":"exit","code":0}');

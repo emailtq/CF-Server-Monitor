@@ -9,7 +9,8 @@
         <div ref="host" class="terminal-screen" :aria-label="trans.terminalTitle"><pre v-if="finalOutput" class="terminal-final-output">{{ finalOutput }}</pre></div>
         <button v-if="readingHistory" class="btn terminal-bottom" data-terminal-bottom @click="terminal.scrollToBottom"><AdminIcon name="chevron-down" />{{ trans.terminalScrollBottom }}</button>
       </div>
-      <footer class="terminal-toolbar" :class="{ 'terminal-readonly': connected && !active }" :aria-label="trans.terminalKeys">
+      <footer class="terminal-toolbar" :class="{ 'terminal-readonly': connected && !active, 'terminal-composing': composerOpen }" :aria-label="trans.terminalKeys">
+        <div class="terminal-toolbar-tools">
         <div v-if="notice && notice !== dismissedNotice" class="terminal-notice" role="status" aria-live="polite">
           <div><span :class="{ 'terminal-error': noticeCode }">{{ noticeText }}</span><details v-if="noticeCode"><summary>{{ trans.terminalErrorDetails }}</summary><p>{{ noticeText }}</p><code>{{ noticeCode }}</code></details></div>
           <button class="admin-icon-button" data-terminal-notice-close :aria-label="trans.close" @click="dismissedNotice = notice"><AdminIcon name="x" /></button>
@@ -19,6 +20,11 @@
           <textarea id="terminal-paste-draft" ref="pasteInput" v-model="pasteDraft" data-terminal-paste-draft class="form-input" :aria-label="trans.terminalPasteDraft" autocomplete="off" autocapitalize="off" spellcheck="false" />
           <div><button class="btn btn-primary" data-terminal-paste-send :disabled="!pasteDraft || status !== 'running'" @click="sendPasteDraft">{{ trans.terminalPasteSend }}</button><button class="btn" data-terminal-paste-cancel @click="cancelPasteDraft">{{ trans.cancel }}</button></div>
         </div>
+        <div v-if="composerOpen" class="terminal-composer" data-terminal-composer>
+          <textarea v-model="composerDraft" data-terminal-composer-input class="form-input" :placeholder="trans.terminalComposerPlaceholder" :aria-label="trans.terminalComposer" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <p v-if="composerDraft.includes('\n')" class="terminal-composer-warning">{{ trans.terminalComposerWarning }}</p>
+          <div class="terminal-composer-actions"><button class="btn btn-primary" data-terminal-composer-send :disabled="!composerDraft || status !== 'running'" @click="sendComposer(false)">{{ trans.terminalComposerSend }}</button><button class="btn" data-terminal-composer-send-return :disabled="!composerDraft || status !== 'running'" @click="sendComposer(true)">{{ trans.terminalComposerSendReturn }}</button><button class="btn" data-terminal-composer-cancel @click="cancelComposer">{{ trans.cancel }}</button></div>
+        </div>
         <div v-if="showKeys" class="terminal-key-controls">
         <button class="btn" @click="copySelection">{{ trans.copy }}</button>
         <button class="btn" :disabled="status !== 'running'" @click="pasteClipboard">{{ trans.terminalPaste }}</button>
@@ -26,9 +32,14 @@
         <button class="btn" :disabled="status !== 'running'" @click="terminal.sendInput('\t'); terminal.focus()">Tab</button>
         <button class="btn" :aria-pressed="ctrl" :disabled="status !== 'running'" @click="ctrl = !ctrl">Ctrl</button>
         <button class="btn" :aria-pressed="alt" :disabled="status !== 'running'" @click="alt = !alt">Alt</button>
+        <button class="btn" data-terminal-arrow-up :disabled="status !== 'running'" @click="terminal.sendVirtualKey('ArrowUp'); terminal.focus()">↑</button>
+        <button class="btn" data-terminal-arrow-down :disabled="status !== 'running'" @click="terminal.sendVirtualKey('ArrowDown'); terminal.focus()">↓</button>
+        <button class="btn" :disabled="status !== 'running'" @click="terminal.sendVirtualKey('Backspace'); terminal.focus()">{{ trans.terminalBackspace }}</button>
+        </div>
         </div>
         <div class="terminal-input-row">
           <button class="btn" data-terminal-keys :aria-label="trans.terminalKeys" :aria-expanded="showKeys" @click="showKeys = !showKeys"><AdminIcon name="terminal" /></button>
+          <button class="btn" data-terminal-composer-toggle :aria-label="trans.terminalComposer" :title="trans.terminalComposer" :aria-expanded="composerOpen" :disabled="status !== 'running'" @click="toggleComposer">Aa</button>
           <input ref="mobile" class="form-input terminal-mobile-input" :aria-label="trans.terminalMobileInput" :placeholder="trans.terminalMobileInput" :disabled="status !== 'running'" autocomplete="off" autocapitalize="off" spellcheck="false" @input="mobileInput" @compositionstart="compositionStart" @compositionend="compositionEnd" @keydown.enter="mobileEnter">
           <button class="btn" :disabled="status !== 'running'" @click="mobile?.focus()">{{ trans.terminalKeyboard }}</button>
         </div>
@@ -44,6 +55,7 @@
         </nav>
         <label>{{ trans.language }}<select class="form-select terminal-language" :value="currentLang" @change="setLanguage($event.target.value)"><option v-for="language in LANGUAGES" :key="language.code" :value="language.code">{{ language.nativeLabel }}</option></select></label>
         <label>{{ trans.theme }}<select class="form-select terminal-theme" :value="currentTheme" @change="setTheme($event.target.value)"><option value="auto">{{ trans.themeAuto }}</option><option value="light">{{ trans.themeLight }}</option><option value="dark">{{ trans.themeDark }}</option></select></label>
+        <div class="terminal-font-size"><span>{{ trans.terminalFontSize }}</span><div><button class="btn" data-terminal-font-decrease :disabled="fontSize <= 10" @click="terminal.setFontSize(fontSize - 1)">−</button><output data-terminal-font-value>{{ fontSize }}px</output><button class="btn" data-terminal-font-increase :disabled="fontSize >= 32" @click="terminal.setFontSize(fontSize + 1)">+</button><button class="btn" data-terminal-font-reset @click="terminal.setFontSize(14)">{{ trans.terminalFontReset }}</button></div></div>
         <details class="terminal-session"><summary tabindex="0">{{ trans.terminalSessionDetails }}</summary><div>{{ trans['terminalState_' + status] }}</div><div v-if="sessionId">{{ sessionId }}</div><div>{{ node?.region || '-' }} / {{ node?.os || '-' }}</div><div v-if="availability">{{ availability.connected ? trans.terminalAgentConnected : trans.terminalAgentOffline }} / {{ availability.supported ? trans.terminalSupported : trans.terminalUnsupported }}</div></details>
         <p class="terminal-risk">{{ trans.terminalRisk }}</p><p class="terminal-risk">{{ trans.terminalLimits }}</p>
       </div>
@@ -73,7 +85,7 @@ const { currentTheme, setTheme } = useTheme()
 const serverId = String(route.params.id || '')
 const apiIndex = route.query.apiIndex === undefined ? 0 : /^\d+$/.test(String(route.query.apiIndex)) ? Number(route.query.apiIndex) : NaN
 const terminal = useTerminal({ serverId, apiIndex })
-const { status, errorCode, sessionId, finalOutput, readingHistory } = terminal
+const { status, errorCode, sessionId, finalOutput, readingHistory, fontSize } = terminal
 const host = ref(null)
 const connected = ref(false)
 const mobile = ref(null)
@@ -88,6 +100,9 @@ const dismissedNotice = ref('')
 const pasteInput = ref(null)
 const pasteOwner = ref('')
 const pasteDraft = ref('')
+const composerOpen = ref(false)
+const composerOwner = ref('')
+const composerDraft = ref('')
 const noticeCode = computed(() => uiError.value || errorCode.value)
 const notice = computed(() => noticeCode.value || (connected.value && ['disconnected', 'exited'].includes(status.value) ? status.value : ''))
 const noticeText = computed(() => noticeCode.value ? trans.value[noticeCode.value] || trans.value.terminalRequestFailed : trans.value['terminalState_' + status.value])
@@ -122,6 +137,19 @@ const loadMetadata = async () => {
 }
 const clearUiError = () => { uiError.value = ''; dismissedNotice.value = ''; if (status.value === 'running') errorCode.value = '' }
 const clearPasteDraft = () => { pasteOwner.value = pasteDraft.value = '' }
+const clearComposer = () => { composerOwner.value = ''; composerDraft.value = ''; composerOpen.value = false }
+const toggleComposer = () => {
+  composerOpen.value = !composerOpen.value
+  if (composerOpen.value) composerOwner.value = sessionId.value
+}
+const cancelComposer = () => { clearComposer(); clearUiError(); terminal.focus() }
+const sendComposer = appendReturn => {
+  if (!composerOwner.value) composerOwner.value = sessionId.value
+  if (!composerOwner.value || composerOwner.value !== sessionId.value || status.value !== 'running') return
+  clearUiError()
+  const sent = appendReturn ? terminal.submitPaste(composerDraft.value) : terminal.paste(composerDraft.value)
+  if (sent) { clearComposer(); terminal.focus() }
+}
 const cancelPasteDraft = () => { clearPasteDraft(); clearUiError(); terminal.focus() }
 const sendPasteDraft = () => {
   if (!pasteOwner.value || pasteOwner.value !== sessionId.value || status.value !== 'running') { clearPasteDraft(); return }
@@ -133,7 +161,7 @@ const copySelection = async () => {
   try { if (await terminal.copySelection()) { if (live && owner === sessionId.value) clearUiError() } }
   catch (_) { if (live && owner === sessionId.value) uiError.value = 'terminal_clipboard_denied' }
 }
-const open = async () => { clearPasteDraft(); clearUiError(); connected.value = false; ctrl.value = alt.value = false; await nextTick(); await terminal.open(host.value); if (live) await refreshStatus() }
+const open = async () => { clearPasteDraft(); clearComposer(); clearUiError(); connected.value = false; ctrl.value = alt.value = false; await nextTick(); await terminal.open(host.value); if (live) await refreshStatus() }
 const pasteClipboard = async () => {
   const owner = terminal.sessionId.value
   if (!owner || terminal.status.value !== 'running') return
@@ -179,11 +207,11 @@ const mobileEnter = event => {
 const updateViewport = () => { viewportHeight.value = `${window.visualViewport?.height || window.innerHeight}px` }
 watch([() => route.params.id, () => route.query.apiIndex], () => { terminal.dispose(); back() })
 watch(showMenu, open => { if (open) pendingAccess = false }, { flush: 'sync' })
-watch(sessionId, () => { ctrl.value = alt.value = false; clearPasteDraft() }, { flush: 'sync' })
+watch(sessionId, () => { ctrl.value = alt.value = false; clearPasteDraft(); clearComposer() }, { flush: 'sync' })
 watch([status, errorCode, trans], ([state]) => {
   if (state === 'running') {
     connected.value = true
-  } else clearPasteDraft()
+  } else { clearPasteDraft(); clearComposer() }
   dismissedNotice.value = ''
 }, { flush: 'sync' })
 onMounted(() => {
@@ -228,13 +256,20 @@ onBeforeUnmount(() => {
 .terminal-paste-draft { display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; min-height: 0; font-size: 13px; }
 .terminal-paste-draft textarea { width: 100%; min-height: 44px; height: 72px; max-height: 20dvh; resize: none; font: 14px/1.4 var(--terminal-font, monospace); }
 .terminal-paste-draft > div { display: flex; gap: 4px; }
+.terminal-composer { display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; min-height: 0; font-size: 13px; }
+.terminal-page .terminal-composer textarea.form-input { width: 100%; height: clamp(48px, calc(var(--terminal-viewport) * .15), 72px); min-height: 48px; resize: none; padding-block: 3px; font: 16px/1.25 var(--terminal-font, monospace); }
+.terminal-composer-warning { margin: 0; color: var(--cf-muted); font-size: 12px; line-height: 1.4; }
+.terminal-composer-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .terminal-toolbar { max-height: 65%; overflow-y: auto; }
 .terminal-bottom { position: absolute; right: 8px; bottom: 8px; gap: 4px; }
 .terminal-toolbar { display: flex; flex-direction: column; gap: 4px; padding: 4px; flex-shrink: 0; min-width: 0; border-top: 1px solid var(--cf-border); }
 .terminal-input-row, .terminal-key-controls { display: flex; flex-shrink: 0; gap: 4px; align-items: center; min-width: 0; }
+.terminal-toolbar-tools { display: contents; }
+.terminal-composing { overflow: hidden; }
+.terminal-composing .terminal-toolbar-tools { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow-y: auto; }
 .terminal-readonly { display: grid; grid-template-columns: 44px minmax(0, 1fr); }
 .terminal-readonly .terminal-input-row { display: contents; }
-.terminal-readonly .terminal-mobile-input, .terminal-readonly .terminal-input-row > .btn:last-child { display: none; }
+.terminal-readonly .terminal-mobile-input, .terminal-readonly [data-terminal-composer-toggle], .terminal-readonly .terminal-input-row > .btn:last-child { display: none; }
 .terminal-readonly [data-terminal-keys] { grid-column: 1; grid-row: 1; }
 .terminal-readonly .terminal-notice { grid-column: 2; grid-row: 1; }
 .terminal-readonly .terminal-key-controls { grid-column: 1 / -1; grid-row: 2; }
@@ -261,6 +296,9 @@ onBeforeUnmount(() => {
 .terminal-menu-panel .btn, .terminal-menu-panel .form-select { min-height: 44px !important; height: auto !important; white-space: normal; }
 .terminal-menu-panel label { display: flex; flex-direction: column; gap: 6px; }
 .terminal-menu-panel .terminal-session { color: var(--cf-muted); font-size: 13px; overflow-wrap: anywhere; }
+.terminal-menu-panel .terminal-font-size > div { display: flex; align-items: center; gap: 4px; }
+.terminal-menu-panel .terminal-font-size .btn { min-width: 44px; }
+.terminal-menu-panel .terminal-font-size output { min-width: 40px; text-align: center; }
 .terminal-menu-panel summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 .terminal-menu-panel .terminal-risk { margin: 0; font-size: 13px; line-height: 1.6; color: var(--cf-muted); }
 </style>

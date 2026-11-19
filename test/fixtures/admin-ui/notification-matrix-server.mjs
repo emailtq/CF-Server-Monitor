@@ -18,6 +18,7 @@ export async function createServer(options) {
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/successor/stage1'));
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/successor/stage2'));
   evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/round7/android-keyboard'));
+  evidenceRoots.push(path.join(root, '.planning/2026-11-13-admin-ui-refinement/terminal-netcatty/stage1-developer'));
   evidenceRoots.push(path.join(os.tmpdir(), 'cfsm-admin-ui-evidence'));
   assert.ok(evidenceRoots.some(base => {
     const relative = path.relative(base, realOut);

@@ -28,6 +28,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
   const sessionId = ref('')
   const finalOutput = ref('')
   const readingHistory = ref(false)
+  const fontSize = ref(14)
   let epoch = 0
   let renderEpoch = 0
   let drainUntil = 0
@@ -354,6 +355,37 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     screen.paste(text)
     return true
   }
+  const submitPaste = text => {
+    if (status.value !== 'running' || !sessionId.value || ws?.readyState !== 1 || !screen || screen.options.disableStdin || !input) return false
+    // Reserve payload, possible bracketed-paste delimiters, and Return together.
+    const limit = input.length - pendingInput - 13
+    const size = inputBytes(text, limit)
+    if (limit < 0 || size > limit) {
+      errorCode.value = 'terminal_input_overflow'
+      return false
+    }
+    if (size + 13 > TERMINAL_LIMITS.creditBytes - (sentInput - ackedInput) - pendingInput) {
+      errorCode.value = 'terminal_input_wait_credit'
+      return false
+    }
+    screen.paste(text)
+    if (!sendInput('\r')) return false
+    return true
+  }
+  const sendVirtualKey = key => {
+    if (status.value !== 'running' || !screen) return false
+    const application = screen.modes.applicationCursorKeysMode
+    const bytes = { ArrowUp: application ? '\x1bOA' : '\x1b[A', ArrowDown: application ? '\x1bOB' : '\x1b[B', Backspace: '\x7f' }[key]
+    return bytes ? sendInput(bytes) : false
+  }
+  const setFontSize = value => {
+    if (!screen) return fontSize.value
+    const next = Math.max(10, Math.min(32, Number(value) || 14))
+    fontSize.value = next
+    screen.options.fontSize = next
+    fitScreen()
+    return next
+  }
   function onPaste(event) {
     event.preventDefault()
     event.stopImmediatePropagation()
@@ -422,6 +454,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
         historyDispose = attachHistory()
       }
       if (retained) { renderEpoch++; cancelTimer('drain'); drainUntil = 0 }
+      setFontSize(14)
       refreshTheme()
       const rendering = renderEpoch
       fitScreen()
@@ -544,7 +577,7 @@ export function useTerminal({ serverId, apiIndex = 0 }) {
     channel.onmessage = event => { if (event.data?.type === 'logout') logoutEvent() }
   }
   return {
-    status, errorCode, sessionId, finalOutput, readingHistory, open, resize, close, dispose, sendInput, paste, refreshTheme, scrollToBottom,
+    status, errorCode, sessionId, finalOutput, readingHistory, fontSize, open, resize, close, dispose, sendInput, paste, submitPaste, sendVirtualKey, setFontSize, refreshTheme, scrollToBottom,
     focus: () => screen?.focus(),
     copySelection: () => screen?.hasSelection()
       ? copyTextToClipboard(screen.getSelection())

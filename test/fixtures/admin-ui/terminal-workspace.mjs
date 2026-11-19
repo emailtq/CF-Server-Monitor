@@ -6,6 +6,7 @@ import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import en from '../../../src/frontend/locales/en.js';
 import { connectionChecks, refinementChecks, actualThumbChecks } from './terminal-refinement-checks.mjs';
+import { inputComfortChecks } from './terminal-input-comfort-checks.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
@@ -16,13 +17,21 @@ const out = process.env.TERMINAL_WORKSPACE_REPORT_DIR || fs.mkdtempSync(path.joi
 fs.mkdirSync(out, { recursive: true });
 const report = { checks: [], errors: [], actions: [], inputs: [], resizes: [], sockets: 0, ack: 0, outputBytes: 0, realXterm: true, syntheticPeer: true, physicalDevice: false };
 let server, browser, page, context, socket, session = 0;
+let inputPeer;
+const inputCredit = {
+  hold: () => { inputPeer.holdAck = true; return inputPeer.received; },
+  received: () => inputPeer.received,
+  release: bytes => inputPeer.ack(bytes),
+  resume: () => { inputPeer.holdAck = false; inputPeer.ack(inputPeer.received); }
+};
 const refinement = process.env.TERMINAL_REFINEMENT === '1';
 const thumbOnly = process.env.TERMINAL_THUMB_ONLY === '1';
+const comfortOnly = process.env.TERMINAL_INPUT_COMFORT_ONLY === '1';
 const firstRemote = process.env.TERMINAL_REMOTE_OUTPUT_FILE ? fs.readFileSync(process.env.TERMINAL_REMOTE_OUTPUT_FILE) : Buffer.from('FIRST REMOTE LINE\r\n');
 report.remoteSource = process.env.TERMINAL_REMOTE_OUTPUT_FILE ? 'actual Go Linux PTY stdout probe; not an Alpine SSH login' : 'synthetic peer transcript';
 let releaseCreating, releaseStarting;
-const creatingGate = refinement ? new Promise(resolve => { releaseCreating = resolve; }) : Promise.resolve();
-const startingGate = refinement ? new Promise(resolve => { releaseStarting = resolve; }) : Promise.resolve();
+const creatingGate = refinement && !comfortOnly ? new Promise(resolve => { releaseCreating = resolve; }) : Promise.resolve();
+const startingGate = refinement && !comfortOnly ? new Promise(resolve => { releaseStarting = resolve; }) : Promise.resolve();
 const check = async (name, fn) => {
   try { await fn(); report.checks.push({ name, pass: true }); console.log('PASS ' + name); }
   catch (error) { report.errors.push({ name, error: error.stack }); console.error('FAIL ' + name + ': ' + error.message); }
@@ -53,7 +62,8 @@ try {
   await context.addInitScript(() => {
     window.fixtureAck = 0;
     window.fixtureNativeClipboard = navigator.clipboard;
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: () => new Promise((resolve, reject) => { window.clipboardResolve = resolve; window.clipboardReject = reject; }), writeText: async text => { window.copied = text; } } });
+    window.fixtureClipboard = { readText: () => new Promise((resolve, reject) => { window.clipboardResolve = resolve; window.clipboardReject = reject; }), writeText: async text => { window.copied = text; } };
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: window.fixtureClipboard });
   });
   await context.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url());
@@ -76,9 +86,14 @@ try {
     report.sockets++;
     socket = ws;
     await page.evaluate(() => { window.fixtureAck = 0; });
-    let consumed = 0;
+    const peer = inputPeer = { received: 0, holdAck: false, ack: bytes => ws.send(JSON.stringify({ type: 'ack', bytes })) };
     ws.onMessage(async data => {
-      if (typeof data !== 'string') { consumed += data.length; report.inputs.push(Buffer.from(data).toString()); ws.send(JSON.stringify({ type: 'ack', bytes: consumed })); return; }
+      if (typeof data !== 'string') {
+        peer.received += data.length;
+        report.inputs.push(Buffer.from(data).toString());
+        if (!peer.holdAck) peer.ack(peer.received);
+        return;
+      }
       const frame = JSON.parse(data);
       if (frame.type === 'ack') { report.ack = frame.bytes; await page.evaluate(bytes => { window.fixtureAck = bytes; }, frame.bytes).catch(() => {}); }
       if (frame.type === 'resize') report.resizes.push(frame);
@@ -93,12 +108,14 @@ try {
   page.on('console', message => { if (message.type() === 'error' || message.type() === 'warning') (report.console || (report.console = [])).push({ type: message.type(), text: message.text() }); });
   page.on('pageerror', error => report.errors.push({ name: 'pageerror', error: error.stack }));
   await page.goto(`${origin}/admin#/admin/terminal/node-a?apiIndex=0`);
-  if (refinement) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report, socket: () => socket, output, menu, firstRemote });
+  if (refinement && !comfortOnly) await connectionChecks({ page, check, releaseCreating, releaseStarting, out, report, socket: () => socket, output, menu, firstRemote });
   await page.waitForFunction(() => window.fixtureScreen && !window.fixtureScreen.options.disableStdin);
-  if (thumbOnly) {
+  if (comfortOnly) {
+    await inputComfortChecks({ page, report, check, output, out, menu, closeMenu, socket: () => socket, inputCredit });
+  } else if (thumbOnly) {
     await actualThumbChecks({ page, context, report, check, state, output, out, PNG });
   } else if (refinement) {
-    await refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, PNG, socket: () => socket });
+    await refinementChecks({ page, context, report, check, state, output, menu, closeMenu, out, exports, PNG, socket: () => socket, inputCredit });
   } else {
   const cdp = await context.newCDPSession(page);
   const swipe = async (delta = 180, options = {}) => {
