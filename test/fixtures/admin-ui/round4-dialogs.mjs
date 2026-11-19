@@ -59,6 +59,7 @@ export async function round4Dialogs({ page, context, open, frames, out, report, 
             if (kind === 'group' && width < 640) {
               await (isRef ? refCdp : cdp).send('Input.imeSetComposition', { text: '分组编辑', selectionStart: 1, selectionEnd: 3 });
               await frames(); composition = await p.evaluate(() => imeTrace.events.filter(e => e.type === 'compositionstart'));
+              report.geometry.push({ kind: 'composition-owner', isRef, consumer: kind, width, events: await p.evaluate(() => imeTrace.events), state: await p.evaluate(() => ({ active: document.activeElement.outerHTML, owner: imeTrace.input.outerHTML })) });
               assert.ok(composition.some(e => e.trusted && e.active), 'exercise Chromium composition ownership, separately from physical Android/system IME');
             }
             await p.evaluate(() => { imeTrace.events.length = imeTrace.writes.length = imeTrace.scrollCalls.length = 0; });
@@ -136,6 +137,7 @@ export async function round4Dialogs({ page, context, open, frames, out, report, 
           assert.equal(await page.locator('.admin-group-picker-list input:checked').count(), 3);
         };
         await openGroup('Asia'); await page.locator('#group-name').fill('  New Asia  ');
+        report.geometry.push({ kind: 'group-save-before-click', state: await page.locator('#group-name').evaluate(el => ({ value: el.value, active: document.activeElement.outerHTML, expanded: el.getAttribute('aria-expanded') })) });
         await page.locator('.admin-dialog-group footer button[type=submit]').click();
         await page.locator('.admin-dialog-group').waitFor({ state: 'detached' });
         assert.equal(requests.length, 1);

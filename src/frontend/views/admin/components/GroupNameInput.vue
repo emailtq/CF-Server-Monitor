@@ -1,6 +1,6 @@
 <template>
-  <div ref="root" class="admin-group-combobox" :data-open="shown ? '' : undefined" @focusout="!root.contains($event.relatedTarget) && (open = false)">
-    <input :id="id" :name="inputName" ref="input" v-model="name" class="form-input" :disabled="disabled" :role="counts.size ? 'combobox' : undefined" :aria-expanded="counts.size ? shown : undefined" :aria-controls="shown ? listId : undefined" :aria-activedescendant="shown && items[active] !== undefined ? `${listId}-${active}` : undefined" :aria-autocomplete="counts.size ? 'list' : undefined" :placeholder="trans.adminUngrouped" autocomplete="off" @click="show" @input="typed = true; active = -1; open = true" @keydown="key">
+  <div ref="root" class="admin-group-combobox" :data-open="shown ? '' : undefined" @focusout="$event.relatedTarget && !root.contains($event.relatedTarget) && (open = false)">
+    <input :id="id" :name="inputName" ref="input" v-model="name" class="form-input" :disabled="disabled" :role="counts.size ? 'combobox' : undefined" :aria-expanded="counts.size ? shown : undefined" :aria-controls="shown ? listId : undefined" :aria-activedescendant="shown && items[active] !== undefined ? `${listId}-${active}` : undefined" :aria-autocomplete="counts.size ? 'list' : undefined" :placeholder="trans.adminUngrouped" autocomplete="off" @click="show" @input="typed = true; active = -1; open = true; reveal()" @keydown="key">
     <button v-if="counts.size" type="button" tabindex="-1" :disabled="disabled" :aria-label="trans.adminChooseGroup" @pointerdown.prevent="shown ? open = false : (input.focus({ preventScroll: true }), show())"><AdminIcon name="chevron-down" :class="{ 'is-open': shown }" /></button>
     <Transition name="admin-group-popover">
       <div v-if="shown" ref="menu" class="admin-group-options" :style="menuStyle" @mousedown.prevent>
@@ -31,7 +31,7 @@ const matches = computed(() => [...counts.value.keys()].filter(group => group.to
 const items = computed(() => query.value ? matches.value : [...matches.value, ''])
 const fresh = computed(() => typed.value && !!name.value.trim() && !counts.value.has(name.value.trim()))
 const shown = computed(() => !props.disabled && open.value && counts.value.size > 0 && (matches.value.length > 0 || fresh.value))
-const show = () => { typed.value = false; active.value = Math.max(0, [...counts.value.keys(), ''].indexOf(name.value.trim())); open.value = true }
+const show = () => { typed.value = false; active.value = Math.max(0, [...counts.value.keys(), ''].indexOf(name.value.trim())); open.value = true; reveal() }
 const pick = group => { name.value = group; typed.value = false; open.value = false }
 const position = () => {
   if (!shown.value || !menu.value) return
@@ -40,6 +40,14 @@ const position = () => {
   const below = bottom - rect.bottom - 4
   const height = Math.max(0, Math.min(menu.value.scrollHeight + 2, 250, below))
   menuStyle.value = { left: `${rect.left}px`, top: `${rect.bottom + 4}px`, width: `${rect.width}px`, maxHeight: `${height}px`, transformOrigin: 'top', visibility: below >= 10 ? undefined : 'hidden' }
+}
+const reveal = async () => {
+  await nextTick(); position()
+  // Measure layout after positioning, not the popover's animated transform.
+  await nextTick()
+  if (!shown.value || !menu.value) return
+  root.value.dispatchEvent(new CustomEvent('admin-picker-ready', { bubbles: true }))
+  position()
 }
 const key = event => {
   if (event.isComposing || event.keyCode === 229) return

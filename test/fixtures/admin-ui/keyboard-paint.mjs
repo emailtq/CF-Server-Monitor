@@ -23,7 +23,7 @@ export async function keyboardPaint({ page, context, open, frames, report, shot 
         await open(kind);
         const input = page.locator(field).first(), menu = page.locator(popup).first();
         await (mobile ? input.tap() : input.click()); await menu.waitFor();
-        await menu.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)));
+        await page.waitForFunction(popup => document.querySelector(popup)?.getAnimations().every(animation => animation.playState !== 'running'), popup);
         await frames(page);
         const baseline = await input.evaluate(el => {
           window.paintOwner = document.activeElement; window.paintInput = el; window.paintFocus = [];
@@ -136,6 +136,118 @@ export async function keyboardPaint({ page, context, open, frames, report, shot 
         await page.locator('.admin-dialog-add').waitFor(); await frames(page);
         assert.equal(await page.evaluate(() => initialInput === document.activeElement), true, 'AdminDialog must not replace an already-established input focus with X');
         assert.deepEqual(await page.evaluate(() => initialFocus), []);
+      });
+      await check(`dialog ${stem}: minimal height transition and null blur preserve the open group search`, async () => {
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        await open('edit');
+        const group = page.locator('[name=edit_server_group]');
+        await (mobile ? group.tap() : group.click());
+        await page.locator('.admin-group-options').waitFor();
+        const transition = await page.locator('.admin-dialog').evaluate(el => {
+          const css = getComputedStyle(el);
+          return { property: css.transitionProperty, duration: css.transitionDuration, easing: css.transitionTimingFunction };
+        });
+        assert.equal(transition.property, 'max-height');
+        assert.equal(transition.duration, '0.2s');
+        assert.equal(transition.easing, 'ease');
+        if (mobile) {
+          await page.evaluate(() => {
+            window.heightFrames = []; window.heightDone = false;
+            const section = document.querySelector('.admin-dialog');
+            const frame = () => { heightFrames.push(section.getBoundingClientRect().height); if (!heightDone) requestAnimationFrame(frame); };
+            requestAnimationFrame(frame);
+          });
+          await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 400, deviceScaleFactor: 1, mobile });
+          await page.waitForFunction(() => document.querySelector('.admin-dialog').getAnimations().every(a => a.playState === 'finished') && heightFrames.length > 2);
+          await page.evaluate(() => heightDone = true);
+          const heights = await page.evaluate(() => heightFrames);
+          assert.ok(heights.some(value => value > 369 && value < 811), 'a native layout resize paints intermediate heights, not just the final 368px');
+          report.traces.push({ kind: 'native-layout-height-transition', stem, heights });
+          await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
+          await page.waitForFunction(() => document.querySelector('.admin-dialog').getAnimations().every(a => a.playState === 'finished'));
+        }
+        await group.evaluate(el => el.blur());
+        await frames(page);
+        assert.equal(await group.getAttribute('aria-expanded'), 'true', 'null relatedTarget is not an outside focus interaction');
+        await group.focus();
+        await page.keyboard.press('Escape');
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        assert.equal(await page.locator('.admin-dialog').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
+      });
+      if (mobile) await check(`alert ${stem}: a lower input and the first down-only option remain usable after layout shrink`, async () => {
+        await open('alert');
+        const input = page.locator('.admin-picker-summary').first();
+        await input.tap();
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 300, deviceScaleFactor: 1, mobile });
+        await frames(page);
+        const state = await input.evaluate(el => {
+          const menu = el.parentElement.querySelector('.admin-picker-menu'), row = menu.querySelector('[role=option]');
+          const trigger = el.getBoundingClientRect(), option = row.getBoundingClientRect(), port = el.closest('.admin-dialog-scroll').getBoundingClientRect();
+          return { focused: document.activeElement === el, trigger: [trigger.top, trigger.bottom], option: [option.top, option.bottom], port: [port.top, port.bottom], menu: getComputedStyle(menu).visibility };
+        });
+        assert.equal(state.focused, true); assert.equal(state.menu, 'visible');
+        assert.ok(state.trigger[0] >= state.port[0] && state.option[1] <= state.port[1] - 4, 'the shared reveal must retain a selectable row below the input, not just the count or menu border');
+        report.traces.push({ kind: 'lower-picker-layout-reveal', stem, state });
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
+        await frames(page);
+        await input.press('ArrowDown'); await input.press('End');
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 300, deviceScaleFactor: 1, mobile });
+        await frames(page);
+        const scrolled = await input.evaluate(el => {
+          const menu = el.parentElement.querySelector('.admin-picker-menu'), list = menu.querySelector('.admin-picker-options');
+          return { height: list.clientHeight, rowHeight: list.querySelector('[role=option]').offsetHeight, focused: document.activeElement === el };
+        });
+        assert.equal(scrolled.focused, true);
+        assert.ok(scrolled.height >= scrolled.rowHeight, 'native list scrolling cannot remove the reserved selectable row on the next resize');
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
+      });
+      if (mobile) await check(`pickers ${stem}: opening after the viewport has settled reveals one down-only row without changing focus`, async () => {
+        let previousKind
+        for (const [kind, selector, index] of [['alert', '.admin-picker-summary', 0], ['alert', '.admin-picker-summary', 1], ['edit', '[name=edit_server_group]', 0], ['group', '#group-name', 0]]) {
+          if (previousKind !== kind) {
+            await open(kind);
+            await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 300, deviceScaleFactor: 1, mobile });
+            await page.waitForFunction(() => document.querySelector('.admin-dialog').getAnimations().every(a => a.playState === 'finished'));
+          } else await page.keyboard.press('Escape'); // Close the overlapping menu, keeping the keyboard/input focus before switching fields.
+          previousKind = kind;
+          const input = page.locator(selector).nth(index);
+          // Native scrolling first reveals the trigger at the port's bottom; opening cannot rely on a later resize.
+          await input.evaluate(el => {
+            const owner = el.closest('.admin-dialog-scroll'), port = owner.getBoundingClientRect(), field = el.getBoundingClientRect();
+            owner.scrollTop += field.bottom - port.bottom + 12;
+            window.settledPickerInput = el; window.settledPickerFocus = [];
+            el.addEventListener('focusout', event => { if (event.target === settledPickerInput) settledPickerFocus.push({ trusted: event.isTrusted, related: event.relatedTarget?.tagName }); });
+          });
+          await frames(page);
+          const before = await input.evaluate(el => { const r = el.getBoundingClientRect(); return { viewport: innerHeight, top: r.top, bottom: r.bottom }; });
+          await input.tap(); await frames(page);
+          const state = await input.evaluate(el => {
+            const menu = el.parentElement.querySelector('.admin-picker-menu, .admin-group-options'), row = menu?.querySelector('[role=option]');
+            const rect = el => { const r = el.getBoundingClientRect(); return [r.top, r.bottom, r.height]; };
+            return { viewport: innerHeight, same: el === settledPickerInput, focused: document.activeElement === el, input: rect(el), menu: menu && rect(menu), row: row && rect(row), port: rect(el.closest('.admin-dialog-scroll')), visible: menu && getComputedStyle(menu).visibility, focusout: settledPickerFocus };
+          });
+          report.traces.push({ kind: 'already-shrunk-picker-open', stem, consumer: kind, index, before, state });
+          assert.equal(state.viewport, before.viewport); assert.equal(state.same && state.focused, true); assert.deepEqual(state.focusout, []);
+          assert.equal(state.visible, 'visible'); assert.ok(state.row, 'a real selectable option must be rendered');
+          assert.ok(state.input[0] >= state.port[0] && state.row[1] <= state.port[1] - 3, 'opening on a stable short viewport reveals the complete first option, not a clipped menu border');
+          assert.ok(Math.abs(state.menu[0] - state.input[1] - 4) < 1, 'opening retains the four-pixel downward anchor');
+          const point = await input.evaluate(el => {
+            const owner = el.closest('.admin-dialog-scroll'), field = el.getBoundingClientRect(), port = owner.getBoundingClientRect();
+            owner.scrollTop += field.bottom - port.bottom + 12;
+            const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+          });
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+          await frames(page);
+          const reopened = await input.evaluate(el => {
+            const row = el.parentElement.querySelector('[role=option]'), option = row.getBoundingClientRect(), port = el.closest('.admin-dialog-scroll').getBoundingClientRect();
+            return { focused: document.activeElement === el, bottom: option.bottom, portBottom: port.bottom };
+          });
+          assert.equal(reopened.focused, true); assert.ok(reopened.bottom <= reopened.portBottom - 3, 're-clicking an already-open picker after native body scrolling also reveals the row');
+          report.traces.push({ kind: 'already-open-scrolled-picker', stem, consumer: kind, index, reopened });
+          await shot(page, `settled-${kind}-${index}-${stem}`);
+        }
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
       });
     } finally { await cdp.detach(); }
   }

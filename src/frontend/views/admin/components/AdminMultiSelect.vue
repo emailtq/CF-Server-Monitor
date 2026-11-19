@@ -72,10 +72,16 @@ const position = (closeOffscreen = false) => {
   }
 }
 const show = async () => {
-  if (open.value) return
-  window.dispatchEvent(new CustomEvent('admin-picker-open', { detail: menuId }))
-  open.value = true
+  if (!open.value) {
+    window.dispatchEvent(new CustomEvent('admin-picker-open', { detail: menuId }))
+    open.value = true
+  }
   await nextTick(); position()
+  // Measure wrapped options only after the menu's positioned width has reached layout.
+  await nextTick()
+  if (!open.value || !menu.value) return
+  root.value.dispatchEvent(new CustomEvent('admin-picker-ready', { bubbles: true }))
+  position()
 }
 const toggle = () => { if (open.value) close(); else { trigger.value?.focus({ preventScroll: true }); show() } }
 const keydown = async event => {

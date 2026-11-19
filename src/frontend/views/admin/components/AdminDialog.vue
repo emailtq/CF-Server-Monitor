@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition :name="size === 'terminal' ? 'terminal-menu' : size === 'group' ? 'admin-group-dialog' : undefined" :css="size === 'terminal' || size === 'group'" @before-leave="retainLeavingDialog" @after-leave="finishLeave">
     <div v-if="open" class="admin-ui admin-dialog-overlay" @click.self="requestClose">
-      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || ($slots.description ? `${titleId}-description` : undefined)" :aria-busy="busy" tabindex="-1">
+      <section ref="dialog" class="admin-dialog" :class="`admin-dialog-${size}`" role="dialog" aria-modal="true" :aria-labelledby="titleId" :aria-describedby="descriptionId || ($slots.description ? `${titleId}-description` : undefined)" :aria-busy="busy" tabindex="-1" @admin-picker-ready="revealFocusedField">
         <button type="button" class="admin-dialog-close" :disabled="busy" :aria-label="t('close')" @click="requestClose"><AdminIcon name="x" /></button>
         <div class="admin-dialog-scroll">
         <header class="admin-dialog-head">
@@ -34,7 +34,7 @@ const titleId = `admin-dialog-${++nextId}`
 let previousFocus = null
 let registered = false
 let headerObserver
-let layoutWidth = 0, layoutHeight = 0
+let layoutObserver
 // Vue clears the section ref before an animated leave removes its DOM.
 let leavingDialog = null
 const retainLeavingDialog = element => { if (['terminal', 'group'].includes(props.size)) leavingDialog = element.querySelector('.admin-dialog') }
@@ -48,21 +48,27 @@ const updateTrackStart = () => {
 }
 watch(dialog, section => {
   headerObserver?.disconnect()
+  layoutObserver?.disconnect()
   if (!section) return
   headerObserver = new ResizeObserver(updateTrackStart)
   headerObserver.observe(section.querySelector('h2'))
   headerObserver.observe(section.querySelector('.admin-dialog-close'))
   updateTrackStart()
+  layoutObserver = new ResizeObserver(revealFocusedField)
+  layoutObserver.observe(section.querySelector('.admin-dialog-scroll'))
 })
-// Match minimal: CSS owns the layout viewport; the browser owns soft-keyboard panning.
-const revealOnLayoutResize = () => {
-  if (layoutWidth === window.innerWidth && layoutHeight === window.innerHeight) return
-  layoutWidth = window.innerWidth; layoutHeight = window.innerHeight
+// CSS owns the viewport transition; the scroll owner reveals inputs on resize and menu readiness.
+const revealFocusedField = () => {
   const section = dialogElement(), active = document.activeElement
   if (!topmost() || !section?.contains(active) || !active.matches('input,textarea')) return
-  const field = active.getBoundingClientRect(), port = section.getBoundingClientRect()
-  // Keep CF's focused-field reachability on a real window resize, never on visual-only IME panning.
-  if (field.top < port.top + 4 || field.bottom > port.bottom - 4) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  const owner = section.querySelector('.admin-dialog-scroll'), field = active.getBoundingClientRect(), port = owner.getBoundingClientRect()
+  const picker = active.closest('.admin-picker[data-open], .admin-group-combobox[data-open]')
+  const menu = picker?.querySelector('.admin-picker-menu, .admin-group-options')
+  const row = menu?.querySelector('[role=option], .admin-group-fresh, .admin-picker-empty')
+  // The explicit down-only menu needs its chrome and one row; reserve that space in the existing scroll owner.
+  const below = menu && row ? row.offsetTop + row.offsetHeight + menu.clientTop + 4 : 0
+  if (field.top < port.top + 4) owner.scrollTop += field.top - port.top - 4
+  else if (field.bottom + below > port.bottom - 4) owner.scrollTop += Math.min(field.bottom + below - port.bottom + 4, field.top - port.top - 4)
 }
 const topmost = () => dialogs.at(-1) === titleId
 const focusable = () => [...(dialogElement()?.querySelectorAll('button,input,select,textarea,a[href],[tabindex]') || [])].filter(e => !e.matches(':disabled') && e.tabIndex >= 0 && e.getClientRects().length)
@@ -87,10 +93,10 @@ const release = () => {
   dialogs.splice(dialogs.indexOf(titleId), 1)
   registered = false
   headerObserver?.disconnect()
+  layoutObserver?.disconnect()
   leavingDialog = null
   document.removeEventListener('keydown', keydown, true)
   document.removeEventListener('focusin', focusin)
-  window.removeEventListener('resize', revealOnLayoutResize)
   if (!dialogs.length) document.body.classList.remove('admin-dialog-open')
   if (wasTop && previousFocus?.isConnected) previousFocus.focus()
 }
@@ -105,8 +111,6 @@ watch(() => props.open, async open => {
   previousFocus = document.activeElement
   dialogs.push(titleId); registered = true
   document.body.classList.add('admin-dialog-open')
-  layoutWidth = window.innerWidth; layoutHeight = window.innerHeight
-  window.addEventListener('resize', revealOnLayoutResize)
   await nextTick()
   if (!registered) return
   document.addEventListener('keydown', keydown, true)

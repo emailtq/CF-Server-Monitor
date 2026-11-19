@@ -122,9 +122,15 @@ export async function round3Dialogs({ page, context, open, frames, out, report, 
             assert.equal(g.section.width, before.section.width, kind + ': keyboard must not squeeze form width');
             assert.equal(g.active.id, before.active.id); assert.equal(g.active.tag, 'INPUT');
             assert.equal(g.active.start, before.active.start); assert.equal(g.active.end, before.active.end);
-            assert.ok(g.section.top >= -.5 && g.section.bottom <= g.viewport.height + .5);
             assert.ok(g.active.rect.top >= g.section.top - .5 && g.active.rect.bottom <= g.section.bottom + .5, `${kind}: focused input must remain visible at ${h}px`);
-            if (h === 300) await screenshot(`keyboard-${kind}-${width}-${dark}`);
+            if (h === 300 || h === 844) {
+              // Minimal's 200ms max-height transition may cross viewport edges while it is running.
+              await page.waitForFunction(() => document.querySelector('.admin-dialog').getAnimations().every(a => a.playState === 'finished'));
+              const settled = await sample(page); trace.push({ ...settled, settled: true });
+              assert.ok(settled.section.top >= -.5 && settled.section.bottom <= settled.viewport.height + .5);
+              assert.ok(settled.active.rect.top >= settled.section.top - .5 && settled.active.rect.bottom <= settled.section.bottom + .5);
+              if (h === 300) await screenshot(`keyboard-${kind}-${width}-${dark}`);
+            }
           }
         }
         await screenshot(`keyboard-restored-${width}-${dark}`);
