@@ -37,6 +37,7 @@
   - [2.5](#25-get-apiws---websocket-实时推送) [`GET /api/ws`](#25-get-apiws---websocket-实时推送) [- WebSocket 实时推送](#25-get-apiws---websocket-实时推送)
   - [2.6](#26-get-theme---获取主题商店数据) [`GET /theme`](#26-get-theme---获取主题商店数据) [- 获取主题商店数据](#26-get-theme---获取主题商店数据)
   - [2.7](#27-前端与主题代理) [前端与主题代理](#27-前端与主题代理)
+  - [2.8 极简探针主题兼容 API](#28-极简探针主题兼容-api)
 - [3. 管理端 API（鉴权）](#3-管理端-api鉴权)
   - [3.1](#31-post-adminapi---管理操作入口) [`POST /admin/api`](#31-post-adminapi---管理操作入口) [- 管理操作入口](#31-post-adminapi---管理操作入口)
   - [3.2](#32-action-login---登录) [`action: login`](#32-action-login---登录) [- 登录](#32-action-login---登录)
@@ -1105,6 +1106,26 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 **预览鉴权**：
 
 `/?theme_url=...` 只在已登录管理员通过 `start_theme_preview` 获取临时授权后生效。授权 cookie 有效期 10 分钟；未授权直接访问会返回 `401 Theme preview requires admin login`。
+
+***
+
+### 2.8 极简探针主题兼容 API
+
+实现以 Monitor v1.5.2 和 Default v1.4.3 的公开读取协议为基线。此接口默认关闭。仅当 `MONITOR_COMPAT_HOST` 配置为独立、完整的 DNS 主机名（不带协议、端口或通配符），且请求已由 Cloudflare 交给 Worker 并精确匹配该 hostname 时，才使用下列路由。不识别转发头，也不以 Cookie、UA 或 `?gzip` 区分协议。该主机上的其他路径在 Worker 内返回 `404`，不回落到 CF 前台、后台、Agent 或终端；Cloudflare 静态资源优先规则仍由部署配置决定。原站 `/api/ws` 继续使用 §2.5 的 CF 协议。此阶段不绑定生产主机、不安装或切换主题。
+
+接口仅接受 `GET`，使用原生 JSON，不包裹 CF 的 `status/data`。除 `/api/me` 外，站点必须明确公开且未启用全局 Turnstile；私有站返回 `401`，开启全局 Turnstile 返回 `403`，读取失败返回 `503`。不接受 CF 管理员凭据，也不提供私有只读会话或人机验证。响应不开放浏览器跨域读取。
+
+| 路径 | 成功响应 |
+| --- | --- |
+| `/api/me` | `{"authed":false,"github":false,"public_page":true,"site_name":"站点名称","history_days":1}`；不能匿名读取（含配置读取失败）时 `public_page` 为 `false`。 |
+| `/api/nodes` | `{"nodes":[…],"admin":false}`；仅含可见节点，按 CF 排序。正整数 `id` 与节点 UUID 持久映射，删除后不分配给其他节点。 |
+| `/api/nodes/:id/metrics?hours=&points=&series=` | `{"metrics":[…],"ping":[…],"probes":{},"loss":{},"step":60}`；`step` 为实际采样步长（秒）。先从节点快照取得 ID；映射表初始化之前返回 `503`，之后隐藏、删除或无映射的节点返回 `404`。`hours` 默认 6、限于 1–24；`points` 默认 240、限于 60–240；省略 `series` 返回两类数据，`metrics` 或 `ping` 只返回所选类别。无效数字或重复参数返回 `400`，有效范围内无样本返回空数组，查询繁忙返回 `503`。 |
+| `/api/themes/default/config` | `{}`，由 Default 主题使用自己的默认值；其他主题 `short` 未开放，不读取 CF 全局 `theme_options`。 |
+| `/api/ws` | WebSocket `101`。首帧及其后约每 2 秒为完整的 `/api/nodes` 快照，编码为文本 JSON。接受 `?gzip`，但仍发送文本；无需发送订阅消息，客户端应用消息不会修改订阅，不发送 CF `hello` 或增量。 |
+
+**数据差异：**快照使用 CF 的 5 分钟在线定义；`last_seen` 和历史 `ts` 用 Unix 秒，容量、速率及累计流量分别用字节、字节/秒及字节。离线或缺少必需采样时 `metrics` 为 `null`。地址和虚拟化信息不对外提供；计费及流量遵守 CF 展示开关，累计数据用 CF Agent 计数，不模拟 Monitor 的历史累计、日流量或周期开始时间。历史资源点来自 CF D1 的已有采样，不表示精确均值或峰值；探测点包含 `task_id`、`ts`、`latency`（毫秒；明确超时为 `null`）及可用的采样 `loss`，`probes` 映射任务 ID 到公开标签；汇总 `loss` 保持 `{}`，不估算窗口丢包和中位数。
+
+**实时限制：**仅允许无 `Origin` 的客户端或 `Origin` 精确等于请求自己的 origin（含协议及端口）；其他显式 origin（含 `null`）拒绝，普通 GET 返回 `426`。全局广播对象最多接收 64 个此协议连接（含正在握手的连接）；满额时在读取权限前返回 `503`。其余握手读取当前公开权限。推送以单一共享时钟合并 D1 基线和较新的实时样本；活跃期间约每 10 秒更新一次权限、节点可见性及展示数据（到期后在下一帧前重读，不继续发送过期快照）。关闭最后一个兼容连接时停止定时刷新。站点变为私有或启用 Turnstile 时关闭现有连接（`1008`）；数据读取或推送失败关闭为 `1013`，客户端可退避重连。此专用流使用标准 WebSocket，订阅活跃时会保持 Durable Object 运行；不占用 Agent 授权 alarm，也不改变原站的 WebSocket 休眠设置。
 
 ***
 

@@ -161,8 +161,7 @@ function projectNode(server, id, persisted, latest, display, now) {
   };
 }
 
-export async function loadMonitorCompatSnapshot(env, { display, latestReportUpdates, now = Date.now() }) {
-  const db = env.DB;
+export async function loadMonitorCompatBaseline(db) {
   // Re-read visibility directly; the legacy list cache may contain hidden/deleted nodes.
   const { success, results: servers } = await db.prepare(`
     SELECT id, name, sort_order, server_group, region, history_partition_id, timestamp,
@@ -171,19 +170,29 @@ export async function loadMonitorCompatSnapshot(env, { display, latestReportUpda
   `).all();
   if (!success) throw new Error('Monitor node list unavailable');
   const serverIds = servers.map(server => server.id);
-  const [persisted, realtime] = await Promise.all([
+  const [persisted, ids] = await Promise.all([
     loadLatestPersisted(db, servers),
-    // The hub supplies its already loaded updates to reuse this projection without self-fetching.
-    latestReportUpdates ?? getDurableRealtimeState(env, serverIds).then(state => [
-      ...state.latestReportUpdates, ...getWorkerLatestReportUpdates(serverIds)
-    ])
+    getMonitorCompatIds(db, serverIds)
   ]);
-  const ids = await getMonitorCompatIds(db, serverIds);
-  const latest = collectLatestSamples(realtime);
+  return { servers, serverIds, persisted, ids };
+}
+
+export function projectMonitorCompatSnapshot({ servers, persisted, ids }, { display, latestReportUpdates, now }) {
+  const latest = collectLatestSamples(latestReportUpdates);
   const nodes = servers.map(server => {
     const id = ids.get(server.id);
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('Monitor ID unavailable');
     return projectNode(server, id, persisted.get(server.id), latest.get(server.id), display, now);
   });
   return { nodes, admin: false };
+}
+
+export async function loadMonitorCompatSnapshot(env, { display, latestReportUpdates, now = Date.now() }) {
+  const baseline = await loadMonitorCompatBaseline(env.DB);
+  if (latestReportUpdates == null) {
+    const { serverIds } = baseline;
+    const realtime = await getDurableRealtimeState(env, serverIds);
+    latestReportUpdates = [...realtime.latestReportUpdates, ...getWorkerLatestReportUpdates(serverIds)];
+  }
+  return projectMonitorCompatSnapshot(baseline, { display, latestReportUpdates, now });
 }

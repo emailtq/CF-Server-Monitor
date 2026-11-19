@@ -35,7 +35,7 @@ export function migrateLatencyConfig(settings, servers, now = Date.now()) {
 
 async function readDocument(db) {
   const { success, results } = await db.prepare("SELECT key,value FROM settings WHERE key='latency_tasks' OR key GLOB 'latency_tasks:document:*' ORDER BY key").all();
-  if (!success) throw new AppError('latency_config_invalid', 503);
+  if (success === false) throw new AppError('latency_config_invalid', 503);
   const row = results.find(row => row.key === key);
   if (!row) return null;
   const header = JSON.parse(row.value);

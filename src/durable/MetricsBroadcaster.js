@@ -21,6 +21,8 @@ import { evaluateTrafficAlert } from '../services/notification.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
 import { getWssReportScheduleState, loadSiteSettings } from '../utils/settings.js';
+import { loadMonitorCompatAccess, MONITOR_COMPAT_LIVE_URL } from '../services/monitorCompatAccess.js';
+import { loadMonitorCompatBaseline, projectMonitorCompatSnapshot } from '../services/monitorCompatSnapshot.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_LEGACY_SCHEMA_VERSION,
@@ -60,6 +62,9 @@ const SERVER_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const WS_POLICY_VIOLATION = 1008;
 const WS_MESSAGE_TOO_BIG = 1009;
 const WS_TRY_AGAIN_LATER = 1013;
+const MONITOR_FRAME_MS = 2000;
+const MONITOR_REFRESH_MS = 10_000;
+const MONITOR_MAX_SOCKETS = 64;
 const AGENT_REPORT_KIND = 'agent-report';
 const AGENT_WSS_MODE_HEADER = 'X-Agent-Wss-Mode';
 const AGENT_WSS_REASON_HEADER = 'X-Agent-Wss-Reason';
@@ -301,6 +306,11 @@ export class MetricsBroadcaster {
     this.pendingFrontendBroadcasts = new Map();
     this.frontendBroadcastTimer = null;
     this.pendingFrontendBroadcastTs = 0;
+    this.monitorCompatSockets = new Set();
+    this.monitorCompatPending = 0;
+    this.monitorCompatTimer = null;
+    this.monitorCompatState = null;
+    this.monitorCompatRefresh = null;
 
     // 自动响应 ping 心跳，DO 无需被唤醒
     // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketRequestResponsePair
@@ -445,7 +455,7 @@ export class MetricsBroadcaster {
   }
 
   _getFrontendSubscriberCount() {
-    return this._getFrontendWebSockets().length;
+    return this._getFrontendWebSockets().length + this.monitorCompatSockets.size;
   }
 
   _getFrontendAllSubscriberCount() {
@@ -469,6 +479,125 @@ export class MetricsBroadcaster {
   _isWebSocketUpgrade(request) {
     const upgradeHeader = request.headers.get('Upgrade');
     return !!upgradeHeader && upgradeHeader.toLowerCase() === 'websocket';
+  }
+
+  async _refreshMonitorCompat(checkAccess = false) {
+    if (this.monitorCompatRefresh) return this.monitorCompatRefresh;
+    const previous = this.monitorCompatState;
+    if (!checkAccess && previous && Date.now() < previous.expiresAt) return 200;
+
+    this.monitorCompatRefresh = (async () => {
+      const startedAt = Date.now();
+      const { status, display } = await loadMonitorCompatAccess(this.env.DB);
+      if (status !== 200) return status;
+
+      if (previous && previous === this.monitorCompatState && Date.now() < previous.expiresAt) {
+        if (Object.keys(display).some(key => previous.display[key] !== display[key])) {
+          this.monitorCompatState = { baseline: previous.baseline, expiresAt: previous.expiresAt, display };
+        }
+      } else {
+        const baseline = await loadMonitorCompatBaseline(this.env.DB);
+        this.monitorCompatState = { baseline, expiresAt: startedAt + MONITOR_REFRESH_MS, display };
+      }
+      return this.monitorCompatState?.expiresAt > Date.now() ? 200 : 503;
+    })().catch(() => 503).then(status => {
+      if (status !== 200) this._closeMonitorCompatSockets(status);
+      return status;
+    }).finally(() => { this.monitorCompatRefresh = null; });
+    return this.monitorCompatRefresh;
+  }
+
+  _monitorCompatFrame(force = false) {
+    const current = this.monitorCompatState;
+    const now = Date.now();
+    if (!current || now >= current.expiresAt) throw new Error('Monitor snapshot expired');
+    if (force || !current.frame || now - current.frameAt >= MONITOR_FRAME_MS) {
+      this._pruneLatestReportUpdates(now);
+      current.frame = JSON.stringify(projectMonitorCompatSnapshot(current.baseline, {
+        display: current.display, latestReportUpdates: this.latestReportUpdates.values(), now
+      }));
+      current.frameAt = now;
+    }
+    return current.frame;
+  }
+
+  _forgetMonitorCompatSocket(ws) {
+    if (this.monitorCompatSockets.delete(ws) && this.monitorCompatSockets.size === 0) {
+      clearTimeout(this.monitorCompatTimer);
+      this.monitorCompatTimer = null;
+      this.monitorCompatState = null;
+    }
+  }
+
+  _closeMonitorCompatSocket(ws, status = 503) {
+    this._forgetMonitorCompatSocket(ws);
+    try {
+      if (status === 503) ws.close(WS_TRY_AGAIN_LATER, 'Snapshot unavailable');
+      else ws.close(WS_POLICY_VIOLATION, 'Public access disabled');
+    } catch (_) {}
+  }
+
+  _closeMonitorCompatSockets(status) {
+    for (const ws of this.monitorCompatSockets) this._closeMonitorCompatSocket(ws, status);
+    this.monitorCompatState = null;
+  }
+
+  _scheduleMonitorCompatFrame() {
+    if (this.monitorCompatTimer !== null || this.monitorCompatSockets.size === 0) return;
+    // One timer for all viewers; do not repurpose the Agent auth storage alarm.
+    const timer = setTimeout(async () => {
+      try {
+        if (await this._refreshMonitorCompat() !== 200 || this.monitorCompatTimer !== timer) return;
+        const frame = this._monitorCompatFrame(true);
+        for (const ws of this.monitorCompatSockets) {
+          try { ws.send(frame); } catch (_) { this._closeMonitorCompatSocket(ws); }
+        }
+      } catch (_) {
+        this._closeMonitorCompatSockets(503);
+      } finally {
+        if (this.monitorCompatTimer === timer) {
+          this.monitorCompatTimer = null;
+          this._scheduleMonitorCompatFrame();
+        }
+      }
+    }, MONITOR_FRAME_MS);
+    this.monitorCompatTimer = timer;
+  }
+
+  async _openMonitorCompatSocket(request) {
+    if (!this._isWebSocketUpgrade(request)) return new Response('Expected WebSocket upgrade request', { status: 426 });
+    if (this.monitorCompatSockets.size + this.monitorCompatPending >= MONITOR_MAX_SOCKETS) {
+      return new Response('Too many connections', { status: 503, headers: { 'Retry-After': '10', 'Cache-Control': 'no-store' } });
+    }
+    this.monitorCompatPending++;
+    try {
+      const status = await this._refreshMonitorCompat(true);
+      if (status !== 200) {
+        const error = status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Service Unavailable';
+        return Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store' } });
+      }
+      const frame = this._monitorCompatFrame();
+      const [client, server] = Object.values(new WebSocketPair());
+      // Standard sockets stay outside the hibernation group and its global CF ping/pong autoresponse.
+      server.accept();
+      server.addEventListener('close', event => {
+        this._forgetMonitorCompatSocket(server);
+        try { server.close(event.code, event.reason); } catch (_) {}
+      });
+      server.addEventListener('error', () => this._closeMonitorCompatSocket(server));
+      this.monitorCompatSockets.add(server);
+      try { server.send(frame); } catch (error) {
+        this._closeMonitorCompatSocket(server);
+        throw error;
+      }
+      this._scheduleMonitorCompatFrame();
+      if (this.monitorCompatSockets.size === 1) {
+        this.state.waitUntil(this._hintAgentRealtimeIntervals().catch(() => {}));
+      }
+      return new Response(null, { status: 101, webSocket: client });
+    } finally {
+      this.monitorCompatPending--;
+    }
   }
 
   _sendWsJson(ws, payload) {
@@ -1672,6 +1801,9 @@ export class MetricsBroadcaster {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    if (method === 'GET' && request.url === MONITOR_COMPAT_LIVE_URL) {
+      return this._openMonitorCompatSocket(request);
+    }
     if (method === 'POST' && url.origin === 'https://metrics.internal' && path === '/panel-login-event') {
       const event = await request.json();
       if (!event || Object.keys(event).some(key => !['id','occurredAt','policyRevision','targets'].includes(key)) || typeof event.id !== 'string' || !/^panel:[A-Za-z0-9-]{1,128}$/.test(event.id) || !Number.isSafeInteger(event.occurredAt) || event.occurredAt <= 0 || event.occurredAt > 8640000000000000 || !Number.isSafeInteger(event.policyRevision) || event.policyRevision < 0 || !Array.isArray(event.targets) || event.targets.length > 64) return new Response('Invalid event', { status: 400 });
@@ -1947,7 +2079,7 @@ export class MetricsBroadcaster {
     if (method === 'GET' && (path === '/health' || path.endsWith('/health'))) {
       const subscribers = this._getFrontendSubscriberCount();
       const agentSockets = this.standardAgentWebSocketCount;
-      const sockets = this.state.getWebSockets().length + agentSockets;
+      const sockets = this.state.getWebSockets().length + agentSockets + this.monitorCompatSockets.size;
       return new Response(JSON.stringify({ ok: true, subscribers, sockets, agentSockets }), {
         headers: { 'Content-Type': 'application/json' }
       });
