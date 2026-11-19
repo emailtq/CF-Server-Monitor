@@ -14,6 +14,7 @@ import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade, handleUpdateWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
+import { handleMonitorCompat } from './handlers/monitorCompat.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
 import { omitNullLossProbeFields } from './handlers/dashboard.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
@@ -197,6 +198,10 @@ export default {
     setDebug(env.DEBUG);
 
     const url = new URL(request.url);
+    // This isolates requests delivered to the Worker; Cloudflare's asset-first routing precedes fetch().
+    const monitorCompatResponse = await handleMonitorCompat(request, env, url);
+    if (monitorCompatResponse) return monitorCompatResponse;
+
     const method = request.method;
     const path = url.pathname;
 
