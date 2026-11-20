@@ -80,7 +80,7 @@ jobs:
           [assets]
           directory = "./dist"
           binding = "ASSETS"
-          run_worker_first = ["/_monitor_theme/*"]
+          run_worker_first = ["/_monitor_theme/*", "/dashboard.html"]
 
           [[d1_databases]]
           binding = "DB"
