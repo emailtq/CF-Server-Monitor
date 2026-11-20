@@ -40,3 +40,6 @@ Thumbs.db
 # Cloudflare Workers
 .wrangler/
 dist/
+!monitor-themes/**/
+!monitor-themes/**/dist/
+!monitor-themes/**/dist/**
