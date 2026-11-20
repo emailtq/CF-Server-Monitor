@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "npm run build:frontend && wrangler deploy",
+    "preview:monitor-theme": "node scripts/preview-monitor-themes.mjs",
     "tail": "wrangler tail",
     "dev:frontend": "vite",
     "build": "node scripts/build.js",
