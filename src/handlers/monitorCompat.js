@@ -9,6 +9,19 @@ export { loadMonitorCompatAccess };
 const DNS_HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const NO_STORE = { 'Cache-Control': 'no-store' };
 const MONITOR_COMPAT_THEMES = new Set(['default', 'serverstatus']);
+const MONITOR_ADMIN_GET_PATHS = new Set([
+  '/admin', '/admin/', '/api/config', '/theme'
+]);
+const MONITOR_ADMIN_POST_PATHS = new Set([
+  '/admin/api', '/updateDatabase', '/clearHistory'
+]);
+
+function isMonitorAdminRoute(request, pathname) {
+  if (MONITOR_ADMIN_GET_PATHS.has(pathname) && request.method === 'GET') return true;
+  if (MONITOR_ADMIN_POST_PATHS.has(pathname) && request.method === 'POST') return true;
+  return request.method === 'GET' &&
+    /^\/admin\/api\/terminal\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/ws$/.test(pathname);
+}
 
 function monitorCompatThemePath(pathname, theme) {
   const nodePath = /^\/node\/([1-9]\d*)$/.exec(pathname);
@@ -72,6 +85,9 @@ export async function handleMonitorCompat(request, env, url) {
   const host = env.MONITOR_COMPAT_HOST;
   if (typeof host !== 'string' || host.length > 253 || !DNS_HOSTNAME.test(host) ||
       url.hostname !== host.toLowerCase()) return null;
+
+  // Let the existing CF admin handlers enforce their auth, Turnstile, and terminal checks.
+  if (isMonitorAdminRoute(request, url.pathname)) return null;
 
   const themeResponse = await serveMonitorCompatTheme(request, env, url);
   if (themeResponse) return themeResponse;

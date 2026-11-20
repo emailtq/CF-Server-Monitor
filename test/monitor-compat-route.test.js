@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Miniflare } from 'miniflare';
 import worker from '../src/index.js';
-import { loadMonitorCompatAccess } from '../src/handlers/monitorCompat.js';
+import { handleMonitorCompat, loadMonitorCompatAccess } from '../src/handlers/monitorCompat.js';
 
 const HOST = 'theme.example.test';
 const ORIGIN = `https://${HOST}`;
@@ -58,11 +58,25 @@ test('only the configured exact hostname enters the compatibility router', async
   const response = await request(`${ORIGIN}:8443`, '/admin/', {
     MONITOR_COMPAT_HOST: HOST.toUpperCase()
   }, { headers: { Host: 'monitor.example.test', 'X-Forwarded-Host': 'monitor.example.test' } });
-  assert.equal(response.status, 404);
-  assert.equal(response.headers.get('Location'), null);
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('Location'), `${ORIGIN}:8443/admin#/admin`);
+
+  for (const [configured, origin] of [
+    [HOST, LEGACY_ORIGIN],
+    [HOST, `https://sub.${HOST}`],
+    ['other.example.test', ORIGIN]
+  ]) {
+    const url = new URL(`${origin}/not-a-monitor-route`);
+    const compat = await handleMonitorCompat(new Request(url), { MONITOR_COMPAT_HOST: configured }, url);
+    assert.equal(compat, null, `${configured} / ${origin}`);
+  }
+
+  const exactUrl = new URL(`${ORIGIN}/not-a-monitor-route`);
+  const exactCompat = await handleMonitorCompat(new Request(exactUrl), { MONITOR_COMPAT_HOST: HOST }, exactUrl);
+  assert.equal(exactCompat.status, 404);
 });
 
-test('matched host never dispatches admin, agent, legacy API, assets or unknown routes', async () => {
+test('matched host keeps agent, legacy and unknown routes isolated', async () => {
   const env = {
     MONITOR_COMPAT_HOST: HOST,
     CORS_ALLOWED_ORIGINS: LEGACY_ORIGIN,
@@ -70,10 +84,14 @@ test('matched host never dispatches admin, agent, legacy API, assets or unknown 
     get ASSETS() { assert.fail('unexpected asset fallback'); }
   };
   for (const [method, path] of [
-    ['GET', '/'], ['GET', '/admin/'], ['POST', '/admin/api'],
-    ['GET', '/admin/api/terminal/example'], ['GET', '/api/agent/terminal/example'],
+    ['GET', '/'], ['GET', '/api/agent/terminal/example'],
     ['POST', '/api/agent/register'], ['POST', '/update'], ['GET', '/update'],
-    ['GET', '/api/config'], ['GET', '/__do/health'], ['GET', '/dashboard.html'],
+    ['GET', '/api/agent/status'], ['GET', '/api/unknown'], ['POST', '/api/config'],
+    ['GET', '/api/server?id=missing'], ['GET', '/api/servers'],
+    ['GET', '/api/history/all?id=missing&hours=1'], ['POST', '/api/theme_options'],
+    ['GET', '/updateDatabase'], ['GET', '/clearHistory'],
+    ['GET', '/admin/api'], ['POST', '/admin/api/terminal/node/session/ws'], ['GET', '/admin/api/unknown'],
+    ['GET', '/__do/health'], ['GET', '/dashboard.html'],
     ['GET', '/assets/example.js'], ['GET', '/unknown'], ['OPTIONS', '/unknown']
   ]) {
     const response = await request(ORIGIN, path, env, { method, headers: { Origin: LEGACY_ORIGIN } });
@@ -83,6 +101,55 @@ test('matched host never dispatches admin, agent, legacy API, assets or unknown 
   const write = await request(ORIGIN, '/api/me', env, { method: 'POST' });
   assert.equal(write.status, 405);
   assert.equal(write.headers.get('Allow'), 'GET');
+});
+
+test('configured Monitor host keeps the CF admin route and its existing auth boundary', async t => {
+  const h = await settingsFixture(t);
+  h.env.ASSETS = {
+    async fetch(request) {
+      return new URL(request.url).pathname === '/dashboard.html'
+        ? new Response('<!doctype html><html><head></head><body>CF admin shell</body></html>', {
+          headers: { 'Content-Type': 'text/html' }
+        })
+        : new Response('Not Found', { status: 404 });
+    }
+  };
+
+  const entry = await request(ORIGIN, '/admin/?tab=nodes', h.env);
+  assert.equal(entry.status, 302);
+  assert.equal(entry.headers.get('Location'), `${ORIGIN}/admin#/admin?tab=nodes`);
+
+  const admin = await request(ORIGIN, '/admin', h.env);
+  assert.equal(admin.status, 200);
+  assert.match(await admin.text(), /CF admin shell/);
+
+  const publicConfig = await request(ORIGIN, '/api/config', h.env);
+  assert.equal(publicConfig.status, 200);
+  assert.equal((await publicConfig.json()).authorization, false);
+
+  t.mock.method(globalThis, 'fetch', async () => new Response('{"themes":[]}'));
+  const themeStore = await request(ORIGIN, '/theme', h.env);
+  assert.equal(themeStore.status, 200);
+  assert.deepEqual(await themeStore.json(), { themes: [], schema: 1 });
+
+  for (const path of ['/updateDatabase', '/clearHistory']) {
+    const protectedRoute = await request(ORIGIN, path, h.env, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    assert.equal(protectedRoute.status, 401, `${path} retains its existing authentication`);
+  }
+
+  const adminAction = await request(ORIGIN, '/admin/api', h.env, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'save_settings', settings: {} })
+  });
+  assert.equal(adminAction.status, 401, 'existing admin authentication still gates writes');
+
+  const terminal = await request(ORIGIN, '/admin/api/terminal/node/session/ws', h.env);
+  assert.equal(terminal.status, 426, 'the existing terminal handler still validates WebSocket upgrades');
 });
 
 test('GET /api/me returns native read-only metadata with grouped settings taking precedence', async t => {

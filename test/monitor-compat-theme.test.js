@@ -86,7 +86,7 @@ test('unknown, unsafe, missing, disabled and invalid theme routes never fall bac
   };
 
   for (const path of [
-    '/api/unknown', '/admin', '/api/agent/register', '/__do/health',
+    '/api/unknown', '/admin/api/unknown', '/api/agent/register', '/__do/health',
     '/_monitor_theme/default/index.html', '/assets/missing.js', '/not-a-page',
     '/node/0', '/node/01', '/node/1/extra', '/assets/%2e%2e/index.html'
   ]) {
