@@ -55,9 +55,29 @@ const updates = await doSnapshot.json();
 if (updates.updates?.[0]?.samples?.[0]?.data?.cpu !== 22.5) {
   throw new Error(`DO preview data did not seed correctly: ${JSON.stringify(updates)}`);
 }
+const previewResponse = await mf.dispatchFetch(`http://${host}/api/nodes`);
+const previewBody = await previewResponse.json();
+const previewNode = previewBody.nodes?.[0];
+if (previewResponse.status !== 200 || previewNode?.metrics?.cpu !== 22.5 ||
+    previewNode.metrics.net_rx !== 14 || previewNode.metrics.net_tx !== 21) {
+  throw new Error(`Monitor preview did not consume DO data: ${JSON.stringify(previewBody)}`);
+}
 const url = await mf.ready;
 console.log(`Monitor ${theme} preview: http://${host}:${url.port}/`);
 console.log('API: /api/me  /api/nodes  /api/nodes/1/metrics  /api/ws');
 console.log('Stop with Ctrl+C. State is ephemeral and held in memory.');
-process.on('SIGINT', async () => { await mf.dispose(); process.exit(0); });
+const refresh = setInterval(() => {
+  hub.fetch('http://internal/batch-push', {
+    method: 'POST',
+    body: JSON.stringify({ latestReportOnly: true, updates: [{ serverId: 'preview-node', samples: [{ ts: Date.now(), data: {
+      cpu: 22.5, load: [0.4, 0.3, 0.2], ram_total: 2048, ram_used: 540, swap_total: 128, swap_used: 32,
+      disk_total: 51200, disk_used: 12000, net_in_speed: 14, net_out_speed: 21, tcp_conn: 13, udp_conn: 4, processes: 46
+    } }] }] })
+  }).catch(() => {});
+}, 10_000);
+process.on('SIGINT', async () => {
+  clearInterval(refresh);
+  await mf.dispose();
+  process.exit(0);
+});
 await new Promise(() => {});
