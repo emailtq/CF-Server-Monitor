@@ -20,3 +20,10 @@ texts are kept beside the vendored packages as `LICENSE-default.txt` and
 Cloudflare Static Assets are asset-first by default. Both the local Wrangler config and the
 generated deployment config route `/_monitor_theme/*` through the Worker first, so direct
 requests cannot bypass the compatibility host's rejection of internal paths.
+
+To enable the compatibility host in GitHub Actions deployments, set the repository variable
+`MONITOR_COMPAT_HOST` to the exact DNS hostname and optionally set `MONITOR_COMPAT_THEME` to
+`default` or `serverstatus`. If the theme is omitted, `default` is selected. With neither
+variable set, the compatibility host remains disabled; no hostname is configured by default.
+Invalid or incomplete values fail the deployment configuration step rather than producing a
+partially configured host.
