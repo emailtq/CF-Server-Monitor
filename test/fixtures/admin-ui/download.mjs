@@ -240,10 +240,12 @@ try {
     const snapshot = el => {
       const title = el.querySelector('[data-title], [data-credential-notice-text]'), icon = el.querySelector('[data-icon]'), svg = el.querySelector('svg'), style = getComputedStyle(el), text = getComputedStyle(title), r = el.getBoundingClientRect();
       const props = ['padding', 'borderRadius', 'borderWidth', 'borderStyle', 'borderColor', 'backgroundColor', 'color', 'boxShadow', 'fontFamily', 'fontSize', 'gap', 'transitionDuration', 'transitionTimingFunction', 'touchAction'];
-      return { viewportHeight:innerHeight, coarse:matchMedia('(pointer:coarse)').matches, layoutWidth: document.documentElement.getBoundingClientRect().width, width: r.width, height: r.height, x: r.x, y: r.y, css: Object.fromEntries(props.map(key => [key, style[key]])),
+      const stable = value => Math.round(value * 10000) / 10000;
+      const transform = style.transform.replace(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi, value => String(stable(Number(value))));
+      return { viewportHeight:innerHeight, coarse:matchMedia('(pointer:coarse)').matches, layoutWidth: document.documentElement.getBoundingClientRect().width, width: r.width, height: r.height, x: stable(r.x), y: stable(r.y), css: Object.fromEntries(props.map(key => [key, style[key]])),
         title: { text: title.textContent, fontWeight: text.fontWeight, lineHeight: text.lineHeight }, buttons: el.querySelectorAll('button').length,
         icon: icon ? { width: getComputedStyle(icon).width, height: getComputedStyle(icon).height, marginLeft: getComputedStyle(icon).marginLeft, marginRight: getComputedStyle(icon).marginRight } : null,
-        svg: svg.outerHTML, transform: style.transform, opacity: style.opacity };
+        svg: svg.outerHTML, transform, opacity: style.opacity };
     };
     try {
       for (const width of [320, 360, 390, 1440, 1920]) for (const dark of [false, true]) {
@@ -585,6 +587,7 @@ try {
     await load({ controlled: false, width: 320 });
     await page.setViewportSize({ width: 320, height: 480 });
     await page.waitForFunction(() => document.querySelector('.admin-dialog-overlay').getBoundingClientRect().height === visualViewport.height);
+    await page.waitForFunction(() => document.querySelector('.admin-dialog').getAnimations().every(animation => animation.playState === 'finished'));
     const geometry = await dialog().evaluate(el => {
       const body = el.querySelector('.admin-dialog-body'), footer = el.querySelector('footer'), scroll = el.querySelector('.admin-dialog-scroll'); scroll.scrollTop = scroll.scrollHeight;
       return { ownerScroll: scroll.scrollHeight > scroll.clientHeight, owners: [el, el.querySelector('.admin-dialog-scroll'), body].filter(node => getComputedStyle(node).overflowY === 'auto' && node.scrollHeight > node.clientHeight).length, bottom: footer.getBoundingClientRect().bottom, height: innerHeight, commandScroll: el.querySelector('pre').scrollHeight > el.querySelector('pre').clientHeight };

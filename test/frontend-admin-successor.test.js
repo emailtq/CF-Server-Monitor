@@ -66,7 +66,7 @@ test('real get_settings distinguishes persisted ping slots without changing sett
   } finally { clearSiteSettingsCache(); clearAppearanceSettingsCache(); await mf.dispose(); }
 });
 
-test('Android half-overlap reversal, name-only add, actual minimal grouping and incremental ping slots', { timeout: 240000 }, () => {
+test('Android half-overlap reversal, name-only add, actual minimal grouping and persisted unlimited tasks', { timeout: 240000 }, () => {
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/successor.mjs'], { encoding: 'utf8', timeout: 230000, windowsHide: true, env: process.env });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}\n${result.error || ''}`);
 });

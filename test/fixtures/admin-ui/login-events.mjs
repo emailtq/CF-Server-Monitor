@@ -47,7 +47,7 @@ try {
     await page.goto(`${origin}/test/fixtures/admin-ui/index.html?mode=admin&locale=${locale}#/admin`);
     await page.evaluate(async theme => (await import('/src/frontend/composables/useTheme.js')).useTheme().setTheme(theme), theme);
     await page.locator('[data-page=alerts]').click();
-    assert.equal(await page.locator('.admin-rule-list').isVisible(), true);
+    await page.locator('.admin-rule-list').waitFor({ state: 'visible' });
     assert.equal(await page.locator('section .admin-routing-preview').count(), 0, 'alerts must not contain a separate SSH source diagnostic block');
     await page.locator('section > p[role=status]').waitFor();
     assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), width < 400);

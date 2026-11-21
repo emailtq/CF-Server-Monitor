@@ -179,7 +179,7 @@ try {
     for(const name of ['x'.repeat(101),'\u{1f600}'.repeat(51),'node\u007fname']) {
       await input.evaluate((el,name)=>{el.value=name;el.dispatchEvent(new Event('input',{bubbles:true}));},name);
       await page.waitForFunction(()=>document.querySelector('.admin-dialog-edit footer button:last-child')?.disabled === true);
-      assert.equal(await registration.locator('pre').textContent(),'');
+      assert.equal(await registration.locator('pre').count(),0);
       assert.equal(await registration.locator('[data-registration-status]').innerText(),en.invalidServerName);
       await page.evaluate(()=>{window.copied='unchanged';});
       await registration.locator('footer button').last().evaluate(el=>{el.disabled=false;el.click();el.disabled=true;});
@@ -191,7 +191,7 @@ try {
     assert.equal(await page.evaluate(()=>window.copied),await registration.locator('pre').textContent());
     assert.ok((await page.evaluate(()=>window.copied)).includes("-name='"+'x'.repeat(100)+"'"));
     assert.equal(keyCount,keyCountBefore,'name edits must not rotate the registration key');
-    assert.equal(await registration.locator('pre').isVisible(),false,'no command preview is added');
+    assert.equal(await registration.locator('pre').isVisible(),true,'the accepted registration preview displays the exact copied command');
     await registration.locator('footer button').first().click();
   });
   await check('registration key is explicit, short-lived, stable while editing and contains no node/shared token',async()=>{
@@ -199,7 +199,7 @@ try {
     const registration=page.locator('.admin-dialog-edit');await page.waitForFunction(()=>document.querySelector('.admin-dialog-edit pre')?.textContent.includes('-register-key='));
     const text=await registration.locator('pre').innerText(), key=text.match(/-register-key='([^']+)'/)[1];
     assert.equal(keyCount,before+1);assert.doesNotMatch(text,/-secret=|install-node-token|-id=/);
-    assert.equal(await registration.locator('pre').isVisible(),false,'preserve the existing no-preview registration UI');
+    assert.equal(await registration.locator('pre').isVisible(),true,'valid registration shows its command preview');
     assert.deepEqual((await registration.locator('footer button').allTextContents()).map(t=>t.trim()),[en.close,en.copy]);
     assert.equal(await registration.evaluate(el=>el.scrollWidth>el.clientWidth),false);await page.screenshot({path:path.join(out,'registration-390.png')});
     await registration.locator('input[type=text]').first().fill("node ' $() ` \" danger");
@@ -211,7 +211,7 @@ try {
     await page.setViewportSize({width:1440,height:900});
     registrationTtl=1400;await openRegistration();await page.waitForFunction(()=>document.querySelector('.admin-dialog-edit pre')?.textContent.includes('-register-key='));
     await page.waitForFunction(()=>document.querySelector('.admin-dialog-edit footer button:last-child')?.disabled === true);
-    assert.ok(!(await registration.locator('pre').innerText()).includes('-register-key='));await registration.locator('footer button').first().click();registrationTtl=900000;
+    assert.equal(await registration.locator('pre').count(),0);await registration.locator('footer button').first().click();registrationTtl=900000;
     holdAction='node_prepare_registration';await openRegistration();while(!held.length)await page.waitForTimeout(10);await registration.locator('footer button').first().click();
     await openRegistration();await page.waitForFunction(()=>document.querySelector('.admin-dialog-edit pre')?.textContent.includes('-register-key='));
     const fresh=await registration.locator('pre').innerText();held.shift()();await page.waitForTimeout(30);assert.equal(await registration.locator('pre').innerText(),fresh);await registration.locator('footer button').first().click();

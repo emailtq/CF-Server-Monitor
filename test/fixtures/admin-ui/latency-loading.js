@@ -30,5 +30,6 @@ window.latencyState = () => document.querySelector('.latency-page')?.__vueParent
 window.phase43Http = http
 window.observeLatencyAcceptance = () => {
   const state = window.latencyState()
+  window.latencyTrace ||= []
   watch(() => state.tasks, tasks => window.latencyTrace.push({ stage: 'result-accepted', atMs: performance.now(), tasks: tasks?.length }), { flush: 'sync' })
 }

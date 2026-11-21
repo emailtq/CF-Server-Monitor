@@ -104,6 +104,7 @@ class Screen {
   static instances = []
   constructor(options) {
     this.options = options; this.cols = 80; this.rows = 24; this.callbacks = []; this.handlers = {}; this.visible = ''
+    this.localWrites = []
     this.element = { addEventListener() {}, removeEventListener() {} }
     this.buffer = { active: { viewportY: 0, getNullCell: () => ({}), getLine: row => {
       const line = this.visible.split('\n')[row] || ''
@@ -120,9 +121,19 @@ class Screen {
   onResize(fn) { this.handlers.resize = fn; return { dispose() {} } }
   onScroll() { return { dispose() {} } }
   onWriteParsed() { return { dispose() {} } }
+  scrollToBottom() {}
   attachCustomKeyEventHandler(handler) { this.keyHandler = handler }
   write(data, cb) {
+    if (typeof data === 'string') {
+      this.localWrites.push(data)
+      // A local parser fence follows every earlier network write, as in xterm.
+      if (cb) queueMicrotask(() => { for (const write of this.callbacks) write.cb(); cb() })
+      return
+    }
+    let consumed = false
     this.callbacks.push({ data, cb: () => {
+      if (consumed) return
+      consumed = true
       if (!this.disposed) this.visible += new TextDecoder().decode(data)
       cb?.()
     } })
@@ -499,11 +510,12 @@ test('late clipboard success/rejection after close or disposal has no input/focu
     let resolveRead, rejectRead
     const uiError = { value: 'current-message' }
     const paste = await pagePasteHandler(t, () => new Promise((resolve, reject) => { resolveRead = resolve; rejectRead = reject }), uiError)
-    const pending = paste(); const focused = screen.focusCalls
+    const pending = paste()
     if (mode === 'dispose') t.dispose()
     else t.close()
     if (mode === 'reopen-reject') { await open(t); rejectRead(new Error('permission denied')) }
     else resolveRead('old text')
+    const focused = screen.focusCalls
     await pending; tick()
     assert.equal(ws.sent.filter(f => f instanceof Uint8Array).length, 0)
     assert.equal(screen.focusCalls, focused)
@@ -571,15 +583,18 @@ test('renderer drain never exceeds five seconds and falls back to a bounded read
 
 test('reopen/page disposal cancel old renderer drain and stale callbacks cannot change new session', () => fixture(async ({ create, open, tick }) => {
   const t = create(); const old = await open(t); const screen = Screen.instances.at(-1)
+  const oldData = screen.handlers.data, oldBinary = screen.handlers.binary
   old.message(new TextEncoder().encode('OLD FINAL').buffer); old.message({ type: 'exit', code: 0 })
   const fresh = await open(t); const newScreen = Screen.instances.at(-1)
-  assert.equal(screen.disposed, true)
+  assert.equal(newScreen, screen, 'reopening retains the same local output renderer')
+  assert.notEqual(screen.disposed, true)
   screen.callbacks[0].cb()
-  screen.handlers.data('old parser response')
-  screen.handlers.binary('old binary response')
+  oldData('old parser response')
+  oldBinary('old binary response')
   tick()
   assert.equal(t.status.value, 'running')
-  assert.equal(newScreen.visible, '')
+  assert.equal(newScreen.visible, 'OLD FINAL')
+  assert.ok(screen.localWrites.some(text => text.includes('\x1b[!p') && text.includes('waiting for agent...')))
   assert.equal(fresh.sent.filter(f => f.type === 'ack').length, 0)
   assert.equal(fresh.sent.filter(f => f instanceof Uint8Array).length, 0)
   fresh.message(new Uint8Array([120]).buffer); fresh.message({ type: 'exit', code: 0 })

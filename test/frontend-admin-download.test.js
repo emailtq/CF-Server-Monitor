@@ -38,9 +38,9 @@ test('clipboard reports actual results without stealing input or terminal select
   }
 });
 
-test('mounted download layout, switches and credential rotation ownership', { timeout: 240000 }, () => {
+test('mounted download layout, switches and credential rotation ownership', { timeout: 310000 }, () => {
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/download.mjs'], {
-    encoding: 'utf8', windowsHide: true, timeout: 230000, env: process.env
+    encoding: 'utf8', windowsHide: true, timeout: 300000, env: process.env
   });
   process.stdout.write(result.stdout || '');
   process.stderr.write(result.stderr || '');

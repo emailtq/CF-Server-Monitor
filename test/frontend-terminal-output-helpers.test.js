@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { terminalWebUrl } from '../src/frontend/utils/terminalOutput.js';
 
 test('terminal URL policy permits normalized HTTP destinations, never credentials, controls or other protocols', () => {
@@ -15,7 +17,9 @@ test('terminal URL policy permits normalized HTTP destinations, never credential
 
 test('mounted xterm retained-output search, screen download and explicit safe web links', { timeout: 180000 }, () => {
   const env = { ...process.env, TERMINAL_OUTPUT_HELPERS_ONLY: '1' };
-  env.TERMINAL_WORKSPACE_REPORT_DIR = path.join(env.TERMINAL_WORKSPACE_REPORT_DIR || '.planning/2026-11-13-admin-ui-refinement/terminal-netcatty/stage2-developer/verified', 'output');
+  const root = env.TERMINAL_WORKSPACE_REPORT_DIR || path.join(os.tmpdir(), 'cfsm-admin-ui-evidence');
+  fs.mkdirSync(root, { recursive: true });
+  env.TERMINAL_WORKSPACE_REPORT_DIR = fs.mkdtempSync(path.join(root, 'terminal-output-'));
   const result = spawnSync(process.execPath, ['test/fixtures/admin-ui/terminal-workspace.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 175000, env });
   process.stdout.write(result.stdout || '');
   process.stderr.write(result.stderr || '');

@@ -202,19 +202,17 @@ try {
       await page.keyboard.press('Escape');
       assert.ok(renewalText.includes(initialServers[0].name), 'focused renewal identifies its target node');
     });
-    await check('ordinary validation then node/batch validation stays in the active form, not hidden', async () => {
+    await check('ordinary validation does not leak into node or batch forms after legacy ping controls retire', async () => {
       await nav(en.adminSecurity).click(); await page.locator('[data-setting-field=jwt_secret]').fill('short'); await page.getByRole('button', { name: new RegExp(en.saveConfig, 'i') }).click();
       await nav(en.adminNodes).click(); await page.locator('.server-name-link').first().click();
       assert.equal(await page.getByRole('dialog').count(), 1); assert.equal(await page.getByRole('dialog').getByRole('alert').count(), 0);
-      await page.getByRole('dialog').locator('details').last().locator('summary').click();
-      await page.locator('[name=edit_custom_ct]').fill('bad host');
-      assert.ok((await page.getByRole('dialog').innerText()).includes(en.invalidPingNodeFormat));
+      assert.equal(await page.locator('[name=edit_custom_ct]').count(), 0, 'latency targets now belong to the task editor');
+      await page.locator('[name=edit_name]').fill('Current node edit');
+      assert.equal(await page.getByRole('dialog').getByRole('alert').count(), 0);
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: en.group, exact: true }).click(); await page.locator('.server-checkbox').first().check(); await page.getByRole('dialog').locator('summary').click(); await page.getByRole('button', { name: en.batchEdit, exact: true }).click(); await page.locator('.admin-dialog-group').waitFor({ state: 'detached' });
-      const block = page.getByRole('dialog').locator('.batch-edit-field').filter({ has: page.locator('input[placeholder="gd-ct-dualstack.ip.zstaticcdn.com"]') }).first();
-      await block.locator('input[type=checkbox]').check(); await block.locator('input[type=text]').fill('bad host');
-      await page.getByRole('dialog').getByRole('button', { name: new RegExp(en.save, 'i'), exact: true }).click();
-      await page.getByRole('dialog').getByRole('alert').waitFor(); assert.equal(await page.getByRole('dialog').count(), 1);
+      assert.equal(await page.getByRole('dialog').locator('input[placeholder="gd-ct-dualstack.ip.zstaticcdn.com"]').count(), 0);
+      assert.equal(await page.getByRole('dialog').getByRole('alert').count(), 0); assert.equal(await page.getByRole('dialog').count(), 1);
       await page.keyboard.press('Escape');
     });
     await check('full-list deletion prunes selection while search alone does not', async () => {
@@ -225,12 +223,13 @@ try {
       await page.locator('.server-row').first().getByRole('button', { name: en.delete, exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: en.confirmDelete }).click(); await page.locator(`[data-server-id="${id}"]`).waitFor({ state: 'detached' }); await page.keyboard.press('Escape');
       await page.getByRole('button', { name: en.group, exact: true }).click(); assert.equal(await page.locator('.admin-group-picker-list input:checked').count(), 0); assert.equal(await page.locator('.admin-group-picker-list input').count(), 5); await page.keyboard.press('Escape');
     });
-    await check('renewal validation closes with its form instead of leaving an orphan error dialog', async () => {
+    await check('renewal ignores retired per-node ping fields and closes without an orphan validation error', async () => {
       servers = [{ ...initialServers[0], custom_ct: 'bad host' }];
       await goto();
       await page.locator('.server-row').first().getByRole('button', { name: en.adminRenew }).click();
       await page.getByRole('dialog').getByRole('button', { name: new RegExp(en.save, 'i'), exact: true }).click();
-      await page.getByRole('dialog').getByRole('alert').waitFor();
+      await page.getByRole('dialog').locator('.success-box').waitFor();
+      assert.equal('custom_ct' in report.actions.filter(action => action.action === 'edit').at(-1), false);
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('dialog').count(), 0);
     });
@@ -481,7 +480,7 @@ try {
   await goto();
   await check('shared ordinary draft and validation navigate/focus CSP, latency and security fields', async () => {
     await nav(en.settings).click(); await page.locator('[data-setting-field=site_title]').fill('Shared draft');
-    await nav(en.adminCollection).click(); await page.locator('[data-setting-field=frontend_ws_timeout_minutes]').fill('-1');
+    await page.locator('[data-setting-field=frontend_ws_timeout_minutes]').fill('-1');
     await nav(en.theme).click(); await save();
     assert.equal(await page.evaluate(() => document.activeElement.dataset.settingField), 'frontend_ws_timeout_minutes');
     await page.locator('[data-setting-field=frontend_ws_timeout_minutes]').fill('15');

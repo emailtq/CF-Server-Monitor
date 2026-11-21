@@ -47,6 +47,7 @@ const pressEye = async (page, cdp, eye, mobile) => {
   else await page.mouse.up();
 };
 const nativeDrag = async (page, cdp, locator, horizontal, mobile, name) => {
+  await page.waitForFunction(() => [...document.querySelectorAll('.admin-dialog')].every(dialog => dialog.getAnimations().every(animation => animation.playState === 'finished')));
   const g = await locator.evaluate((el, horizontal) => {
     el.scrollTop = 0; el.scrollLeft = 0;
     const root = el === document.scrollingElement, r = el.getBoundingClientRect();

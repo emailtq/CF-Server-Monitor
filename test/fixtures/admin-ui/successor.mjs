@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import vue from '@vitejs/plugin-vue';
 import { createServer } from './notification-matrix-server.mjs';
 import { PING_NODE_FIELDS } from '../../../src/frontend/utils/pingNode.js';
+import { validatePingNode } from '../../../src/shared/pingNode.js';
 
 const { chromium } = createRequire(import.meta.url)(process.env.ADMIN_UI_PLAYWRIGHT || 'C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const base = path.resolve('.planning/2026-11-13-admin-ui-refinement/successor/stage1');
@@ -31,12 +32,21 @@ const load = async (width = 390, dark = false, locale = 'zh', full = false) => {
   let saved = full === 'empty' ? { username: 'fixture', password_configured: true } : full === 'defaults' ? { username: 'fixture', password_configured: true, custom_ct: 'ct.test', custom_cu: 'cu.test', custom_cm: 'cm.test', custom_ct_name: '电信', custom_cu_name: '联通', custom_cm_name: '移动', custom_bd_name: 'BGP', node_1_name: 'Node 1', node_2_name: 'Node 2', node_3_name: 'Node 3', node_4_name: 'Node 4' } : seed(), servers = nodes();
   if (full === true) for (const [i, field] of PING_NODE_FIELDS.entries()) { saved[field] = `node${i}.test`; saved[`${field}_name`] = `Saved ${i}`; }
   let configuredPingNodes = full === 'defaults' ? ['custom_ct', 'custom_cu', 'custom_cm'] : PING_NODE_FIELDS.filter(field => saved[field] || saved[`${field}_name`]);
+  let revision = 1, nextTask = 1;
+  let tasks = configuredPingNodes.filter(field => saved[field]).map(field => ({ id: `task-${nextTask++}`, name: saved[`${field}_name`] || field, target: saved[field], interval: 60, nodes: servers.map(node => node.id), auto_join: true }));
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   await ctx.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.origin !== origin) return route.abort();
     if (url.pathname.endsWith('/admin/api')) {
       const data = route.request().postDataJSON(); report.actions.push(data);
+      if (data.action.startsWith('latency_')) {
+        if (data.action === 'latency_save') {
+          if (!validatePingNode(data.task.target).valid || !data.task.name) return route.fulfill({ status: 400, json: { error: 'latency_invalid' } });
+          tasks.push({ ...data.task, id: `task-${nextTask++}` }); revision++;
+        } else if (data.action === 'latency_delete') { tasks = tasks.filter(task => task.id !== data.id); revision++; }
+        return route.fulfill({ json: { tasks, revision } });
+      }
       if (data.action === 'add') servers.push({ id: 'added', name: data.name });
       if (data.action === 'save_settings') { saved = { ...saved, ...data.settings }; configuredPingNodes = PING_NODE_FIELDS.filter(field => saved[field] || saved[`${field}_name`]); }
       if (data.action === 'save_order') servers = data.orders.map(id => servers.find(server => server.id === id));
@@ -85,28 +95,34 @@ try {
     await page.locator('#add-server-name').fill('Added node'); await page.getByRole('dialog').locator('footer .btn-primary').click(); await page.locator('[data-server-id=added]').waitFor();
     assert.deepEqual(report.actions.filter(a => a.action === 'add').at(-1), { action: 'add', name: 'Added node' });
   });
-  await check('empty configuration adds one Node 1 and persists without phantom default-name rows', async () => {
+  const taskRows = () => page.locator('.latency-table tbody tr[data-server-id]');
+  const addTask = async (name, target, trans) => {
+    await page.locator('.latency-toolbar').getByRole('button', { name: trans.latencyAdd, exact: true }).click();
+    await page.getByRole('textbox', { name: trans.latencyName, exact: true }).fill(name);
+    await page.getByRole('textbox', { name: trans.latencyTarget, exact: true }).fill(target);
+    await page.getByRole('dialog').getByRole('button', { name: new RegExp(`^${trans.save}$`, 'i') }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+  };
+  await check('empty task catalog adds and removes one persisted monitor without phantom legacy labels', async () => {
+    const trans = (await import('../../../src/frontend/locales/zh.js')).default;
     await load(390, false, 'zh', 'empty'); await page.locator('[data-page=collection]').click();
-    assert.equal(await page.locator('.ping-node-item').count(), 0);
-    await page.locator('[data-action=add-ping-node]').click();
-    assert.equal(await page.locator('[data-setting-field=custom_ct_name]').inputValue(), 'Node 1');
-    await page.locator('[data-setting-field=custom_ct]').fill('first.test'); await page.locator('.settings-save-bar button').click();
-    await page.waitForFunction(() => !document.querySelector('.settings-save-bar button').disabled);
-    const dto = report.actions.filter(action => action.action === 'save_settings').at(-1).settings;
-    assert.equal(dto.node_1_name, ''); assert.equal(dto.custom_cu_name, '');
-    await page.reload(); await page.locator('[data-page=collection]').click();
-    assert.equal(await page.locator('.ping-node-item').count(), 1);
-    await page.locator('[data-action=remove-ping-node]').click(); await page.locator('.settings-save-bar button').click();
-    await page.waitForFunction(() => !document.querySelector('.settings-save-bar button').disabled);
-    await page.reload(); await page.locator('[data-page=collection]').click(); assert.equal(await page.locator('.ping-node-item').count(), 0);
+    await page.getByText(trans.latencyEmpty, { exact: true }).waitFor(); assert.equal(await taskRows().count(), 0);
+    await addTask('Node 1', 'first.test:443', trans);
+    await page.reload(); await page.locator('[data-page=collection]').click(); await taskRows().first().waitFor();
+    assert.equal(await taskRows().count(), 1);
+    await page.getByRole('button', { name: trans.latencyDelete + ': Node 1', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: trans.delete, exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await page.reload(); await page.locator('[data-page=collection]').click(); await page.getByText(trans.latencyEmpty, { exact: true }).waitFor();
+    assert.equal(await taskRows().count(), 0);
   });
-  await check('fresh backend defaults expose three usable targets, add Node 4 and reopen as four rows', async () => {
-    await load(390, false, 'zh', 'defaults'); await page.locator('[data-page=collection]').click();
-    assert.equal(await page.locator('.ping-node-item').count(), 3);
-    await page.locator('[data-action=add-ping-node]').click(); assert.equal(await page.locator('[data-setting-field=custom_bd_name]').inputValue(), 'Node 4');
-    await page.locator('[data-setting-field=custom_bd]').fill('fourth.test'); await page.locator('.settings-save-bar button').click();
-    await page.waitForFunction(() => !document.querySelector('.settings-save-bar button').disabled);
-    await page.reload(); await page.locator('[data-page=collection]').click(); assert.equal(await page.locator('.ping-node-item').count(), 4);
+  await check('three migrated target tasks add a fourth without assigning spare legacy names', async () => {
+    const trans = (await import('../../../src/frontend/locales/zh.js')).default;
+    await load(390, false, 'zh', 'defaults'); await page.locator('[data-page=collection]').click(); await taskRows().first().waitFor();
+    assert.equal(await taskRows().count(), 3);
+    await addTask('Node 4', 'fourth.test:443', trans);
+    await page.reload(); await page.locator('[data-page=collection]').click(); await taskRows().first().waitFor();
+    assert.equal(await taskRows().count(), 4);
   });
   for (const tall of [1, 2]) for (const direction of [-1, 1]) await check(`Android unequal row ${tall} direction ${direction} uses stable half-overlap and actual turning point`, async () => {
     await load(390, true);
@@ -126,28 +142,29 @@ try {
     await touch('touchMove', x, y + boundary - direction * 3); await frames();
     assert.deepEqual((await ids()).slice(0, 3), ['node-0', 'node-1', 'node-2']); await touch('touchEnd');
   });
-  for (const [width, dark, locale] of [[390, false, 'zh'], [360, true, 'en'], [1440, false, 'zh'], [1440, true, 'fr']]) await check(`incremental ping name-only preservation/add/remove/capacity/save ${width}/${locale}/${dark}`, async () => {
-    await load(width, dark, locale); await page.locator('[data-page=collection]').click();
-    const rows = page.locator('.ping-node-item'); assert.equal(await rows.count(), 2, 'target and configured name without target stay visible; blank spare defaults do not');
-    assert.equal(await page.locator('[data-setting-field=custom_cu_name]').inputValue(), 'Name without target');
-    await page.locator('[data-action=add-ping-node]').click(); assert.equal(await rows.count(), 3);
-    assert.equal(await page.locator('[data-setting-field=custom_cm_name]').inputValue(), 'Node 3');
-    await page.locator('[data-setting-field=custom_cm]').fill('new.test:443');
-    await page.locator('[data-ping-node=custom_ct] [data-action=remove-ping-node]').click();
-    assert.equal(await rows.count(), 2); assert.equal(await page.locator('[data-setting-field=custom_cm]').inputValue(), 'new.test:443', 'remove does not remap a surviving slot');
-    await page.locator('[data-action=add-ping-node]').click(); assert.equal(await page.locator('[data-setting-field=custom_ct_name]').inputValue(), 'Node 4', 'number follows visible automatic names, not reused metric slot');
-    await page.locator('[data-setting-field=custom_ct]').fill('https://invalid.test'); await page.locator('.settings-save-bar button').click();
-    assert.equal(await page.locator('[data-ping-node=custom_ct] .text-red').count(), 1); await page.locator('[data-setting-field=custom_ct]').fill('restored.test');
-    await page.locator('.settings-save-bar button').click(); await page.waitForFunction(() => !document.querySelector('.settings-save-bar button').disabled);
-    const dto = report.actions.filter(a => a.action === 'save_settings').at(-1).settings;
-    assert.equal(dto.custom_cm, 'new.test:443'); assert.equal(dto.custom_cu_name, 'Name without target'); assert.equal(dto.custom_ct, 'restored.test'); assert.ok(Object.keys(dto).length > 35);
-    await page.keyboard.press('Escape');
-    for (let i = 0; i < 6; i++) await page.locator('[data-action=add-ping-node]').click(); assert.equal(await rows.count(), 9); assert.equal(await page.locator('[data-action=add-ping-node]').isEnabled(), true);
+  for (const [width, dark, locale] of [[390, false, 'zh'], [360, true, 'en'], [1440, false, 'zh'], [1440, true, 'fr']]) await check(`task add/remove/unlimited capacity/save ${width}/${locale}/${dark}`, async () => {
+    const trans = (await import(`../../../src/frontend/locales/${locale}.js`)).default;
+    await load(width, dark, locale); await page.locator('[data-page=collection]').click(); await taskRows().first().waitFor();
+    assert.equal(await taskRows().count(), 1, 'a legacy name without target must not become a runnable task');
+    const originalId = await taskRows().first().getAttribute('data-server-id');
+    await page.locator('.latency-toolbar').getByRole('button', { name: trans.latencyAdd, exact: true }).click();
+    await page.getByRole('textbox', { name: trans.latencyName, exact: true }).fill('Node 2');
+    await page.getByRole('textbox', { name: trans.latencyTarget, exact: true }).fill('https://invalid.test');
+    const before = report.actions.filter(action => action.action === 'latency_save').length;
+    await page.getByRole('dialog').getByRole('button', { name: new RegExp(`^${trans.save}$`, 'i') }).click();
+    await page.getByRole('dialog').getByText(trans.latencyInvalid, { exact: true }).waitFor();
+    assert.equal(report.actions.filter(action => action.action === 'latency_save').length, before, 'invalid target must not reach the API');
+    await page.getByRole('textbox', { name: trans.latencyTarget, exact: true }).fill('new.test:443');
+    await page.getByRole('dialog').getByRole('button', { name: new RegExp(`^${trans.save}$`, 'i') }).click(); await page.getByRole('dialog').waitFor({ state: 'detached' });
+    assert.equal(await taskRows().count(), 2); assert.equal(await taskRows().first().getAttribute('data-server-id'), originalId);
+    for (let i = 3; i <= 9; i++) await addTask(`Node ${i}`, `node${i}.test:443`, trans);
+    assert.equal(await taskRows().count(), 9); assert.equal(await page.locator('.latency-toolbar').getByRole('button', { name: trans.latencyAdd, exact: true }).isEnabled(), true);
     assert.ok(await page.locator('[data-ping-resource-warning]').innerText());
-    assert.ok(await page.locator('[data-ping-capacity]').innerText()); await page.locator('.ping-node-grid').scrollIntoViewIfNeeded(); await snap(`ping-${width}-${locale}-${dark}`);
-    await page.locator('[data-action=add-ping-node]').scrollIntoViewIfNeeded(); await snap(`ping-capacity-${width}-${locale}-${dark}`);
-    assert.equal(await page.locator('.collection-settings').evaluate(e => e.scrollWidth <= e.clientWidth + 1), true);
-    await load(width, dark, locale, true); await page.locator('[data-page=collection]').click(); assert.equal(await page.locator('.ping-node-item').count(), 8, 'all eight saved metric slots remain visible');
+    assert.equal(await page.locator('.latency-page').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
+    await snap(`tasks-${width}-${locale}-${dark}`);
+    await page.reload(); await page.locator('[data-page=collection]').click(); await taskRows().first().waitFor(); assert.equal(await taskRows().count(), 9);
+    await load(width, dark, locale, true); await page.locator('[data-page=collection]').click(); await taskRows().first().waitFor();
+    assert.equal(await taskRows().count(), 8, 'all eight configured legacy targets remain runnable in the task catalog');
   });
   referenceServer = http.createServer((request, response) => {
     const relative = new URL(request.url, 'http://fixture.invalid').pathname.slice(1), file = path.resolve(referenceRoot, relative);
@@ -200,7 +217,7 @@ try {
     await target.locator('.admin-group-picker-search input').fill('missing'); assert.equal(await target.locator('[data-action=pick-visible]').isDisabled(), true); await target.locator('.admin-group-picker-search input').fill('');
     await target.locator('.admin-group-layout details summary').click(); assert.equal(await target.locator('.admin-group-layout details button').count(), 3, 'CF-only batch and cache actions remain reachable');
     if (width < 640) {
-      await target.setViewportSize({ width, height: 300 }); await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+      await target.setViewportSize({ width, height: 300 }); await target.waitForFunction(() => document.querySelector('.admin-dialog').getAnimations().every(animation => animation.playState === 'finished')); await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
       await target.locator('.admin-group-layout details summary').click(); await input.focus(); await input.evaluate(e => e.scrollIntoView({ block: 'center' }));
       assert.equal(await input.evaluate(e => { const r = e.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), true, 'name remains visible in the keyboard viewport');
       await snap(`group-keyboard-${width}-${locale}`);

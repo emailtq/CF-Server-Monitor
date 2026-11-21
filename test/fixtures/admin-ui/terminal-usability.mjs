@@ -227,7 +227,7 @@ try {
     await page.evaluate(()=>window.tickPoll()); await page.waitForFunction(()=>window.statusPending===1);
     await page.getByRole('button',{name:en.logout,exact:true}).click(); await idle();
     assert.equal(await page.evaluate(()=>window.pollTimers.size),0);
-    assert.equal(await entry().isDisabled(),true); holdLogout=false;
+    assert.equal(await entry().count(),0,'logout removes the authenticated node list before its API reply'); holdLogout=false;
   });
 } catch(error) { report.errors.push(error.stack); await page?.screenshot({path:path.join(out,'failure.png')}).catch(()=>{}); }
 finally { held.splice(0).forEach(resolve=>resolve()); await context?.unrouteAll({behavior:'wait'}); await browser?.close(); await server?.close(); fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2)); }

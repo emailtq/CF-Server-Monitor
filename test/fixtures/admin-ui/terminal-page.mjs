@@ -301,12 +301,12 @@ try {
     const denied = await context.newPage(), id = 'node-' + 'x'.repeat(100);
     await denied.setViewportSize({ width: 320, height: 844 });
     await denied.goto(`${origin}/admin?locale=en#/admin/terminal/${id}`);
-    await denied.locator('.terminal-connection .terminal-error').waitFor();
+    await denied.locator('.terminal-notice .terminal-error').waitFor();
     await denied.waitForLoadState('networkidle');
     await drainRoutes();
-    const failure = await denied.evaluate(() => ({ errors: document.querySelectorAll('.terminal-error').length, notices: document.querySelectorAll('.terminal-notice').length, text: document.querySelector('.terminal-connection .terminal-error')?.textContent.trim() }));
+    const failure = await denied.evaluate(() => ({ errors: document.querySelectorAll('.terminal-notice .terminal-error').length, notices: document.querySelectorAll('.terminal-notice').length, text: document.querySelector('.terminal-notice .terminal-error')?.textContent.trim() }));
     report.initialMissingNode = failure;
-    assert.deepEqual(failure, { errors: 1, notices: 0, text: en.terminal_node_missing });
+    assert.deepEqual(failure, { errors: 1, notices: 1, text: en.terminal_node_missing });
     assert.equal(await denied.locator('.terminal-node-name').innerText(), id);
     assert.equal(await denied.locator('.terminal-node-name').getAttribute('title'), id);
     assert.equal(await denied.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

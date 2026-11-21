@@ -130,8 +130,10 @@ export async function refinementChecks({ page, context, report, check, state, ou
   await check('leaving and reversed real menu reclaim outside focus and block remote keyboard input', async () => {
     const inputs = report.inputs.length;
     await menu();
+    await page.addStyleTag({ content: '.terminal-menu-leave-active { transition-duration: 1200ms !important; } .terminal-menu-leave-active .admin-dialog-terminal { transition-duration: 1200ms !important; }' });
     const sample = when => page.evaluate(when => ({ when, inside: !!document.querySelector('.admin-dialog-terminal')?.contains(document.activeElement), leaving: !!document.querySelector('.terminal-menu-leave-active'), active: document.activeElement?.tagName }), when);
     await page.evaluate(async () => { document.querySelector('.admin-dialog-close').click(); await Promise.resolve(); document.querySelector('.terminal-mobile-input').focus(); });
+    await page.waitForFunction(() => !!document.querySelector('.terminal-menu-leave-active'));
     const samples = [await sample('outside-focus-during-leave')];
     await page.keyboard.press('Tab'); samples.push(await sample('tab-during-leave'));
     await page.keyboard.press('Shift+Tab'); samples.push(await sample('shift-tab-during-leave'));

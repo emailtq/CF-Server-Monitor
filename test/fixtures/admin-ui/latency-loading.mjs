@@ -166,7 +166,12 @@ try {
       const saved = hold('a', 'latency_save');
       await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click(); await waitHold(saved);
       assert.equal(await add.isEnabled(), false, 'busy still prevents duplicate entry during save');
-      saved.release(); await page.getByRole('dialog').waitFor({ state: 'hidden' });
+      saved.release();
+      try { await page.getByRole('dialog').waitFor({ state: 'hidden' }); }
+      catch (error) {
+        const state = await page.locator('.latency-page').evaluate(el => { const component = el.__vueParentComponent; const values = component?.setupState || {}; return Object.fromEntries(['tasks', 'busy', 'loading', 'error', 'formError', 'draft', 'activityRevision', 'loadRevision'].map(key => { const value = values[key]; return [key, value && typeof value === 'object' && 'value' in value ? value.value : value] })); }).catch(() => null);
+        throw new Error(`${error.message}\nlatency component state: ${JSON.stringify(state)}`);
+      }
       await page.getByText(name, { exact: true }).waitFor();
       initial.release(); await waitHold(initial); await frames();
       const current = await page.evaluate(() => ({ tasks: window.latencyState().tasks, error: window.latencyState().error, loading: window.latencyState().loading }));
