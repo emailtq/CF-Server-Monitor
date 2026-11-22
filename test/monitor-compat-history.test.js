@@ -20,7 +20,7 @@ async function fixture(t) {
   });
   t.after(() => mf.dispose());
   const db = await mf.getD1Database('DB');
-  const env = { DB: db, MONITOR_COMPAT_HOST: HOST };
+  const env = { DB: db, MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST };
   await db.batch([
     db.prepare('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)'),
     db.prepare(`CREATE TABLE servers (

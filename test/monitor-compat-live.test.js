@@ -5,6 +5,8 @@ import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import WebSocket from 'ws';
 import workerEntry from '../src/index.js';
+import { generateToken } from '../src/middleware/auth.js';
+import { encryptTurnstileData } from '../src/middleware/turnstile.js';
 import { createHistoryTableSql } from '../src/utils/historyFields.js';
 
 const HOST = 'theme.example.test';
@@ -54,7 +56,10 @@ const worker = build({
         return super.fetch(request);
       }
     }
-    export default worker;
+    export default { fetch(request, env, ctx) {
+      if (new URL(request.url).searchParams.get('monitor_protocol') === '1') return worker.fetch(request, {...env, MONITOR_FRONTEND_MODE:'monitor', MONITOR_COMPAT_HOST:undefined}, ctx);
+      return worker.fetch(request, env, ctx);
+    } };
   ` },
   bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*']
 });
@@ -65,7 +70,7 @@ async function fixture(t) {
     compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'],
     d1Databases: { DB: 'monitor-compat-live' },
     durableObjects: { METRICS_BROADCASTER: { className: 'TestHub', useSQLite: true } },
-    bindings: { MONITOR_COMPAT_HOST: HOST, CORS_ALLOWED_ORIGINS: LEGACY }
+    bindings: { MONITOR_COMPAT_HOST: HOST, CORS_ALLOWED_ORIGINS: LEGACY, MONITOR_FRONTEND_MODE: 'legacy' }
   });
   const sockets = [];
   t.after(async () => {
@@ -94,6 +99,7 @@ async function fixture(t) {
     reads: async () => (await hub.fetch('https://metrics.internal/test/reads')).json(),
     failFrames: enabled => hub.fetch(`https://metrics.internal/test/frame-failure${enabled ? '?enabled' : ''}`),
     health: async () => (await hub.fetch('http://internal/health')).json(),
+    viewer(headers) { return this.socket({ path: '/api/ws?monitor_protocol=1', headers }); },
     async upload(cpu, path = '/batch-push') {
       const ts = Date.now();
       const data = { cpu, load: [1, 2, 3], ram_total: 256, ram_used: 10, swap_total: 0, swap_used: 0,
@@ -121,6 +127,55 @@ async function fixture(t) {
     }
   };
 }
+
+test('default Minimal viewer stream accepts private CF sessions, shares refresh, and closes an expired/rekeyed session', async t => {
+  const h = await fixture(t);
+  const authority = { is_public: 'false', jwt_secret: 'local-viewer-stream-test-authority-only' };
+  await h.setSite(authority);
+  const token = await generateToken({}, authority);
+  // Explicit internal viewer endpoint is reached only by the Worker after validating its new protocol route.
+  const headers = { Authorization: `Bearer ${token}` };
+  const nsResponse = await h.fetch('/api/ws', {headers:UPGRADE});
+  assert.equal(nsResponse.status,401,'old public-only stream remains closed');
+  const runtime = await h.viewer(headers);
+  assert.equal(runtime.status,101);
+  await snapshot(runtime);
+  await h.upload(37);
+  await snapshot(runtime, nodes=>nodes[0]?.metrics?.cpu===37);
+  await h.setSite({...authority,jwt_secret:'replaced-local-viewer-authority-test-only'});
+  const code = await Promise.race([runtime.closed, sleep(12000).then(()=>0)]);
+  assert.equal(code,1008,'policy refresh revalidates viewer authority before further frames');
+});
+
+test('mixed legacy and default viewers revalidate independently; private snapshots cannot authorize a legacy handshake', async t=>{
+  const h=await fixture(t);
+  const authority={jwt_secret:'local-mixed-stream-test-authority-only'};
+  await h.setSite(authority);
+  const token=await generateToken({},authority);
+  const [legacy,viewer]=await Promise.all([h.socket(),h.viewer({Authorization:`Bearer ${token}`})]);
+  await snapshot(legacy);
+  await snapshot(viewer);
+  await h.setSite({...authority,is_public:'false'});
+  await h.upload(39);
+  await snapshot(viewer,nodes=>nodes[0]?.metrics?.cpu===39);
+  assert.equal(await Promise.race([legacy.closed,sleep(12000).then(()=>0)]),1008);
+  const candidates=await Promise.all([h.socket(),h.viewer({Authorization:`Bearer ${token}`})]);
+  assert.equal(candidates[0].status,401);
+  assert.equal(candidates[1].status,101);
+  await snapshot(candidates[1]);
+});
+
+test('Turnstile viewer streams reject forged receipts and close expired receipts before policy-refreshed frames',async t=>{
+  const h=await fixture(t);
+  const authority={jwt_secret:'local-turnstile-stream-test-authority-only',turnstile_enabled:true};
+  await h.setSite(authority);
+  assert.equal((await h.viewer({'X-Turnstile-Verified':'forged'})).status,403);
+  const receipt=await encryptTurnstileData({verified:true,expires:Math.floor(Date.now()/1000)+3},{},authority);
+  const viewer=await h.viewer({'X-Turnstile-Verified':receipt});
+  await snapshot(viewer);
+  assert.equal(await Promise.race([viewer.closed,sleep(12000).then(()=>0)]),1008);
+  assert.equal((await h.viewer({'X-Turnstile-Verified':receipt})).status,403);
+});
 
 async function snapshot(peer, predicate = () => true, timeout) {
   assert.equal(peer.status, 101);
@@ -206,7 +261,7 @@ test('only upgrades from the exact compatibility origin may opt in and access fa
   }
   // Miniflare's network proxy drops empty header values; exercise the handler directly for this value.
   const emptyOrigin = new Request(ORIGIN + '/api/ws', { headers: { ...UPGRADE, Origin: '' } });
-  assert.equal((await workerEntry.fetch(emptyOrigin, { MONITOR_COMPAT_HOST: HOST })).status, 403);
+  assert.equal((await workerEntry.fetch(emptyOrigin, { MONITOR_COMPAT_HOST: HOST, MONITOR_FRONTEND_MODE: 'legacy' })).status, 403);
   const internalPath = '/monitor-compat-live';
   assert.equal((await h.socket({ path: internalPath })).status, 404);
   for (const origin of [LEGACY, 'https://metrics.internal']) {

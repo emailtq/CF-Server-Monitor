@@ -118,10 +118,11 @@ jobs:
 
           echo "✅ wrangler.toml 已生成"
 
-      - name: Configure optional Monitor compatibility host
+      - name: Configure Minimal frontend and optional legacy recovery
         env:
           MONITOR_COMPAT_HOST: ${{ vars.MONITOR_COMPAT_HOST }}
           MONITOR_COMPAT_THEME: ${{ vars.MONITOR_COMPAT_THEME }}
+          MONITOR_FRONTEND_MODE: ${{ vars.MONITOR_FRONTEND_MODE }}
         run: node scripts/monitor-theme-vars.mjs >> wrangler.toml
 
       # wrangler v4 的 `deploy` 会自动根据 wrangler.toml 中的 [[durable_objects.bindings]]

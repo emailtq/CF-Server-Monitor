@@ -483,17 +483,13 @@ Built-in sources include Cloudflare Turnstile, Cloudflare Analytics, Google Font
 
 ## Themes and Appearance
 
-The project includes a built-in theme and supports:
+The Worker homepage now serves the original Minimal Monitor **Default v1.4.3** without a separate hostname. **Admin → Themes** lets you select **ServerStatus v1.5.1**, preview either release, restore the deployment choice, and toggle Default's summary. D1 selection takes precedence over `MONITOR_COMPAT_THEME`; neither set means Default.
 
-- Dark / light display
-- Chinese / English frontend switch
-- Custom background, favicon, CSS, and `<head>`
-- Mikus mode
-- Theme store
-- Third-party GitHub tree theme URLs
-- Admin-only theme preview
+The frontend retains the selected release's layout, light/dark appearance and interactions. CF admin remains available. Edit the site title under Settings; admin language/theme and price, expiry and traffic visibility controls remain available. Legacy CF backgrounds, Mikus, GitHub tree themes and global `theme_options` do not control the new homepage.
 
-Third-party themes only proxy `index.html` and `assets/` from the theme repository. The admin panel always uses the built-in theme. For custom theme development, see:
+Private sites continue to use CF administrator sessions. Global Turnstile opens an access gate and remembers successful verification for one hour in an HttpOnly cookie. APIs and live streams enforce the same access policy. Old `/#/server/<UUID>` links redirect to stable numeric `/node/:id` links; Agent and existing CF API entry points remain usable.
+
+Deploy `MONITOR_FRONTEND_MODE=legacy` to restore the previous Worker frontend. Legacy appearance settings remain stored, and the separately deployed GitHub Pages frontend is not migrated. See [monitor-themes/README.md](monitor-themes/README.md) for bundled releases, configuration and local preview. Legacy CF protocol theme development references:
 
 - [theme-ai-prompt.md](theme-ai-prompt.md): Theme development AI prompt — paste the whole block into an AI coding assistant; includes the core data flow, D1 consumption rules and a pre-delivery checklist (Chinese)
 - [theme-develop.md](theme-develop.md): Full API field reference and auth details

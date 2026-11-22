@@ -32,6 +32,7 @@ const props = defineProps({
   servers: { type: Array, default: () => [] },
   passwordVisible: { type: Object, required: true },
   activeTab: { type: String, default: 'settings' },
+  monitorFrontend: { type: Boolean, default: false },
   selectedApiBase: { type: String, default: '' },
   currentOrigin: { type: String, default: '' },
   saving: { type: Boolean, default: false },

@@ -11,7 +11,7 @@
         {{ trans.currentTheme }}: <strong>{{ themeName(state.effective) }}</strong>
         <span v-if="state.selected === null"> · {{ trans.monitorThemeDeployment }}</span>
       </p>
-      <p class="text-secondary monitor-note">{{ state.hostname ? trans.monitorThemeHost.replace('{host}', state.hostname) : trans.monitorThemeHostDisabled }}</p>
+      <p class="text-secondary monitor-note">{{ state.defaultFrontend ? trans.monitorThemeDefaultHome : state.hostname ? trans.monitorThemeHost.replace('{host}', state.hostname) : trans.monitorThemeHostDisabled }}</p>
       <p v-if="state.previewStatus !== 200" class="warning-box">{{ previewReason }}</p>
       <div class="monitor-theme-list">
         <article v-for="theme in state.themes" :key="theme.short" class="monitor-theme" :class="{ selected: state.effective === theme.short }">
@@ -50,7 +50,7 @@ import { adminApi } from '../../../utils/api'
 import AdminDialog from './AdminDialog.vue'
 
 const props = defineProps({ trans: { type: Object, required: true }, activeTab: String, selectedApiIndex: Number, requestOwner: Function })
-const emit = defineEmits(['alert-message'])
+const emit = defineEmits(['alert-message', 'frontend-mode'])
 const state = ref(null)
 const busy = ref(false)
 const error = ref('')
@@ -84,7 +84,7 @@ const request = async data => {
 }
 const load = async () => {
   const result = await request({ action: 'get_monitor_themes' })
-  if (result) state.value = result
+  if (result) { state.value = result; emit('frontend-mode', result.defaultFrontend === true) }
 }
 const select = async theme => {
   const result = await request({ action: 'select_monitor_theme', theme })
@@ -116,6 +116,7 @@ watch(() => props.activeTab, tab => { if (tab === 'themeStore' && !state.value) 
 <style scoped>
 .monitor-theme-manager { margin-bottom: 28px; }
 .monitor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.monitor-heading .btn { flex-shrink: 0; min-width: max-content; }
 .monitor-heading h3, .monitor-heading h4 { margin: 0; }
 .monitor-heading h4 { font-size: 16px; }
 .monitor-status { margin: 14px 0 6px; }
@@ -124,7 +125,7 @@ watch(() => props.activeTab, tab => { if (tab === 'themeStore' && !state.value) 
 .monitor-theme { padding: 16px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-card); }
 .monitor-theme.selected { border-color: var(--accent-green); }
 .monitor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.monitor-actions .btn { flex: 1; white-space: nowrap; }
+.monitor-actions .btn { flex: 1 1 auto; min-width: max-content; white-space: nowrap; }
 .monitor-follow { margin-top: 12px; }
 .monitor-field { align-items: flex-start; }
 .monitor-field-help { display: block; margin: 6px 0 0; }

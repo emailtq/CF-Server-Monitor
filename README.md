@@ -484,17 +484,13 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 
 ## 主题与外观
 
-项目内置默认主题，并支持：
+Worker 首页默认直接使用极简探针原版 **Default v1.4.3**，无需配置独立 hostname。后台「主题商店」可切换到 **ServerStatus v1.5.1**、预览及恢复沿用部署选择；Default 的设置可关闭顶部汇总区。D1 选择优先于 `MONITOR_COMPAT_THEME`，两者未设置时使用 Default。
 
-- 深色 / 浅色显示
-- 前台中文 / 英文切换
-- 自定义背景图、favicon、CSS、`<head>`
-- Mikus 模式
-- 主题商店
-- 第三方主题 GitHub tree 地址
-- 管理员预览主题
+前台沿用所选原版主题的布局、深浅色及交互，后台仍使用 CF 管理界面。站名在「设置」修改；后台语言/深浅色及费用、到期、流量显示开关保留。旧 CF 背景、Mikus、GitHub tree 主题和全局 `theme_options` 不控制新的极简首页。
 
-第三方主题只反代主题仓库中的 `index.html` 与 `assets/`，管理后台仍使用内置主题。开发自定义主题请参考：
+私有站继续使用 CF 管理员会话；全局 Turnstile 会先显示验证页，通过后以 HttpOnly Cookie 记住一小时。API 和实时连接执行同一权限检查。旧 `/#/server/<UUID>` 详情链接自动跳转到稳定数字 ID 的 `/node/:id`，原 Agent 和 CF API 客户端入口保留。
+
+恢复旧 Worker 前台可部署 `MONITOR_FRONTEND_MODE=legacy`；原 CF 外观和第三方主题设置保留，GitHub Pages 独立前端不随此次切换迁移。打包版本、配置与开发预览见 [monitor-themes/README.md](monitor-themes/README.md)。旧 CF 协议主题开发资料：
 
 - [theme-ai-prompt.md](theme-ai-prompt.md)：主题开发 AI 提示词，开发者直接整段粘贴给 AI 编码助手使用，内含数据流、D1 消耗铁律和完工自查清单
 - [theme-develop.md](theme-develop.md)：完整 API 字段定义与鉴权说明

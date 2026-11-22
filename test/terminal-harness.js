@@ -13,7 +13,7 @@ export async function issueTestTerminalToken(db, serverId, now = Date.now()) {
   return {...issued, enabled:true};
 }
 
-export async function harness({apiSecret = 'test-report-secret', traceD1 = false, outboundService} = {}) {
+export async function harness({apiSecret = 'test-report-secret', traceD1 = false, outboundService, frontendMode} = {}) {
   const source = `
     import worker from './src/index.js';
     import { TerminalBroker } from './src/durable/TerminalBroker.js';
@@ -252,7 +252,7 @@ export async function harness({apiSecret = 'test-report-secret', traceD1 = false
     }};
   `;
   const output = await build({ stdin: { contents: source, resolveDir: process.cwd(), sourcefile: 'terminal-test.js' }, bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*'] });
-  const mf = new Miniflare({ ...(outboundService ? {outboundService} : {}), modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: apiSecret ? {API_SECRET:apiSecret} : {} });
+  const mf = new Miniflare({ ...(outboundService ? {outboundService} : {}), modules: true, script: output.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'terminal-test' }, durableObjects: { TERMINAL_BROKER: {className: 'TestBroker', useSQLite: true}, METRICS_BROADCASTER: {className: 'TestMetricsBroadcaster', useSQLite: true} }, bindings: { ...(apiSecret ? {API_SECRET:apiSecret} : {}), ...(frontendMode ? {MONITOR_FRONTEND_MODE:frontendMode} : {}) } });
   let db, token, otherToken, nodes, startupPhase = 'runtime-start';
   try {
     db = await mf.getD1Database('DB');

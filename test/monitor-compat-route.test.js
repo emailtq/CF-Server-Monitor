@@ -24,7 +24,7 @@ async function settingsFixture(t) {
 
   return {
     db,
-    env: { DB: db, MONITOR_COMPAT_HOST: HOST },
+    env: { DB: db, MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST },
     set: (key, value) => db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
       .bind(key, typeof value === 'string' ? value : JSON.stringify(value)).run()
   };
@@ -56,7 +56,7 @@ test('only the configured exact hostname enters the compatibility router', async
   }
 
   const response = await request(`${ORIGIN}:8443`, '/admin/', {
-    MONITOR_COMPAT_HOST: HOST.toUpperCase()
+    MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST.toUpperCase()
   }, { headers: { Host: 'monitor.example.test', 'X-Forwarded-Host': 'monitor.example.test' } });
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('Location'), `${ORIGIN}:8443/admin#/admin`);
@@ -72,13 +72,13 @@ test('only the configured exact hostname enters the compatibility router', async
   }
 
   const exactUrl = new URL(`${ORIGIN}/not-a-monitor-route`);
-  const exactCompat = await handleMonitorCompat(new Request(exactUrl), { MONITOR_COMPAT_HOST: HOST }, exactUrl);
+  const exactCompat = await handleMonitorCompat(new Request(exactUrl), { MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST }, exactUrl);
   assert.equal(exactCompat.status, 404);
 });
 
 test('matched host keeps agent, legacy and unknown routes isolated', async () => {
   const env = {
-    MONITOR_COMPAT_HOST: HOST,
+    MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST,
     CORS_ALLOWED_ORIGINS: LEGACY_ORIGIN,
     get DB() { assert.fail('unexpected settings or agent DB read'); },
     ASSETS: null

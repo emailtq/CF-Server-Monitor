@@ -1,7 +1,7 @@
 <template>
   <div class="settings-grid">
     <div class="settings-section"><h3 class="section-title">{{ trans.adminInterface }}</h3><div class="form-row"><div class="form-group"><label class="form-label" for="current-language">{{ trans.language }}</label><select id="current-language" class="form-select admin-language-select" :value="currentLang" @change="changeLanguage"><option v-for="language in languages" :key="language.code" :value="language.code">{{ language.nativeLabel }}</option></select></div><div class="form-group"><label class="form-label" for="current-theme">{{ trans.theme }}</label><select id="current-theme" class="form-select admin-theme-select" :value="currentTheme" @change="setTheme($event.target.value)"><option value="auto">{{ trans.themeAuto }}</option><option value="light">{{ trans.themeLight }}</option><option value="dark">{{ trans.themeDark }}</option></select></div></div></div>
-<div class="settings-section" v-if="canEditSiteSettings">
+<div class="settings-section" v-if="canEditSiteSettings && !monitorFrontend">
         <div class="section-title">{{ trans.appearance }}</div>
 
         <div class="form-row">
@@ -103,7 +103,7 @@
           </div>
         </div>
       </div>
-<div class="settings-section" v-if="canEditSiteSettings">
+<div class="settings-section" v-if="canEditSiteSettings && !monitorFrontend">
         <div class="section-title">{{ trans.appearance }}</div>
 
         <div class="form-row admin-aligned-fields">
@@ -157,7 +157,7 @@
             <input type="checkbox" id="cfg_show_tf" :aria-label="trans.showTf" data-setting-field="show_tf" v-model="settings.show_tf">
             <span>{{ trans.showTf }}</span>
           </label>
-          <label class="form-group flex-1 checkbox-item">
+          <label v-if="!monitorFrontend" class="form-group flex-1 checkbox-item">
             <input type="checkbox" id="cfg_show_three_net_details" :aria-label="trans.showThreeNetDetails" data-setting-field="show_three_net_details" v-model="settings.show_three_net_details">
             <span>{{ trans.showThreeNetDetails }}</span>
           </label>
@@ -185,7 +185,7 @@ const changed = event => { currentLang.value = event.detail.lang }
 onMounted(() => window.addEventListener('languageChanged', changed))
 onBeforeUnmount(() => window.removeEventListener('languageChanged', changed))
 import HelpTooltip from './AdminHelp.vue'
-const props = defineProps({ trans: Object, settings: Object, passwordVisible: Object, canEditSiteSettings: Boolean, cspErrors: Object, pingNodeErrors: Object, userAgentInvalid: Boolean, changeAdminPassword: Boolean, d1UsageLoading: Boolean })
+const props = defineProps({ trans: Object, settings: Object, monitorFrontend: Boolean, passwordVisible: Object, canEditSiteSettings: Boolean, cspErrors: Object, pingNodeErrors: Object, userAgentInvalid: Boolean, changeAdminPassword: Boolean, d1UsageLoading: Boolean })
 defineEmits(['toggle-password', 'toggle-admin-password-change', 'upload-bg', 'upload-bg-mobile', 'upload-favicon', 'query-d1-usage', 'validate-csp'])
 import { LANGUAGES } from '../../../locales'
 const languages = LANGUAGES

@@ -30,7 +30,7 @@ async function fixture(t) {
     db.prepare(createHistoryTableSql('metrics_history')),
     db.prepare("INSERT INTO settings VALUES ('site_options', '{\"is_public\":\"true\"}')")
   ]);
-  const env = { DB: db, MONITOR_COMPAT_HOST: HOST };
+  const env = { DB: db, MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST };
   return {
     db, env,
     request: options => worker.fetch(new Request(`https://${HOST}/api/nodes`, options), env),

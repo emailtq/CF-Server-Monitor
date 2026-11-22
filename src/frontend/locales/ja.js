@@ -1,4 +1,5 @@
 export default {
+  monitorThemeDefaultHome: "既定のホームページに Minimal テーマを直接使用します。",
   monitorThemes: "Minimal Monitor テーマ",
   monitorDefaultName: "Default",
   monitorDefaultDescription: "ノードカードと概要を表示する白黒のステータス画面。",

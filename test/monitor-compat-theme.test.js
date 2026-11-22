@@ -28,7 +28,7 @@ test('opt-in default theme serves only original allowlisted bytes through the pr
   const js = new Uint8Array([0, 1, 2, 255]);
   const env = {
     DB: EMPTY_THEME_DB,
-    MONITOR_COMPAT_HOST: HOST,
+    MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST,
     MONITOR_COMPAT_THEME: 'default',
     ASSETS: createAssets({
       '/_monitor_theme/default/index.html': { body: index, headers: { 'Content-Type': 'text/html' } },
@@ -61,7 +61,7 @@ test('serverstatus serves its own landing and numeric node deep links; HEAD omit
   const seen = [];
   const env = {
     DB: EMPTY_THEME_DB,
-    MONITOR_COMPAT_HOST: HOST,
+    MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST,
     MONITOR_COMPAT_THEME: 'serverstatus',
     ASSETS: createAssets({
       '/_monitor_theme/serverstatus/index.html': { body: 'serverstatus index' }
@@ -84,7 +84,7 @@ test('unknown, unsafe, missing, disabled and invalid theme routes never fall bac
   let calls = 0;
   const env = {
     DB: EMPTY_THEME_DB,
-    MONITOR_COMPAT_HOST: HOST,
+    MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST,
     MONITOR_COMPAT_THEME: 'default',
     ASSETS: { async fetch() { calls++; return new Response('Not Found', { status: 404 }); } }
   };
@@ -107,7 +107,7 @@ test('unknown, unsafe, missing, disabled and invalid theme routes never fall bac
     const invalid = { ...env, MONITOR_COMPAT_THEME: theme };
     assert.equal((await request('/', invalid)).status, 503, theme);
   }
-  const fallback = { DB: EMPTY_THEME_DB, MONITOR_COMPAT_HOST: HOST, ASSETS: env.ASSETS };
+  const fallback = { DB: EMPTY_THEME_DB, MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST, ASSETS: env.ASSETS };
   assert.equal((await request('/', fallback)).status, 404, 'absent selection tries Default; missing package stays an error');
   assert.equal(calls, 2);
 });
@@ -115,7 +115,7 @@ test('unknown, unsafe, missing, disabled and invalid theme routes never fall bac
 test('theme routes remain gated by the exact host and do not replace the compatibility API', async () => {
   let calls = 0;
   const env = {
-    MONITOR_COMPAT_HOST: HOST,
+    MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: HOST,
     MONITOR_COMPAT_THEME: 'default',
     ASSETS: { async fetch() { calls++; return new Response('should not fetch'); } }
   };

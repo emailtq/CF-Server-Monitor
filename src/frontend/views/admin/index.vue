@@ -60,7 +60,7 @@
         />
 
         <LatencyTasks v-if="latencyVisited || activeTab === 'collection'" v-show="activeTab === 'collection'" :active="activeTab === 'collection'" :key="siteGeneration" :trans="trans" :servers="servers" :selected-api-index="selectedApiIndex" :site-generation="siteGeneration" @activated="settings.latency_tasks_active = true" />
-        <MonitorThemeManager v-show="activeTab === 'themeStore'" :key="'monitor-theme-' + siteGeneration" :trans="trans" :active-tab="activeTab" :selected-api-index="selectedApiIndex" :request-owner="requestOwner" @alert-message="alertMessage = $event" />
+        <MonitorThemeManager v-show="activeTab === 'themeStore'" :key="'monitor-theme-' + siteGeneration" :trans="trans" :active-tab="activeTab" :selected-api-index="selectedApiIndex" :request-owner="requestOwner" @frontend-mode="monitorDefaultFrontend = $event" @alert-message="alertMessage = $event" />
         <SettingsPanel
           :api-bases="apiBases"
           :is-multiple-mode="isMultipleMode"
@@ -74,6 +74,7 @@
           :servers="servers"
           :password-visible="passwordVisible"
           :active-tab="activeTab"
+          :monitor-frontend="monitorDefaultFrontend"
           :selected-api-base="selectedApiBase"
           :current-origin="currentOrigin"
           :saving="saving"
@@ -102,6 +103,7 @@
         />
 
         <ThemeStorePanel
+          v-if="!monitorDefaultFrontend"
           :request-owner="requestOwner"
           :key="'theme-' + siteGeneration"
           :trans="trans"
@@ -514,6 +516,7 @@ import LatencyTasks from './components/LatencyTasks.vue'
 import DatabasePanel from './components/DatabasePanel.vue'
 import ThemeStorePanel from './components/ThemeStorePanel.vue'
 import MonitorThemeManager from './components/MonitorThemeManager.vue'
+const monitorDefaultFrontend = ref(true)
 import DonationPanel from './components/DonationPanel.vue'
 import AddServerModal from './components/AddServerModal.vue'
 import UpdatesPanel from './components/UpdatesPanel.vue'

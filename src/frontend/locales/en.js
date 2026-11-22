@@ -1,4 +1,5 @@
 export default {
+  monitorThemeDefaultHome: "The default homepage uses the Minimal theme directly.",
   monitorThemes: "Minimal Monitor themes",
   monitorDefaultName: "Default",
   monitorDefaultDescription: "Black-and-white status panel with node cards and a summary.",

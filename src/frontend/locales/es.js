@@ -1,4 +1,5 @@
 export default {
+  monitorThemeDefaultHome: "La página de inicio usa directamente el tema Minimal.",
   monitorThemes: "Temas Minimal Monitor",
   monitorDefaultName: "Default",
   monitorDefaultDescription: "Panel en blanco y negro con tarjetas de nodos y resumen.",

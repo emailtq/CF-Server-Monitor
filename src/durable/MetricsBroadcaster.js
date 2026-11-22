@@ -22,6 +22,7 @@ import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
 import { getWssReportScheduleState, loadSiteSettings } from '../utils/settings.js';
 import { loadMonitorCompatAccess, MONITOR_COMPAT_LIVE_URL } from '../services/monitorCompatAccess.js';
+import { loadMonitorViewerPolicy, authorizeMonitorViewer, MONITOR_VIEWER_LIVE_URL } from '../services/monitorViewerAccess.js';
 import { loadMonitorCompatBaseline, projectMonitorCompatSnapshot } from '../services/monitorCompatSnapshot.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
@@ -311,6 +312,7 @@ export class MetricsBroadcaster {
     this.monitorCompatTimer = null;
     this.monitorCompatState = null;
     this.monitorCompatRefresh = null;
+    this.monitorViewerContexts = new Map();
 
     // 自动响应 ping 心跳，DO 无需被唤醒
     // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketRequestResponsePair
@@ -481,15 +483,22 @@ export class MetricsBroadcaster {
     return !!upgradeHeader && upgradeHeader.toLowerCase() === 'websocket';
   }
 
-  async _refreshMonitorCompat(checkAccess = false) {
+  async _refreshMonitorCompat(checkAccess = false, incomingViewerPolicy = null) {
     if (this.monitorCompatRefresh) return this.monitorCompatRefresh;
     const previous = this.monitorCompatState;
     if (!checkAccess && previous && Date.now() < previous.expiresAt) return 200;
 
     this.monitorCompatRefresh = (async () => {
       const startedAt = Date.now();
-      const { status, display } = await loadMonitorCompatAccess(this.env.DB);
-      if (status !== 200) return status;
+      const policy = incomingViewerPolicy || (this.monitorViewerContexts.size ? await loadMonitorViewerPolicy(this.env) : await loadMonitorCompatAccess(this.env.DB));
+      const { status, display } = policy;
+      if (status === 503) return status;
+      for (const ws of this.monitorCompatSockets) {
+        const context = this.monitorViewerContexts.get(ws);
+        const allowed = context ? await authorizeMonitorViewer(context, this.env, policy) : policy;
+        if (allowed.status !== 200) this._closeMonitorCompatSocket(ws, allowed.status);
+      }
+      if (status !== 200 && !incomingViewerPolicy && this.monitorViewerContexts.size === 0) return status;
 
       if (previous && previous === this.monitorCompatState && Date.now() < previous.expiresAt) {
         if (Object.keys(display).some(key => previous.display[key] !== display[key])) {
@@ -522,6 +531,7 @@ export class MetricsBroadcaster {
   }
 
   _forgetMonitorCompatSocket(ws) {
+    this.monitorViewerContexts.delete(ws);
     if (this.monitorCompatSockets.delete(ws) && this.monitorCompatSockets.size === 0) {
       clearTimeout(this.monitorCompatTimer);
       this.monitorCompatTimer = null;
@@ -564,14 +574,24 @@ export class MetricsBroadcaster {
     this.monitorCompatTimer = timer;
   }
 
-  async _openMonitorCompatSocket(request) {
+  async _openMonitorCompatSocket(request, viewer = false) {
     if (!this._isWebSocketUpgrade(request)) return new Response('Expected WebSocket upgrade request', { status: 426 });
     if (this.monitorCompatSockets.size + this.monitorCompatPending >= MONITOR_MAX_SOCKETS) {
       return new Response('Too many connections', { status: 503, headers: { 'Retry-After': '10', 'Cache-Control': 'no-store' } });
     }
     this.monitorCompatPending++;
     try {
-      const status = await this._refreshMonitorCompat(true);
+      let viewerPolicy = null;
+      if (viewer) {
+        viewerPolicy = await loadMonitorViewerPolicy(this.env);
+        const access = await authorizeMonitorViewer(request, this.env, viewerPolicy);
+        if (access.status !== 200) return Response.json({ error: 'Viewer access denied' }, { status: access.status, headers: { 'Cache-Control': 'no-store' } });
+        } else {
+          // A concurrent authenticated viewer refresh cannot authorize a public-only handshake.
+          const access = await loadMonitorCompatAccess(this.env.DB);
+          if (access.status !== 200) return Response.json({ error: 'Public access denied' }, { status: access.status, headers: { 'Cache-Control': 'no-store' } });
+      }
+      const status = await this._refreshMonitorCompat(true, viewerPolicy);
       if (status !== 200) {
         const error = status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Service Unavailable';
         return Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -586,6 +606,7 @@ export class MetricsBroadcaster {
       });
       server.addEventListener('error', () => this._closeMonitorCompatSocket(server));
       this.monitorCompatSockets.add(server);
+      if (viewer) this.monitorViewerContexts.set(server, { headers: new Headers(request.headers) });
       try { server.send(frame); } catch (error) {
         this._closeMonitorCompatSocket(server);
         throw error;
@@ -1803,6 +1824,9 @@ export class MetricsBroadcaster {
     const method = request.method;
     if (method === 'GET' && request.url === MONITOR_COMPAT_LIVE_URL) {
       return this._openMonitorCompatSocket(request);
+    }
+    if (method === 'GET' && request.url === MONITOR_VIEWER_LIVE_URL) {
+      return this._openMonitorCompatSocket(request, true);
     }
     if (method === 'POST' && url.origin === 'https://metrics.internal' && path === '/panel-login-event') {
       const event = await request.json();

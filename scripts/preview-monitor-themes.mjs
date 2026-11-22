@@ -23,7 +23,7 @@ const bundle = await build({ stdin: { resolveDir: root, contents: `
         return new Response('<!doctype html><script>localStorage.setItem("jwt_token",'+JSON.stringify(env.FIXTURE_ADMIN_TOKEN)+');localStorage.setItem("language_preference",'+JSON.stringify(url.searchParams.get('lang') === 'en' ? 'en' : 'zh')+');location.replace("/admin#/admin?tab=themeStore")</script>', {headers:{'Content-Type':'text/html','Cache-Control':'no-store'}});
       }
       if (url.pathname === '/theme') return Response.json({themes:[],schema:1});
-      if (url.pathname.startsWith('/static/') || url.pathname.startsWith('/mikus/') || ['/manifest.json','/favicon.png','/favicon.ico'].includes(url.pathname)) return env.ASSETS.fetch(request);
+      if (['/static/','/mikus/','/flags/','/os-icons/'].some(prefix=>url.pathname.startsWith(prefix)) || ['/manifest.json','/favicon.png','/favicon.ico'].includes(url.pathname)) return env.ASSETS.fetch(request);
       return worker.fetch(request, env, ctx);
     } };
   ` }, bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*'] });
@@ -38,7 +38,7 @@ const assets = async request => {
     return new Response(request.method === 'HEAD' ? null : body, { headers: { 'Content-Type': contentTypes[ext] || 'application/octet-stream' } });
   } catch { return new Response('Not Found', { status: 404 }); }
 };
-const mf = new Miniflare({ modules: true, script: bundle.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'monitor-theme-preview' }, durableObjects: { METRICS_BROADCASTER: { className: 'PreviewHub', useSQLite: true } }, serviceBindings: { ASSETS: assets }, bindings: { MONITOR_COMPAT_HOST: host, MONITOR_COMPAT_THEME: theme, FIXTURE_ADMIN_TOKEN: adminToken } });
+const mf = new Miniflare({ ...(process.argv[3] ? { port: Number(process.argv[3]) } : {}), modules: true, script: bundle.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'monitor-theme-preview' }, durableObjects: { METRICS_BROADCASTER: { className: 'PreviewHub', useSQLite: true } }, serviceBindings: { ASSETS: assets }, bindings: { MONITOR_COMPAT_HOST: host, MONITOR_COMPAT_THEME: theme, FIXTURE_ADMIN_TOKEN: adminToken } });
 const db = await mf.getD1Database('DB');
 const now = Math.floor(Date.now() / 1000) * 1000;
 await db.batch([

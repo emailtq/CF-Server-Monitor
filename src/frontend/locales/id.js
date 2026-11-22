@@ -1,4 +1,5 @@
 export default {
+  monitorThemeDefaultHome: "Beranda bawaan langsung menggunakan tema Minimal.",
   monitorThemes: "Tema Minimal Monitor",
   monitorDefaultName: "Default",
   monitorDefaultDescription: "Panel hitam-putih dengan kartu node dan ringkasan.",

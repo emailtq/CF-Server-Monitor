@@ -29,7 +29,7 @@ async function fixture(t) {
   const sys = { jwt_secret: 'local-fixture-secret-not-a-real-credential', is_public: 'true' };
   const set = (key, value) => db.prepare('INSERT OR REPLACE INTO settings VALUES (?, ?)').bind(key, JSON.stringify(value)).run();
   await set('site_options', sys);
-  const env = { DB: db, MONITOR_COMPAT_HOST: 'theme.example.test', ASSETS: { fetch: async req => {
+  const env = { DB: db, MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: 'theme.example.test', ASSETS: { fetch: async req => {
     const p = new URL(req.url).pathname;
     return /\/(index.html|assets\/app.js)$/.test(p) ? new Response(p, { headers: { 'Content-Type': p.endsWith('.js') ? 'application/javascript' : 'text/html' } }) : new Response('Not Found', { status: 404 });
   } } };

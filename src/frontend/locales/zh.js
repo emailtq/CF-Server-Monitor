@@ -1,4 +1,5 @@
 export default {
+  monitorThemeDefaultHome: "默认首页直接使用极简主题。",
   monitorThemes: "极简探针主题",
   monitorDefaultName: "Default 默认主题",
   monitorDefaultDescription: "黑白状态面板，显示节点卡片与汇总。",

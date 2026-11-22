@@ -32,14 +32,13 @@ export async function loadMonitorCompatAccess(db) {
     const title = setting('appearance_options', 'site_title');
     const siteName = typeof title === 'string' && title ? title : DEFAULT_SITE_TITLE;
     const turnstile = setting('site_options', 'turnstile_enabled');
-    if (turnstile === 'true' || turnstile === true) return { status: 403, siteName };
-    if (turnstile !== undefined && turnstile !== 'false' && turnstile !== false) return unavailable;
-
-    if (setting('site_options', 'is_public') !== 'true') return { status: 401, siteName };
+    if (turnstile !== undefined && !['true', true, 'false', false].includes(turnstile)) return unavailable;
     const enabled = key => [undefined, true, 'true'].includes(setting('site_options', key));
+    const publicSite = setting('site_options', 'is_public') === 'true';
+    const turnstileEnabled = turnstile === 'true' || turnstile === true;
     return {
-      status: 200,
-      siteName,
+      status: turnstileEnabled ? 403 : publicSite ? 200 : 401,
+      siteName, publicSite, turnstileEnabled,
       display: { showPrice: enabled('show_price'), showExpire: enabled('show_expire'), showTraffic: enabled('show_tf') }
     };
   } catch {

@@ -183,7 +183,8 @@ try {
     if (url.href === 'https://raw.githubusercontent.com/example/theme/main/index.html') return new Response('<!doctype html><title>Local fixture theme</title>', { headers: { 'Content-Type': 'text/html' } });
     return new Response('', { status: 404 });
   };
-  a = await harness({ outboundService: upstream }); b = await harness({ outboundService: upstream });
+  // This matrix exercises the retained CF appearance/third-party controls, not the new Minimal homepage.
+  a = await harness({ outboundService: upstream, frontendMode:'legacy' }); b = await harness({ outboundService: upstream, frontendMode:'legacy' });
   for (const [h, title] of [[a, 'Site A'], [b, 'Site B']]) {
     await saveSiteOptions(h.db, { is_public: 'true', site_title: title, username: 'fixture', theme_url: '', last_agent_version: 'v9.8.7' });
     assert.equal((await h.action('save_settings', { settings: { username: 'fixture', password: 'fixture-password' } })).status, 200);

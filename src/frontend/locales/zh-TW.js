@@ -1,4 +1,5 @@
 export default {
+  monitorThemeDefaultHome: "預設首頁直接使用極簡主題。",
   monitorThemes: "極簡探針主題",
   monitorDefaultName: "Default 預設主題",
   monitorDefaultDescription: "黑白狀態面板，顯示節點卡片與彙總。",

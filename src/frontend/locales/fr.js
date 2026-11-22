@@ -1,4 +1,5 @@
 export default {
+  monitorThemeDefaultHome: "La page d’accueil utilise directement le thème Minimal.",
   monitorThemes: "Thèmes Minimal Monitor",
   monitorDefaultName: "Default",
   monitorDefaultDescription: "Panneau noir et blanc avec cartes des nœuds et résumé.",
