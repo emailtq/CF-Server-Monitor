@@ -27,3 +27,32 @@ To enable the compatibility host in GitHub Actions deployments, set the reposito
 variable set, the compatibility host remains disabled; no hostname is configured by default.
 Invalid or incomplete values fail the deployment configuration step rather than producing a
 partially configured host.
+
+## Choose and configure from CF admin
+
+Open **Admin → Themes → Minimal Monitor themes**. Preview either bundled release, select
+one for the Monitor entry, or choose **Follow deployment**. A saved D1 selection takes
+precedence over `MONITOR_COMPAT_THEME`; with neither selected, Default is used. This does
+not enable the hostname or change the ordinary CF homepage. The legacy GitHub-theme and
+Mikus controls remain separate.
+
+Default's **Show summary** setting is its manifest-declared boolean. Saving `false` hides
+the original four summary blocks; **Restore defaults** stores `{}`, allowing the release's
+own default `true`. ServerStatus declares no settings and has no empty settings dialog.
+Selection and per-theme overrides use dedicated settings rows and are included in server
+settings backups as `settings.monitor_theme`; deployment bindings are not backed up.
+Invalid authoritative state is an error, not a fallback theme.
+
+Preview requires the existing administrator preview authentication and an explicitly public,
+unchallenged site. It never saves a global selection. The `monitor_preview` URL context is
+preserved across the original SPA's navigation and WebSockets by a small **preview-only
+HTML response bootstrap**. Vendored files and normal public HTML are unchanged. Root-relative
+assets and APIs use the same authenticated context, with no-store responses; normal homepage
+requests do not consume a theme-selection cookie. Private-site and Turnstile theme sessions,
+and runtime archive installation, are not included.
+
+For isolated development QA, build with `npm run build:frontend`, then run
+`npm run preview:monitor-theme -- default`. The script prints a Monitor hostname URL and a
+local-only auto-login `/_fixture/admin` URL; `localhost` on the same printed port exercises
+the unmatched CF homepage and authenticated preview. All data and fixture login authority
+are ephemeral, with no Cloudflare credentials or production connection.

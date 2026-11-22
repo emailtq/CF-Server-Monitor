@@ -4,6 +4,7 @@ import worker from '../src/index.js';
 
 const HOST = 'theme.example.test';
 const ORIGIN = `https://${HOST}`;
+const EMPTY_THEME_DB = { prepare() { return { bind() { return this; }, async all() { return { success: true, results: [] }; } }; } };
 
 function createAssets(files, seen = []) {
   return {
@@ -26,6 +27,7 @@ test('opt-in default theme serves only original allowlisted bytes through the pr
   const index = '<html><script src="/assets/app.js"></script></html>';
   const js = new Uint8Array([0, 1, 2, 255]);
   const env = {
+    DB: EMPTY_THEME_DB,
     MONITOR_COMPAT_HOST: HOST,
     MONITOR_COMPAT_THEME: 'default',
     ASSETS: createAssets({
@@ -58,6 +60,7 @@ test('opt-in default theme serves only original allowlisted bytes through the pr
 test('serverstatus serves its own landing and numeric node deep links; HEAD omits the body', async () => {
   const seen = [];
   const env = {
+    DB: EMPTY_THEME_DB,
     MONITOR_COMPAT_HOST: HOST,
     MONITOR_COMPAT_THEME: 'serverstatus',
     ASSETS: createAssets({
@@ -80,6 +83,7 @@ test('serverstatus serves its own landing and numeric node deep links; HEAD omit
 test('unknown, unsafe, missing, disabled and invalid theme routes never fall back to HTML', async () => {
   let calls = 0;
   const env = {
+    DB: EMPTY_THEME_DB,
     MONITOR_COMPAT_HOST: HOST,
     MONITOR_COMPAT_THEME: 'default',
     ASSETS: { async fetch() { calls++; return new Response('Not Found', { status: 404 }); } }
@@ -101,11 +105,11 @@ test('unknown, unsafe, missing, disabled and invalid theme routes never fall bac
   }
   for (const theme of ['Default', 'server-status', 'other', '']) {
     const invalid = { ...env, MONITOR_COMPAT_THEME: theme };
-    assert.equal((await request('/', invalid)).status, 404, theme);
+    assert.equal((await request('/', invalid)).status, 503, theme);
   }
-  const disabled = { MONITOR_COMPAT_HOST: HOST, ASSETS: env.ASSETS };
-  assert.equal((await request('/', disabled)).status, 404);
-  assert.equal(calls, 1);
+  const fallback = { DB: EMPTY_THEME_DB, MONITOR_COMPAT_HOST: HOST, ASSETS: env.ASSETS };
+  assert.equal((await request('/', fallback)).status, 404, 'absent selection tries Default; missing package stays an error');
+  assert.equal(calls, 2);
 });
 
 test('theme routes remain gated by the exact host and do not replace the compatibility API', async () => {

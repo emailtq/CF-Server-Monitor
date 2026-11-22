@@ -81,7 +81,7 @@ test('matched host keeps agent, legacy and unknown routes isolated', async () =>
     MONITOR_COMPAT_HOST: HOST,
     CORS_ALLOWED_ORIGINS: LEGACY_ORIGIN,
     get DB() { assert.fail('unexpected settings or agent DB read'); },
-    get ASSETS() { assert.fail('unexpected asset fallback'); }
+    ASSETS: null
   };
   for (const [method, path] of [
     ['GET', '/'], ['GET', '/api/agent/terminal/example'],

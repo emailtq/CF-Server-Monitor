@@ -2,13 +2,14 @@ import { loadMonitorCompatAccess, MONITOR_COMPAT_LIVE_URL } from '../services/mo
 import { createNotFoundResponse } from '../utils/errors.js';
 import { loadMonitorCompatSnapshot } from '../services/monitorCompatSnapshot.js';
 import { loadMonitorCompatHistory } from '../services/monitorCompatHistory.js';
+import { loadMonitorThemes } from '../services/monitorThemes.js';
+import { MONITOR_DNS_HOSTNAME, MONITOR_PREVIEW_PARAM } from '../shared/monitorThemes.js';
+import { resolveMonitorPreview, monitorPreviewHtml } from './monitorThemePreview.js';
 
 // Retain the existing export for callers of the access gate.
 export { loadMonitorCompatAccess };
 
-const DNS_HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const NO_STORE = { 'Cache-Control': 'no-store' };
-const MONITOR_COMPAT_THEMES = new Set(['default', 'serverstatus']);
 const MONITOR_ADMIN_GET_PATHS = new Set([
   '/admin', '/admin/', '/api/config', '/theme'
 ]);
@@ -23,7 +24,7 @@ function isMonitorAdminRoute(request, pathname) {
     /^\/admin\/api\/terminal\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/ws$/.test(pathname);
 }
 
-function monitorCompatThemePath(pathname, theme) {
+function monitorCompatThemePath(pathname) {
   const nodePath = /^\/node\/([1-9]\d*)$/.exec(pathname);
   if (pathname === '/' || (nodePath && Number.isSafeInteger(Number(nodePath[1])))) return 'index.html';
   if (pathname === '/favicon.svg' || pathname === '/apple-touch-icon.png') return pathname.slice(1);
@@ -41,25 +42,42 @@ function monitorCompatThemePath(pathname, theme) {
   return `assets/${parts.map(encodeURIComponent).join('/')}`;
 }
 
-async function serveMonitorCompatTheme(request, env, url) {
-  const theme = typeof env.MONITOR_COMPAT_THEME === 'string' ? env.MONITOR_COMPAT_THEME : '';
-  if (!MONITOR_COMPAT_THEMES.has(theme) || !env.ASSETS || !['GET', 'HEAD'].includes(request.method)) return null;
-
-  const relativePath = monitorCompatThemePath(url.pathname, theme);
+async function serveMonitorCompatTheme(request, env, url, preview) {
+  if (!['GET', 'HEAD'].includes(request.method)) return null;
+  const relativePath = monitorCompatThemePath(url.pathname);
   if (!relativePath) return null;
+  if (!env.ASSETS) return createNotFoundResponse();
+  // Dynamic imports and CSS URLs use the parent resource as Referer, not the preview document.
+  if (preview && relativePath.startsWith('assets/') && !url.searchParams.has(MONITOR_PREVIEW_PARAM)) {
+    const target = new URL(url);
+    target.searchParams.set(MONITOR_PREVIEW_PARAM, preview.short);
+    return new Response(null, { status: 307, headers: { ...NO_STORE, Location: target.toString(), Vary: 'Cookie, Referer' } });
+  }
   let response;
   try {
+    const theme = preview?.short || (await loadMonitorThemes(env.DB, env.MONITOR_COMPAT_THEME)).effective;
     response = await env.ASSETS.fetch(new Request(`http://monitor-theme/_monitor_theme/${theme}/${relativePath}${url.search}`, {
       method: request.method
     }));
-  } catch {
-    return createNotFoundResponse();
+  } catch (error) {
+    return error?.message === 'monitorThemeUnavailable'
+      ? Response.json({ error: 'monitorThemeUnavailable' }, { status: 503, headers: NO_STORE }) : createNotFoundResponse();
   }
   if (!response.ok) return createNotFoundResponse();
-  if (request.method === 'HEAD') {
-    return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', 'no-store');
+  headers.set('Vary', 'Cookie, Referer');
+  headers.set('Referrer-Policy', 'same-origin');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('X-Frame-Options', 'DENY');
+  headers.delete('CDN-Cache-Control');
+  if (preview && relativePath === 'index.html') {
+    headers.delete('Content-Length');
+    headers.delete('ETag');
   }
-  return response;
+  const body = request.method === 'HEAD' ? null : preview && relativePath === 'index.html'
+    ? monitorPreviewHtml(await response.text(), preview.short) : response.body;
+  return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function openMonitorCompatSocket(request, env, url) {
@@ -82,14 +100,21 @@ async function openMonitorCompatSocket(request, env, url) {
 }
 
 export async function handleMonitorCompat(request, env, url) {
+  // Admin previews carry an authenticated document context, never a global theme-selection cookie.
+  const preview = await resolveMonitorPreview(request, env, url);
+  if (preview?.status) return Response.json({ error: preview.error }, { status: preview.status, headers: NO_STORE });
   const host = env.MONITOR_COMPAT_HOST;
-  if (typeof host !== 'string' || host.length > 253 || !DNS_HOSTNAME.test(host) ||
-      url.hostname !== host.toLowerCase()) return null;
+  if (!preview && (typeof host !== 'string' || host.length > 253 || !MONITOR_DNS_HOSTNAME.test(host) ||
+      url.hostname !== host.toLowerCase())) return null;
 
   // Let the existing CF admin handlers enforce their auth, Turnstile, and terminal checks.
   if (isMonitorAdminRoute(request, url.pathname)) return null;
 
-  const themeResponse = await serveMonitorCompatTheme(request, env, url);
+  if (preview) {
+    const access = await loadMonitorCompatAccess(env.DB);
+    if (access.status !== 200) return Response.json({ error: access.status === 401 ? 'monitorPreviewPrivate' : access.status === 403 ? 'monitorPreviewTurnstile' : 'monitorThemeUnavailable' }, { status: access.status, headers: NO_STORE });
+  }
+  const themeResponse = await serveMonitorCompatTheme(request, env, url, preview);
   if (themeResponse) return themeResponse;
 
   const isMe = url.pathname === '/api/me';
@@ -111,7 +136,7 @@ export async function handleMonitorCompat(request, env, url) {
       return Response.json({ error }, { status, headers: NO_STORE });
     }
     try {
-      if (isDefaultConfig) return Response.json({}, { headers: NO_STORE });
+      if (isDefaultConfig) return Response.json((await loadMonitorThemes(env.DB)).configs.default, { headers: NO_STORE });
       if (isNodes) return Response.json(await loadMonitorCompatSnapshot(env, { display }), { headers: NO_STORE });
       const result = await loadMonitorCompatHistory(env.DB, historyId, url.searchParams);
       if (result === null) return createNotFoundResponse();

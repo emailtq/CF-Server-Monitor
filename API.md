@@ -1111,7 +1111,7 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 
 ### 2.8 极简探针主题兼容 API
 
-实现以 Monitor v1.5.2 和 Default v1.4.3 的公开读取协议为基线。此接口默认关闭。仅当 `MONITOR_COMPAT_HOST` 配置为独立、完整的 DNS 主机名（不带协议、端口或通配符），且请求已由 Cloudflare 交给 Worker 并精确匹配该 hostname 时，才使用下列路由。不识别转发头，也不以 Cookie、UA 或 `?gzip` 区分协议。该主机上的其他路径在 Worker 内返回 `404`，不回落到 CF 前台、后台、Agent 或终端；Cloudflare 静态资源优先规则仍由部署配置决定。原站 `/api/ws` 继续使用 §2.5 的 CF 协议。此阶段不绑定生产主机、不安装或切换主题。
+实现以 Monitor v1.5.2、Default v1.4.3 和 ServerStatus v1.5.1 的公开读取协议为基线。普通公开请求仅在 `MONITOR_COMPAT_HOST` 是完整 DNS 主机名（不带协议、端口或通配符）、请求已交给 Worker 且精确匹配该 hostname 时启用。不识别转发头、UA 或 `?gzip`。未配置或不匹配的主机仍使用原 CF 协议；管理员授权预览是下节所述的独立入口。Monitor 主机保留现有 CF 后台、`/api/config`、`/theme`、数据库维护及精确终端 WebSocket 路径，仍由原处理器鉴权；其他未知路径在 Worker 内返回 `404`。Cloudflare 静态资源优先规则仍由部署配置决定。原站 `/api/ws` 继续使用 §2.5 的 CF 协议。
 
 接口仅接受 `GET`，使用原生 JSON，不包裹 CF 的 `status/data`。除 `/api/me` 外，站点必须明确公开且未启用全局 Turnstile；私有站返回 `401`，开启全局 Turnstile 返回 `403`，读取失败返回 `503`。不接受 CF 管理员凭据，也不提供私有只读会话或人机验证。响应不开放浏览器跨域读取。
 
@@ -1120,12 +1120,31 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 | `/api/me` | `{"authed":false,"github":false,"public_page":true,"site_name":"站点名称","history_days":1}`；不能匿名读取（含配置读取失败）时 `public_page` 为 `false`。 |
 | `/api/nodes` | `{"nodes":[…],"admin":false}`；仅含可见节点，按 CF 排序。正整数 `id` 与节点 UUID 持久映射，删除后不分配给其他节点。 |
 | `/api/nodes/:id/metrics?hours=&points=&series=` | `{"metrics":[…],"ping":[…],"probes":{},"loss":{},"step":60}`；`step` 为实际采样步长（秒）。先从节点快照取得 ID；映射表初始化之前返回 `503`，之后隐藏、删除或无映射的节点返回 `404`。`hours` 默认 6、限于 1–24；`points` 默认 240、限于 60–240；省略 `series` 返回两类数据，`metrics` 或 `ping` 只返回所选类别。无效数字或重复参数返回 `400`，有效范围内无样本返回空数组，查询繁忙返回 `503`。 |
-| `/api/themes/default/config` | `{}`，由 Default 主题使用自己的默认值；其他主题 `short` 未开放，不读取 CF 全局 `theme_options`。 |
+| `/api/themes/default/config` | D1 保存的公开覆盖值，如 `{"show_summary":false}`；无覆盖或恢复默认时为 `{}`，Default 使用原版默认值 `true`。读取/格式损坏返回 `503`。不读取 CF 全局 `theme_options`，其他主题 `short` 未开放。 |
 | `/api/ws` | WebSocket `101`。首帧及其后约每 2 秒为完整的 `/api/nodes` 快照，编码为文本 JSON。接受 `?gzip`，但仍发送文本；无需发送订阅消息，客户端应用消息不会修改订阅，不发送 CF `hello` 或增量。 |
 
 **数据差异：**快照使用 CF 的 5 分钟在线定义；`last_seen` 和历史 `ts` 用 Unix 秒，容量、速率及累计流量分别用字节、字节/秒及字节。离线或缺少必需采样时 `metrics` 为 `null`。地址和虚拟化信息不对外提供；计费及流量遵守 CF 展示开关，累计数据用 CF Agent 计数，不模拟 Monitor 的历史累计、日流量或周期开始时间。历史资源点来自 CF D1 的已有采样，不表示精确均值或峰值；探测点包含 `task_id`、`ts`、`latency`（毫秒；明确超时为 `null`）及可用的采样 `loss`，`probes` 映射任务 ID 到公开标签；汇总 `loss` 保持 `{}`，不估算窗口丢包和中位数。
 
 **实时限制：**仅允许无 `Origin` 的客户端或 `Origin` 精确等于请求自己的 origin（含协议及端口）；其他显式 origin（含 `null`）拒绝，普通 GET 返回 `426`。全局广播对象最多接收 64 个此协议连接（含正在握手的连接）；满额时在读取权限前返回 `503`。其余握手读取当前公开权限。推送以单一共享时钟合并 D1 基线和较新的实时样本；活跃期间约每 10 秒更新一次权限、节点可见性及展示数据（到期后在下一帧前重读，不继续发送过期快照）。关闭最后一个兼容连接时停止定时刷新。站点变为私有或启用 Turnstile 时关闭现有连接（`1008`）；数据读取或推送失败关闭为 `1013`，客户端可退避重连。此专用流使用标准 WebSocket，订阅活跃时会保持 Durable Object 运行；不占用 Agent 授权 alarm，也不改变原站的 WebSocket 休眠设置。
+
+#### 2.8.1 后台管理已打包的主题
+
+后台「主题商店」上方的「极简探针主题」独立管理 Default / ServerStatus；原 CF GitHub 主题地址与 Mikus 控制保留。仅在明确配置的 Monitor hostname 上，D1 选择优先于 `MONITOR_COMPAT_THEME`，两者均未选择时使用 Default。显式无效部署值或损坏的 D1 状态返回 `503`，不静默切换。
+
+以下操作均为已登录管理员的 `POST /admin/api`，响应 `Cache-Control: no-store`：
+
+| action | 输入与结果 |
+| --- | --- |
+| `get_monitor_themes` | 返回 canonical manifest `themes`、`selected`（未选择为 `null`）、`effective`、逐主题 `configs`、有效 `hostname` 或 `null`、`previewStatus`。 |
+| `select_monitor_theme` | `theme` 为 `default`、`serverstatus`；`null` 恢复沿用部署选择。返回更新后的管理状态。 |
+| `save_monitor_theme_config` | `theme` 和 `config` 对象；Default 只接受布尔 `show_summary`，ServerStatus 只接受 `{}`。`{}` 恢复该主题默认值，其他主题配置不变。默认值不重复存储。 |
+| `start_monitor_theme_preview` | `theme` 为两个合法 short 之一；与既有 CF 预览一样使用 Bearer 登录，返回 `preview_url` 并设置安全的 HttpOnly `cfsm_theme_preview_auth` Cookie。URL 不携带 JWT。私有站/全局 Turnstile 返回 `409` 与明确原因。 |
+
+主题数据使用独立 settings 行 `monitor_theme_selection`、`monitor_theme_config:default`、`monitor_theme_config:serverstatus`，不覆盖旧站点/外观行。服务器设置备份的 `settings.monitor_theme` 包含 `{selected,configs}`；导入前校验全部字段和类型，缺少该字段的旧备份不更改极简主题，不迁移 hostname 或部署变量。未知主题、配置字段/类型返回 `400 monitorThemeInvalid`，存储故障返回 `503 monitorThemeUnavailable`。
+
+**预览上下文：**预览从 `/?monitor_preview=<short>` 开始。每次 HTML、资源、API 与实时连接都验证既有预览登录凭据，仍只使用公开、未启用全局 Turnstile 的节点数据。查询参数或 Cookie 单独不能授权；普通首页不因预览 Cookie 切换主题。根相对资源/API 从同源预览文档或模块的 Referer 取得 short。预览资源先以 `307` 跳转至带 short 的同源 URL，使动态 JS 导入和 CSS 资源也能传递上下文；WebSocket 通过同样的查询参数带上下文。原 SPA 的详情导航会去掉查询参数，因此仅预览 HTML 响应添加一个导航/实时 URL 上下文脚本，保持各标签的主题独立。正式 HTML、所有打包 JS/CSS 文件保持原字节；预览与主题资源响应均不缓存。退出预览使用普通首页 URL。
+
+本能力不启用生产 hostname，不安装任意主题压缩包，不提供私有站/Turnstile 的完整主题会话。
 
 ***
 

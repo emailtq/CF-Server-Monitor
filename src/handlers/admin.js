@@ -30,6 +30,9 @@ import { LEGACY_NOTIFICATION_FIELDS } from '../utils/settings.js';
 import { checkAgentImage } from '../utils/agentImage.js';
 import { changeLatencyTasks, migrateLatencyConfig, loadLatencyTasks } from '../database/latencyTasks.js';
 import { validateLatencyBackup, withLegacyLatencyHistory } from '../shared/latencyTasks.js';
+import { handleMonitorThemeAdmin } from './monitorThemeAdmin.js';
+import { loadMonitorThemes, importMonitorThemes } from '../services/monitorThemes.js';
+import { validMonitorThemeBackup } from '../shared/monitorThemes.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -676,6 +679,12 @@ async function handleSaveThemeOptionsAction({ env, sys, data }) {
   });
 }
 
+async function handleStartMonitorThemePreviewAction(context) {
+  const token = extractBearerToken(context.request);
+  if (!token) return simpleAuthResponse();
+  return handleMonitorThemeAdmin({ ...context, previewAuthCookie: buildThemePreviewAuthCookie(context.request, token) });
+}
+
 async function handleListAction({ env, data, sys }) {
   if (data.metadataIds !== undefined) {
     const ids = data.metadataIds;
@@ -846,6 +855,10 @@ async function handleSendTestNotificationAction({ env, data }) {
 }
 
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
+  get_monitor_themes: handleMonitorThemeAdmin,
+  select_monitor_theme: handleMonitorThemeAdmin,
+  save_monitor_theme_config: handleMonitorThemeAdmin,
+  start_monitor_theme_preview: handleStartMonitorThemePreviewAction,
   agent_install_image: async ({data}) => createSuccessResponse(await checkAgentImage(data.tag)),
   get_notification_config: handleNotificationConfigAction,
   get_login_event_status: handleNotificationConfigAction,
@@ -955,7 +968,9 @@ async function applyImportedSettings({ env, sys, settings, notificationConfig, s
   const ignoredFields = [...new Set([...site.ignoredFields, ...appearance.ignoredFields])];
 
   const notification = notificationConfig ? await importNotificationConfig(env.DB, notificationConfig, serverIdMap) : null;
-  if (siteFields.length === 0 && appearanceFields.length === 0 && !notification) {
+  const monitorTheme = settings && Object.hasOwn(settings, 'monitor_theme');
+  if (monitorTheme) await importMonitorThemes(env.DB, settings.monitor_theme);
+  if (siteFields.length === 0 && appearanceFields.length === 0 && !notification && !monitorTheme) {
     return { imported: false, site: 0, appearance: 0, ignoredFields };
   }
 
@@ -1476,10 +1491,11 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         const siteSettings = await loadSiteSettings(env.DB);
         const appearanceSettings = await loadAppearanceOptions(env.DB);
         const notificationConfig = data.includeNotificationSecrets ? await loadNotificationConfig(env.DB, siteSettings) : null;
+        const { selected, configs } = await loadMonitorThemes(env.DB);
         return createSuccessResponse({
           success: true,
           servers: (servers.results || []).map(({terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at, ...server}) => server),
-          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), ...(siteSettings.latency_tasks ? { latency_tasks: siteSettings.latency_tasks } : {}), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
+          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), monitor_theme: { selected, configs }, ...(siteSettings.latency_tasks ? { latency_tasks: siteSettings.latency_tasks } : {}), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
           ...(notificationConfig ? { notificationBackup: { sensitive: true, warning: 'notification_backup_contains_credentials' } } : {}),
           message: 'serversExported'
         });
@@ -1490,6 +1506,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     }
     else if (data.action === 'import_servers') {
       const { servers: importData, settings: importSettings } = data;
+      if (importSettings && Object.hasOwn(importSettings, 'monitor_theme') && !validMonitorThemeBackup(importSettings.monitor_theme)) return createBadRequestResponse('monitorThemeInvalid');
       if (importSettings?.latency_tasks && !validateLatencyBackup(importSettings.latency_tasks, validatePingNode)) return createBadRequestResponse('invalidLatencyTask');
       let notificationConfig;
       try {

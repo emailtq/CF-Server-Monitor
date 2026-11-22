@@ -275,7 +275,7 @@ function buildClearPreviewCookie(request) {
   return `${PREVIEW_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax${secure}`;
 }
 
-async function checkPreviewAuth(request, env, settings) {
+export async function checkPreviewAuth(request, env, settings) {
   const token = getCookie(request, PREVIEW_AUTH_COOKIE);
   if (!token) return false;
 
