@@ -60,7 +60,7 @@
         />
 
         <LatencyTasks v-if="latencyVisited || activeTab === 'collection'" v-show="activeTab === 'collection'" :active="activeTab === 'collection'" :key="siteGeneration" :trans="trans" :servers="servers" :selected-api-index="selectedApiIndex" :site-generation="siteGeneration" @activated="settings.latency_tasks_active = true" />
-        <MonitorThemeManager v-show="activeTab === 'themeStore'" :key="'monitor-theme-' + siteGeneration" :trans="trans" :active-tab="activeTab" :selected-api-index="selectedApiIndex" :request-owner="requestOwner" @frontend-mode="monitorDefaultFrontend = $event" @alert-message="alertMessage = $event" />
+        <MonitorThemeManager v-show="activeTab === 'themeStore'" :key="'monitor-theme-' + siteGeneration" :trans="trans" :active-tab="activeTab" :selected-api-index="selectedApiIndex" :request-owner="requestOwner" @frontend-mode="monitorDefaultFrontend = $event" />
         <SettingsPanel
           :api-bases="apiBases"
           :is-multiple-mode="isMultipleMode"

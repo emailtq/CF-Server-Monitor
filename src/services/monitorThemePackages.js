@@ -47,20 +47,22 @@ export async function loadMonitorRelease(db, revision) {
 
 export async function loadMonitorThemeCatalog(db) {
   const { registry } = await loadMonitorPackageRegistry(db);
-  const themes = MONITOR_THEMES.map(theme => ({ ...theme, builtin: true, revision: `builtin-${theme.short}` }));
+  const themes = MONITOR_THEMES.map(theme => ({ ...theme, builtin: true, preview: theme.short === 'default', revision: `builtin-${theme.short}` }));
   // Registry size is bounded; read manifest rows in one D1 query, never read credentials.
   if (Object.keys(registry).length) {
     const keys = Object.values(registry).map(releaseKey);
     try {
       const { success, results } = await db.prepare(`SELECT key, json_object('manifest',json_extract(value,'$.manifest'),
-        'revision',json_extract(value,'$.revision'),'repository',json_extract(value,'$.repository')) AS value
+        'revision',json_extract(value,'$.revision'),'repository',json_extract(value,'$.repository'),
+        'preview',json_extract(value,'$.preview')) AS value
         FROM settings WHERE key IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(keys)).all();
       if (!success || results.length !== keys.length) throw unavailable();
       for (const row of results) {
         const release = JSON.parse(row.value), manifest = release.manifest;
         if (!manifest || !validMonitorShort(manifest.short) || registry[manifest.short] !== release.revision || row.key !== releaseKey(release.revision)) throw unavailable();
         const theme = { ...manifest, builtin: false, revision: release.revision,
-          canUpdate: !!release.repository || /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(manifest.url) };
+          preview: !!release.preview || manifest.short === 'default',
+          canUpdate: !!release.repository || /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:[/?#]|$)/.test(manifest.url) };
         const i = themes.findIndex(item => item.short === theme.short);
         if (i < 0) themes.push(theme); else themes[i] = theme;
       }
@@ -90,7 +92,7 @@ export async function installMonitorTheme(env, archive, { expectedShort, reposit
   if (!env.DB) throw new AppError('monitorThemeStorageUnavailable', 503);
   if (expectedShort !== undefined && !validMonitorShort(expectedShort)) throw invalid();
   const initial = await loadMonitorPackageRegistry(env.DB);
-  if (expectedRevision !== undefined && (!expectedShort || initial.registry[expectedShort] !== expectedRevision)) throw new AppError('monitorThemeConflict', 409);
+  if (expectedRevision !== undefined && (!expectedShort || (Object.hasOwn(initial.registry, expectedShort) ? initial.registry[expectedShort] : null) !== expectedRevision)) throw new AppError('monitorThemeConflict', 409);
   const revision = crypto.randomUUID();
   try {
     // Create only for runtime installs; builtin readers keep their existing database contract.
@@ -164,6 +166,25 @@ export async function readMonitorThemeFile(env, short, relativePath, revision = 
   if (!env.DB) throw new AppError('monitorThemeStorageUnavailable', 503);
   const entry = Object.hasOwn(release.files, path) ? release.files[path] : null;
   if (!entry) return null;
+  return readReleaseEntry(env, release, entry, path, method, origin);
+}
+
+export async function readMonitorThemeThumbnail(env, short) {
+  if (!validMonitorShort(short)) throw invalid();
+  const release = await resolveMonitorThemeRelease(env, short);
+  if (!release || release.manifest.short !== short) return null;
+  if (!release.preview) {
+    if (short !== 'default' || !env.ASSETS) return null;
+    const response = await env.ASSETS.fetch(new Request('http://monitor-theme/_monitor_theme_metadata/default/preview.png'));
+    return response.ok ? response : null;
+  }
+  const entry = release.preview;
+  if (!Number.isSafeInteger(entry.offset) || entry.offset < 0 || !Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > 8 * 1024 * 1024 || entry.offset + entry.size > release.size) throw unavailable();
+  return readReleaseEntry(env, release, entry, 'preview.png', 'GET', null);
+}
+
+async function readReleaseEntry(env, release, entry, path, method, origin) {
+  const revision = release.revision;
   const headers = new Headers({ 'Content-Type': mimes[path.split('.').pop().toLowerCase()] || 'application/octet-stream', 'Content-Length': String(entry.size) });
   const cacheKey = origin ? new Request(`${origin}/_monitor_theme/cache/${revision}/${path.split('/').map(encodeURIComponent).join('/')}`) : null;
   const cache = cacheKey && typeof caches !== 'undefined' ? caches.default : null;

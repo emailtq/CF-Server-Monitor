@@ -1140,8 +1140,9 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 | `get_monitor_themes` | 返回内置与已安装 manifest `themes`（含 `builtin`、`revision` 及动态主题 `canUpdate`）、`selected`（未选择为 `null`）、`effective`、逐主题 `configs`、`runtimeStorage`、`defaultFrontend`、有效 `hostname` 或 `null`、`previewStatus`。 |
 | `select_monitor_theme` | `theme` 为已安装 short；`null` 恢复沿用部署选择。返回更新后的管理状态。 |
 | `save_monitor_theme_config` | `theme` 和最多 64 KiB 的 `config` 对象。内置 Default 仍接受布尔 `show_summary`；动态主题按原生 manifest 字段类型和范围校验，保留版本未知覆盖键。`{}` 重置该主题，其他主题不变；与 manifest 相同的默认值不重复存储。 |
-| `install_monitor_theme` | `repository` 为完整 `https://github.com/owner/repository`；安装最新 Release 的 `theme.tar.gz`。复用现有 D1，无需额外存储绑定；要求登录、精确同源 Origin 和 viewer 验证。安装不写入选择，返回完整管理状态。 |
-| `update_monitor_theme` | `theme` 为动态安装 short，从其 GitHub 源重装最新原包；包内 short 必须相同，保留配置和已发布旧 revision。与安装相同的权限要求。 |
+| `install_monitor_theme` | `repository` 为 `https://github.com/owner/repository` 或 `github.com/owner/repository`；也接受 Releases、分支、文件页和查询/锚点链接，只取 owner/repository，始终安装最新 Release 的 `theme.tar.gz`。复用现有 D1，无需额外存储绑定；要求登录、精确同源 Origin 和 viewer 验证。安装不写入选择，返回完整管理状态。 |
+| `get_monitor_theme_thumbnail` | `theme` 为安装主题 short；返回原包根目录 `preview.png` 的原始 PNG 字节（不是 JSON），没有图片为 404。Default 无自带图时使用固定内置预览图。要求登录、同源 Origin 和 viewer 验证，不放宽原有 CSP。 |
+| `update_monitor_theme` | `theme` 为已安装或内置主题 short；先查询 GitHub 最新 Release，去除 tag 前缀 `v` 后与 manifest 版本相同则不下载或写入，返回 `updated: false` 与 `version`。否则安装同 short 最新原包，返回 `updated: true`，保留配置和已发布旧 revision。与安装相同的权限要求。 |
 | `delete_monitor_theme` | `theme` 为动态安装 short，移除 active registry 指针；同名内置包恢复，否则实际页面回到 Default。保留配置和旧 revision，操作不删除旧版 D1 文件行。要求登录、同源 Origin 和 viewer 验证。 |
 | `start_monitor_theme_preview` | `theme` 为已安装 short；与既有 CF 预览一样使用 Bearer 登录，返回包含 short/revision 的 `preview_url` 并设置安全的 HttpOnly `cfsm_theme_preview_auth` Cookie。URL 不携带 JWT。默认模式下私有站可用有效管理员权限预览；Turnstile 仍须先验证。不能读取时返回 `409` 与明确原因。 |
 

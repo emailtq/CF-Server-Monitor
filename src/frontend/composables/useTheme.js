@@ -34,11 +34,20 @@ const resolveTheme = (theme) => {
 
 const applyTheme = (theme) => {
   const resolved = resolveTheme(theme);
-  document.body.classList.remove("dark", "light");
-  if (resolved !== "dark") {
-    document.body.classList.add(resolved);
+  const hold = document.querySelector('.monitor-theme-manager') ? document.createElement('style') : null;
+  if (hold) {
+    // Minimal switches palettes atomically; keep the hold scoped to the new theme surfaces.
+    hold.textContent = '.monitor-theme-manager,.monitor-theme-manager *,.admin-dialog[class*="admin-dialog-monitor"],.admin-dialog[class*="admin-dialog-monitor"] *,.monitor-help-panel{transition:none!important}';
+    document.head.append(hold);
   }
-  themeChangeCallbacks.forEach((cb) => cb(resolved));
+  try {
+    document.body.classList.remove("dark", "light");
+    if (resolved !== "dark") document.body.classList.add(resolved);
+    themeChangeCallbacks.forEach((cb) => cb(resolved));
+    if (hold) void document.body.offsetWidth;
+  } finally {
+    hold?.remove();
+  }
 };
 
 // 模块级媒体查询监听器:仅注册一次,系统明暗变化且处于 auto 模式时实时切换

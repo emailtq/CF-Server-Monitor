@@ -114,7 +114,7 @@ const handleResponse = async (res, options = {}) => {
   }
   
   try {
-    const data = await res.json()
+    const data = options.responseType === 'blob' ? await res.blob() : await res.json()
     if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
     if (data && data.turnstile_verified) {
       localStorage.setItem(TURNSTILE_VERIFIED_KEY, data.turnstile_verified)
@@ -154,7 +154,7 @@ const request = async (method, url, body, options = {}) => {
       credentials: 'include',
       signal: options.signal
     }, timeoutMs)
-    return { ...(await handleResponse(res, { autoRedirect, baseUrl: base, responsePolicy: options.responsePolicy, requestOwner: options.requestOwner })), baseUrl: base }
+    return { ...(await handleResponse(res, { autoRedirect, baseUrl: base, responsePolicy: options.responsePolicy, responseType: options.responseType, requestOwner: options.requestOwner })), baseUrl: base }
   } catch (e) {
     if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
     if (e.name === 'AbortError') {
@@ -177,7 +177,7 @@ const fetchWithBase = async (baseUrl, url, options, method = 'GET', body = null)
       credentials: 'include',
       signal: options.signal
     }, timeoutMs)
-    const result = await handleResponse(res, { autoRedirect, baseUrl, responsePolicy: options.responsePolicy, requestOwner: options.requestOwner })
+    const result = await handleResponse(res, { autoRedirect, baseUrl, responsePolicy: options.responsePolicy, responseType: options.responseType, requestOwner: options.requestOwner })
     return { ...result, baseUrl }
   } catch (e) {
     if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0, baseUrl }

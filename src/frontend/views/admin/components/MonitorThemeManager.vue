@@ -1,110 +1,132 @@
 <template>
-  <section class="settings-section monitor-theme-manager" :aria-label="trans.monitorThemes">
-    <div class="monitor-heading">
-      <h3 class="section-title">{{ trans.monitorThemes }}</h3>
-      <div class="monitor-actions">
-        <button type="button" class="btn btn-sm btn-primary" :disabled="busy || !state?.runtimeStorage" @click="installing = true">{{ trans.monitorThemeInstall }}</button>
-        <button type="button" class="btn btn-sm" :disabled="busy" @click="load">{{ trans.refresh }}</button>
-      </div>
-    </div>
-    <p v-if="error" class="danger-box" role="alert">{{ error }}</p>
+  <section class="monitor-theme-manager" :aria-label="trans.monitorThemes">
+    <p v-if="error && !state" class="danger-box" role="alert">{{ error }}</p>
     <p v-if="!state && !error" class="text-secondary" role="status">{{ trans.themeStoreLoading }}</p>
     <template v-if="state">
-      <p class="monitor-status">
-        {{ trans.currentTheme }}: <strong>{{ themeName(state.effective) }}</strong>
-        <span v-if="state.selected === null"> · {{ trans.monitorThemeDeployment }}</span>
-      </p>
-      <p class="text-secondary monitor-note">{{ state.defaultFrontend ? trans.monitorThemeDefaultHome : state.hostname ? trans.monitorThemeHost.replace('{host}', state.hostname) : trans.monitorThemeHostDisabled }}</p>
+      <div class="monitor-install-card">
+        <div>
+          <div class="monitor-install-heading">
+            <h4>{{ trans.monitorThemeInstall }}</h4>
+            <MonitorThemeHelp :text="trans.monitorThemeInstallHint" :label="trans.monitorThemeHelp" />
+            <a class="monitor-install-button monitor-browse" href="https://monitor-themes.pages.dev" target="_blank" rel="noopener noreferrer"><AdminIcon name="palette" />{{ trans.monitorThemeBrowse }}</a>
+          </div>
+          <p class="monitor-install-trust">{{ trans.monitorThemeTrust }}</p>
+        </div>
+        <form id="monitor-install-form" @submit.prevent="install()">
+          <input id="monitor-theme-repository" v-model="repository" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" :placeholder="trans.monitorThemeRepository" :aria-label="trans.monitorThemeRepository" :disabled="busy || !state.runtimeStorage">
+          <button type="submit" class="monitor-install-button monitor-install-primary" :disabled="busy || !state.runtimeStorage || !repository.trim()"><AdminIcon name="download" />{{ installing === 'github' ? trans.monitorThemeInstalling : trans.monitorThemeFromGitHub }}</button>
+          <button type="button" class="monitor-install-button" :disabled="busy || !state.runtimeStorage" @click="picker?.click()"><AdminIcon name="upload" />{{ installing === 'upload' ? trans.monitorThemeInstalling : trans.monitorThemeUpload }}</button>
+          <input id="monitor-theme-archive" ref="picker" type="file" accept=".gz,.tgz,application/gzip" hidden :disabled="busy || !state.runtimeStorage" @change="upload">
+        </form>
+      </div>
+      <p v-if="!state.defaultFrontend" class="text-secondary monitor-note">{{ state.hostname ? trans.monitorThemeHost.replace('{host}', state.hostname) : trans.monitorThemeHostDisabled }}</p>
       <p v-if="!state.runtimeStorage" class="warning-box">{{ trans.monitorThemeStorageUnavailable }}</p>
       <p v-if="state.previewStatus !== 200" class="warning-box">{{ previewReason }}</p>
       <div class="monitor-theme-list">
-        <article v-for="theme in state.themes" :key="theme.short" class="monitor-theme" :class="{ selected: state.effective === theme.short }">
-          <div class="monitor-heading">
-            <h4>{{ themeName(theme.short) }}</h4>
-            <span class="text-secondary">v{{ theme.version }}</span>
+        <article v-for="theme in state.themes" :key="theme.short" class="monitor-theme">
+          <button v-if="theme.preview" type="button" class="monitor-thumbnail" :disabled="!images[theme.revision]" :title="trans.monitorThemeThumbnail" @click="zoomed = theme"><img v-if="images[theme.revision]" :src="images[theme.revision]" :alt="`${themeName(theme.short)} ${trans.monitorThemePreviewImage}`"><span v-else class="monitor-thumbnail-placeholder" aria-busy="true" /></button>
+          <div class="monitor-theme-heading">
+            <div class="monitor-theme-info">
+              <div class="monitor-theme-name"><h4>{{ themeName(theme.short) }}</h4><span v-if="state.effective === theme.short" class="monitor-badge">{{ trans.monitorThemeCurrent }}</span><span v-if="theme.builtin" class="monitor-badge monitor-badge-secondary">{{ trans.monitorThemeBuiltin }}</span></div>
+              <p class="monitor-theme-description">{{ theme.builtin ? theme.short === 'default' ? trans.monitorDefaultDescription : trans.monitorServerStatusDescription : theme.description }}</p>
+            </div>
+            <div class="monitor-theme-actions">
+              <button type="button" class="monitor-install-button" :class="state.effective === theme.short ? 'monitor-use-current' : 'monitor-install-primary'" :disabled="busy || state.effective === theme.short" @click="select(theme.short)">{{ state.effective === theme.short ? trans.monitorThemeUsing : trans.monitorThemeUse }}</button>
+              <button v-if="monitorConfigForm(theme.config).length" type="button" class="monitor-icon-button" :disabled="busy" :title="trans.monitorThemeSettings" :aria-label="trans.monitorThemeSettings" @click="configure(theme)"><AdminIcon name="sliders-horizontal" /></button>
+              <button v-if="theme.canUpdate || theme.builtin" type="button" class="monitor-icon-button" :disabled="busy || !state.runtimeStorage" :title="trans.monitorThemeUpdate" :aria-label="trans.monitorThemeUpdate" @click="update(theme)"><AdminIcon name="refresh-cw" :class="{ 'monitor-spin': updating === theme.short }" /></button>
+              <button v-if="!theme.builtin" type="button" class="monitor-icon-button" :disabled="busy" :title="trans.monitorThemeRemove" :aria-label="trans.monitorThemeRemove" @click="confirming = theme"><AdminIcon name="trash-2" /></button>
+            </div>
           </div>
-          <p class="text-secondary monitor-note">{{ theme.builtin ? theme.short === 'default' ? trans.monitorDefaultDescription : trans.monitorServerStatusDescription : theme.description }}</p>
-          <div class="monitor-actions">
-            <button type="button" class="btn btn-sm" :disabled="busy || state.previewStatus !== 200" @click="preview(theme.short)">{{ trans.preview }}</button>
-            <button type="button" class="btn btn-sm btn-primary" :disabled="busy || state.selected === theme.short" @click="select(theme.short)">{{ state.selected === theme.short ? trans.monitorThemeSelected : trans.switchTheme }}</button>
-            <button v-if="monitorConfigForm(theme.config).length" type="button" class="btn btn-sm" :disabled="busy" @click="configure(theme)">{{ trans.settings }}</button>
-            <button v-if="!theme.builtin && theme.canUpdate" type="button" class="btn btn-sm" :disabled="busy || !state.runtimeStorage" @click="confirming = { action: 'update_monitor_theme', theme: theme.short }">{{ trans.monitorThemeUpdate }}</button>
-            <button v-if="!theme.builtin" type="button" class="btn btn-sm" :disabled="busy" @click="confirming = { action: 'delete_monitor_theme', theme: theme.short }">{{ trans.monitorThemeRemove }}</button>
-          </div>
+          <div class="monitor-theme-meta"><span>{{ theme.author }} · {{ theme.version }}<template v-if="safeSource(theme.url)"> · <a :href="safeSource(theme.url)" target="_blank" rel="noopener noreferrer">{{ trans.monitorThemeSource }}</a></template></span><button type="button" class="monitor-preview-link" :disabled="busy || state.previewStatus !== 200" @click="preview(theme.short)">{{ trans.preview }}</button></div>
         </article>
       </div>
-      <button v-if="state.selected !== null" type="button" class="btn btn-sm monitor-follow" :disabled="busy" @click="select(null)">{{ trans.monitorThemeFollowDeployment }}</button>
+      <div class="monitor-cf-actions"><button type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="load">{{ trans.refresh }}</button><button v-if="state.selected !== null" type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="select(null)">{{ trans.monitorThemeFollowDeployment }}</button><span v-else class="text-secondary">{{ trans.monitorThemeDeployment }}</span></div>
     </template>
-    <AdminDialog :open="!!editing" :title="`${themeName(editing?.short)} · ${trans.settings}`" :busy="busy" @close="editing = null">
+    <AdminDialog :open="!!editing" :title="`${themeName(editing?.short)} ${trans.settings}`" :size="large ? 'monitor-large' : 'monitor'" :busy="busy" @close="editing = null">
       <template #body>
-        <form id="monitor-config-form" @submit.prevent="saveConfig(false)">
-          <template v-for="(field, index) in form" :key="index">
+        <form id="monitor-config-form" class="monitor-config-layout" @submit.prevent="saveConfig">
+          <nav v-if="paged" class="monitor-config-nav" :aria-label="trans.settings"><button v-for="(section,index) in sections" :key="index" type="button" :aria-current="currentSection === index" @click="currentSection = index"><span>{{ section.label }}</span><i v-if="section.fields.some(field => draft[field.key] !== field.default)" :title="trans.monitorThemeChanged" /></button></nav>
+          <div class="monitor-config-grid" :class="{ large }">
+          <template v-for="(field, index) in visibleForm" :key="field.key || index">
             <h3 v-if="field.type === 'title'" class="monitor-config-heading">{{ field.label }}</h3>
-            <div v-else class="monitor-config-field">
-              <label :for="`monitor-config-${index}`" :class="{ 'checkbox-item': field.type === 'boolean' }">
-                <input v-if="field.type === 'boolean'" :id="`monitor-config-${index}`" v-model="draft[field.key]" type="checkbox" :disabled="busy">
+            <div v-else class="monitor-config-field" :class="{ 'monitor-boolean': field.type === 'boolean', 'monitor-wide': large && field.type === 'text' }">
+              <label v-if="field.type === 'boolean'" :for="`monitor-config-${index}`" class="monitor-switch-row"><span><span class="monitor-switch-title">{{ field.key === 'show_summary' && editing?.builtin ? trans.monitorShowSummary : field.label || field.key }}</span><span v-if="field.help || (field.key === 'show_summary' && editing?.builtin)" class="monitor-switch-help">{{ field.key === 'show_summary' && editing?.builtin ? trans.monitorShowSummaryHelp : field.help }}</span></span><input :id="`monitor-config-${index}`" v-model="draft[field.key]" type="checkbox" role="switch" :disabled="busy" @keydown.enter.prevent="draft[field.key] = !draft[field.key]"></label>
+              <label v-else :for="`monitor-config-${index}`">
                 {{ field.key === 'show_summary' && editing?.builtin ? trans.monitorShowSummary : field.label || field.key }}
               </label>
               <textarea v-if="field.type === 'text'" :id="`monitor-config-${index}`" v-model="draft[field.key]" rows="4" :disabled="busy" />
-              <select v-else-if="field.type === 'select'" :id="`monitor-config-${index}`" v-model="draft[field.key]" :disabled="busy">
-                <option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label || option.value }}</option>
-              </select>
+              <ToolbarGroupSelect v-else-if="field.type === 'select'" :id="`monitor-config-${index}`" v-model="draft[field.key]" :choices="field.options.map(option => ({value:option.value,label:option.label || option.value}))" :label="field.label || field.key" :disabled="busy" :active="!!editing" />
               <input v-else-if="field.type !== 'boolean'" :id="`monitor-config-${index}`" v-model="draft[field.key]" :type="field.type === 'number' ? 'number' : 'text'" :min="field.min" :max="field.max" :step="field.type === 'number' ? 'any' : undefined" :required="field.type === 'number'" :disabled="busy">
-              <p v-if="field.help || (field.key === 'show_summary' && editing?.builtin)" class="monitor-note text-secondary monitor-field-help">{{ field.key === 'show_summary' && editing?.builtin ? trans.monitorShowSummaryHelp : field.help }}</p>
+              <p v-if="field.type !== 'boolean' && field.help" class="text-secondary monitor-field-help">{{ field.help }}</p>
             </div>
           </template>
-          <p v-if="error" class="danger-box" role="alert">{{ error }}</p>
+          </div>
         </form>
       </template>
       <template #footer>
-        <button type="button" class="btn" :disabled="busy" @click="saveConfig(true)">{{ trans.monitorThemeReset }}</button>
-        <button type="submit" form="monitor-config-form" class="btn btn-primary" :disabled="busy">{{ busy ? trans.saving : trans.save }}</button>
+        <button type="button" class="monitor-install-button monitor-quiet monitor-reset" :disabled="busy" @click="resetConfig">{{ paged ? trans.monitorThemeResetAll : trans.monitorThemeReset }}</button>
+        <button type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="editing = null">{{ trans.cancel }}</button>
+        <button type="submit" form="monitor-config-form" class="monitor-install-button monitor-install-primary" :disabled="busy">{{ busy ? trans.saving : trans.save }}</button>
       </template>
     </AdminDialog>
-    <AdminDialog :open="installing" :title="trans.monitorThemeInstall" :busy="busy" @close="installing = false">
-      <template #body>
-        <form id="monitor-install-form" @submit.prevent="install">
-          <p class="warning-box">{{ trans.monitorThemeTrust }}</p>
-          <div class="monitor-config-field"><label for="monitor-theme-repository">{{ trans.monitorThemeRepository }}</label><input id="monitor-theme-repository" v-model.trim="repository" type="url" placeholder="https://github.com/owner/theme" :disabled="busy || !!archive"></div>
-          <div class="monitor-config-field"><label for="monitor-theme-archive">{{ trans.monitorThemeUpload }}</label><input id="monitor-theme-archive" type="file" accept=".tar.gz,.gz" :disabled="busy" @change="archive = $event.target.files[0] || null"></div>
-          <p class="text-secondary monitor-note">{{ trans.monitorThemeInstallHint }}</p>
-          <p v-if="error" class="danger-box" role="alert">{{ error }}</p>
-        </form>
-      </template>
-      <template #footer><button type="submit" form="monitor-install-form" class="btn btn-primary" :disabled="busy || (!archive && !repository)">{{ busy ? trans.saving : trans.monitorThemeInstall }}</button></template>
+    <AdminDialog :open="!!confirming" :title="`${trans.monitorThemeRemove} ${themeName(confirming?.short)}？`" size="monitor-confirm" :busy="busy" @close="confirming = null">
+      <template #description>{{ trans.monitorThemeRemoveHint }}</template>
+      <template #footer><button type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="confirming = null">{{ trans.cancel }}</button><button type="button" class="monitor-install-button monitor-delete" :disabled="busy" @click="remove">{{ trans.delete }}</button></template>
     </AdminDialog>
-    <AdminDialog :open="!!confirming" :title="confirming?.action === 'delete_monitor_theme' ? trans.monitorThemeRemove : trans.monitorThemeUpdate" :busy="busy" @close="confirming = null">
-      <template #body>
-        <p><strong>{{ themeName(confirming?.theme) }}</strong></p>
-        <p class="monitor-note">{{ confirming?.action === 'delete_monitor_theme' ? trans.monitorThemeRemoveHint : trans.monitorThemeTrust }}</p>
-        <p v-if="error" class="danger-box" role="alert">{{ error }}</p>
-      </template>
-      <template #footer><button type="button" class="btn btn-primary" :disabled="busy" @click="changePackage">{{ busy ? trans.saving : confirming?.action === 'delete_monitor_theme' ? trans.monitorThemeRemove : trans.monitorThemeUpdate }}</button></template>
-    </AdminDialog>
+    <AdminDialog :open="!!zoomed" :title="`${themeName(zoomed?.short)} ${trans.monitorThemePreviewImage}`" size="monitor-image" @close="zoomed = null"><template #description>{{ zoomed?.author }} · {{ zoomed?.version }}</template><template #body><img v-if="zoomed" class="monitor-full-image" :src="images[zoomed.revision]" :alt="themeName(zoomed.short)"></template></AdminDialog>
+    <AdminToast :notice="notice" teleport />
   </section>
 </template>
 
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { adminApi, uploadMonitorTheme } from '../../../utils/api'
+import { adminApi, uploadMonitorTheme, fetchMonitorThemeThumbnail } from '../../../utils/api'
 import AdminDialog from './AdminDialog.vue'
-import { monitorConfigForm, monitorConfigValues, monitorConfigOverrides } from '../../../../shared/monitorThemes.js'
+import AdminIcon from './AdminIcon.vue'
+import MonitorThemeHelp from './MonitorThemeHelp.vue'
+import AdminToast from './AdminToast.vue'
+import ToolbarGroupSelect from './ToolbarGroupSelect.vue'
+import { monitorConfigForm, monitorConfigValues, monitorConfigOverrides, monitorFieldFits } from '../../../../shared/monitorThemes.js'
 
 const props = defineProps({ trans: { type: Object, required: true }, activeTab: String, selectedApiIndex: Number, requestOwner: Function })
-const emit = defineEmits(['alert-message', 'frontend-mode'])
+const emit = defineEmits(['frontend-mode'])
 const state = ref(null)
 const busy = ref(false)
 const error = ref('')
 const editing = ref(null)
 const draft = ref({})
-const installing = ref(false)
+const configBase = ref({})
+const currentSection = ref(0)
+const notice = ref(null)
+const images = ref({})
+const zoomed = ref(null)
+const updating = ref('')
+const installing = ref('')
 const confirming = ref(null)
 const repository = ref('')
-const archive = ref(null)
+const picker = ref(null)
 const form = computed(() => monitorConfigForm(editing.value?.config))
+const fields = computed(() => form.value.filter(field => field.type !== 'title'))
+const large = computed(() => fields.value.length > 6)
+const sections = computed(() => {
+  const result = []
+  for (const entry of form.value) {
+    if (entry.type === 'title') result.push({ label: entry.label, fields: [] })
+    else {
+      if (!result.length) result.push({ label: props.trans.monitorThemeGeneral, fields: [] })
+      result.at(-1).fields.push(entry)
+    }
+  }
+  return result
+})
+const paged = computed(() => large.value && sections.value.length > 1)
+const visibleForm = computed(() => paged.value ? sections.value[currentSection.value]?.fields || [] : form.value)
+const notify = (text, type = 'success') => { notice.value = { text, type } }
+const safeSource = address => { try { const url = new URL(address); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null } catch { return null } }
 let active = true
 let generation = 0
-onBeforeUnmount(() => { active = false; generation++ })
+const clearImages = () => { images.value = {} }
+onBeforeUnmount(() => { active = false; generation++; clearImages() })
 const themeName = short => {
   const theme = state.value?.themes.find(theme => theme.short === short)
   return theme?.builtin && short === 'default' ? props.trans.monitorDefaultName : theme?.name || short || ''
@@ -122,11 +144,12 @@ const request = async (data, execute) => {
     if (!active || at !== generation || result.stale || (props.requestOwner && !props.requestOwner())) return null
     if (result.error) {
       error.value = props.trans[result.error] || props.trans.monitorThemeUnavailable
+      notify(error.value, 'error')
       return null
     }
     return result.data
   } catch {
-    if (active && at === generation) error.value = props.trans.monitorThemeUnavailable
+    if (active && at === generation) { error.value = props.trans.monitorThemeUnavailable; notify(error.value, 'error') }
     return null
   } finally {
     if (active && at === generation) busy.value = false
@@ -138,7 +161,7 @@ const load = async () => {
 }
 const select = async theme => {
   const result = await request({ action: 'select_monitor_theme', theme })
-  if (result) { state.value = result; emit('alert-message', props.trans.monitorThemeSaved) }
+  if (result) { state.value = result; notify(props.trans.monitorThemeSwitched) }
 }
 const preview = async theme => {
   const result = await request({ action: 'start_monitor_theme_preview', theme })
@@ -147,32 +170,78 @@ const preview = async theme => {
 const configure = theme => {
   editing.value = theme
   error.value = ''
+  currentSection.value = 0
+  configBase.value = state.value.configs[theme.short] || {}
   draft.value = monitorConfigValues(monitorConfigForm(theme.config), state.value.configs[theme.short] || {})
 }
-const saveConfig = async reset => {
-  const config = reset ? {} : monitorConfigOverrides(form.value, state.value.configs[editing.value.short] || {}, draft.value)
+const resetConfig = () => { configBase.value = {}; draft.value = monitorConfigValues(form.value, {}) }
+const saveConfig = async () => {
+  const values = Object.fromEntries(fields.value.map(field => [field.key, field.type === 'number' ? draft.value[field.key] === '' ? NaN : Number(draft.value[field.key]) : draft.value[field.key]]))
+  const invalid = fields.value.find(field => !monitorFieldFits(field, values[field.key]))
+  if (invalid) {
+    currentSection.value = Math.max(0, sections.value.findIndex(section => section.fields.includes(invalid)))
+    notify(props.trans.monitorThemeInvalidField.replace('{field}', invalid.label || invalid.key), 'error')
+    return
+  }
+  const config = monitorConfigOverrides(form.value, configBase.value, values)
   const result = await request({ action: 'save_monitor_theme_config', theme: editing.value.short, config })
-  if (result) { state.value = result; editing.value = null; emit('alert-message', props.trans.monitorThemeSaved) }
+  if (result) { state.value = result; editing.value = null; notify(props.trans.monitorThemeSaved) }
 }
-const install = async () => {
-  if (archive.value?.size > 32 * 1024 * 1024) { error.value = props.trans.monitorThemeArchiveTooLarge; return }
-  const result = archive.value ? await request(null, async owner => {
-    const uploaded = await uploadMonitorTheme(archive.value, props.selectedApiIndex, owner)
+const install = async (file = null) => {
+  if (busy.value || !state.value?.runtimeStorage || (!file && !repository.value.trim())) return
+  if (file?.size > 32 * 1024 * 1024) { error.value = props.trans.monitorThemeArchiveTooLarge; notify(error.value,'error'); return }
+  const at = generation
+  installing.value = file ? 'upload' : 'github'
+  const result = file ? await request(null, async owner => {
+    const uploaded = await uploadMonitorTheme(file, props.selectedApiIndex, owner)
     return uploaded.error || !owner() ? uploaded : adminApi({ action: 'get_monitor_themes' }, props.selectedApiIndex, owner)
-  }) : await request({ action: 'install_monitor_theme', repository: repository.value })
-  if (result) { state.value = result; installing.value = false; archive.value = null; repository.value = ''; emit('alert-message', props.trans.monitorThemeInstalled) }
+  }) : await request({ action: 'install_monitor_theme', repository: repository.value.trim() })
+  if (active && at === generation) installing.value = ''
+  if (result) { state.value = result; if (!file) repository.value = ''; notify(props.trans.monitorThemeInstalled) }
 }
-const changePackage = async () => {
-  const result = await request(confirming.value)
-  if (result) { state.value = result; confirming.value = null; emit('alert-message', props.trans.monitorThemeSaved) }
+const upload = event => {
+  const file = event.target.files[0]
+  event.target.value = ''
+  if (file) install(file)
 }
+const update = async theme => {
+  if (busy.value) return
+  const at = generation
+  updating.value = theme.short
+  const result = await request({action:'update_monitor_theme',theme:theme.short})
+  if (active && at === generation) updating.value = ''
+  if (result) { state.value = result; notify(result.updated ? props.trans.monitorThemeUpdated : props.trans.monitorThemeLatest) }
+}
+const remove = async () => {
+  const result = await request({action:'delete_monitor_theme',theme:confirming.value.short})
+  if (result) { state.value = result; confirming.value = null; notify(props.trans.monitorThemeDeleted) }
+}
+watch(() => state.value?.themes, async themes => {
+  const at = generation
+  const owner = () => active && at === generation && (!props.requestOwner || props.requestOwner())
+  for (const revision of Object.keys(images.value)) if (!themes?.some(theme => theme.revision === revision)) delete images.value[revision]
+  for (const theme of themes || []) {
+    if (!theme.preview || images.value[theme.revision] || !owner()) continue
+    const themeOwner = () => owner() && state.value?.themes.some(current => current.revision === theme.revision)
+    const result = await fetchMonitorThemeThumbnail(theme.short, props.selectedApiIndex, themeOwner)
+    if (!themeOwner()) continue
+    if (result.data instanceof Blob && result.data.type === 'image/png') {
+      // CF's existing image CSP permits data:, not blob:; keep that policy unchanged.
+      const image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => resolve(null); reader.readAsDataURL(result.data) })
+      if (image && themeOwner()) images.value[theme.revision] = image
+    }
+  }
+})
 watch(() => props.selectedApiIndex, () => {
   generation++
   state.value = null
   editing.value = null
-  installing.value = false
+  zoomed.value = null
+  notice.value = null
+  updating.value = ''
+  clearImages()
+  installing.value = ''
   confirming.value = null
-  archive.value = null
   repository.value = ''
   error.value = ''
   busy.value = false
@@ -183,25 +252,74 @@ watch(() => props.activeTab, tab => { if (tab === 'themeStore' && !state.value) 
 
 <style scoped>
 .monitor-theme-manager { margin-bottom: 28px; }
-.monitor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.monitor-heading .btn { flex-shrink: 0; min-width: max-content; }
-.monitor-heading h3, .monitor-heading h4 { margin: 0; }
-.monitor-heading h4 { font-size: 16px; }
-.monitor-heading h4 { overflow-wrap: anywhere; }
-.monitor-status { margin: 14px 0 6px; }
+.monitor-install-card { display: flex; flex-direction: column; gap: 16px; padding: 20px; border: 1px solid var(--border-color); border-radius: 14px; background: light-dark(oklch(1 0 0), oklch(.208 .042 265.755)); box-shadow: 0 1px 3px #0000001a, 0 1px 2px #0000001a; }
+.monitor-install-heading { display: flex; align-items: center; gap: 6px; }
+.monitor-install-heading h4 { margin: 0; font-size: 14px; font-weight: 500; }
+.monitor-install-trust { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 16px; }
+#monitor-install-form { display: flex; flex-wrap: wrap; gap: 8px; }
+#monitor-theme-repository { flex: 1 1 240px; min-width: 0; width: 100%; height: 32px; padding: 4px 12px; border: 1px solid light-dark(var(--border-color), oklch(1 0 0 / 15%)); border-radius: 6px; background: light-dark(transparent, oklch(1 0 0 / 4.5%)); color: var(--text-primary); font-size: 16px; box-shadow: 0 1px 2px #0000000d; transition: color .15s, box-shadow .15s; }
+#monitor-theme-repository::placeholder { color: var(--text-secondary); }
+.monitor-install-button { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 6px; background: light-dark(oklch(1 0 0), oklch(1 0 0 / 4.5%)); color: var(--text-primary); font: inherit; font-size: 14px; font-weight: 500; white-space: nowrap; text-decoration: none; transition: background .15s; }
+.monitor-install-button:hover:not(:disabled) { background: var(--bg-hover); }
+.monitor-install-primary { background: var(--cf-brand-fill); color: var(--cf-on-brand); border-color: transparent; }
+.monitor-install-primary:hover:not(:disabled) { background: color-mix(in oklab, var(--cf-brand-fill) 90%, transparent); }
+.monitor-browse { margin: -4px -10px -4px auto; height: 28px; border: 0; background: none; }
+#monitor-theme-repository:disabled { opacity: .5; }
+@media (min-width: 768px) { #monitor-theme-repository { font-size: 14px; } }
 .monitor-note { font-size: 14px; line-height: 1.6; margin: 6px 0 14px; overflow-wrap: anywhere; }
-.monitor-theme-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.monitor-theme { padding: 16px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-card); }
-.monitor-theme.selected { border-color: var(--accent-green); }
-.monitor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.monitor-actions .btn { flex: 1 1 auto; min-width: max-content; white-space: nowrap; }
-.monitor-follow { margin-top: 12px; }
-.monitor-field { align-items: flex-start; }
-.monitor-field-help { display: block; margin: 6px 0 0; }
-.monitor-config-heading { margin: 24px 0 12px; font-size: 16px; }
-.monitor-config-field { margin: 14px 0; }
-.monitor-config-field > label { display: block; margin-bottom: 8px; }
-.monitor-config-field input:not([type=checkbox]), .monitor-config-field textarea, .monitor-config-field select { width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; }
+.monitor-theme-list { display: grid; align-items:start; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top:16px; }
+.monitor-theme { display:flex;flex-direction:column;gap:16px;padding:20px;border:1px solid var(--border-color);border-radius:14px;background:light-dark(oklch(1 0 0),oklch(.208 .042 265.755));box-shadow:0 1px 3px #0000001a,0 1px 2px #0000001a; }
+.monitor-theme-heading {display:flex;align-items:flex-start;gap:12px;}
+.monitor-theme-info {min-width:0;flex:1;}
+.monitor-theme-name {display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.monitor-theme-name h4 {font-size:16px;line-height:24px;font-weight:500;margin:0;overflow-wrap:anywhere;}
+.monitor-badge {display:inline-flex;align-items:center;padding:2px 8px;border:1px solid transparent;border-radius:6px;font-size:12px;line-height:16px;font-weight:500;background:var(--cf-brand-fill);color:var(--cf-on-brand);white-space:nowrap;}
+.monitor-badge-secondary,.monitor-use-current {background:var(--cf-soft);color:var(--cf-text);border-color:transparent;}
+.monitor-badge-secondary {font-weight:400;}
+.monitor-theme-description {margin:4px 0 0;color:var(--text-secondary);font-size:14px;line-height:20px;overflow-wrap:anywhere;}
+.monitor-theme-actions {display:flex;flex-shrink:0;gap:4px;align-items:center;}
+.monitor-icon-button {display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;border:0;border-radius:6px;background:none;color:var(--text-primary);}
+.monitor-icon-button:hover:not(:disabled) {background:var(--bg-hover);}
+.monitor-theme-meta {display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;line-height:16px;color:var(--text-secondary);}
+.monitor-theme-meta a {color:inherit;text-decoration:none;}
+.monitor-theme-meta a:hover {text-decoration:underline;}
+.monitor-preview-link {flex-shrink:0;border:0;background:none;color:inherit;font:inherit;padding:0;}
+.monitor-preview-link:hover {text-decoration:underline;}
+.monitor-thumbnail {padding:0;border:0;background:none;cursor:zoom-in;}
+.monitor-thumbnail img {display:block;width:100%;aspect-ratio:16/9;object-fit:cover;object-position:top;border:1px solid var(--border-color);border-radius:6px;}
+.monitor-thumbnail-placeholder {display:block;width:100%;aspect-ratio:16/9;border:1px solid var(--border-color);border-radius:6px;}
+.monitor-full-image {display:block;max-height:80vh;width:100%;object-fit:contain;border:1px solid var(--border-color);border-radius:6px;}
+.monitor-cf-actions {display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:16px;font-size:12px;}
+.monitor-quiet {border:0;background:none;box-shadow:none;}
+.monitor-delete {background:var(--cf-red);border-color:transparent;color:white;}
+.monitor-delete:hover:not(:disabled) {background:color-mix(in oklab,var(--cf-red) 90%,transparent);}
+.monitor-spin {animation:monitor-spin 1s linear infinite;}
+@keyframes monitor-spin {to{transform:rotate(360deg);}}
+.monitor-config-heading { margin: 0; padding-top:8px; font-size:14px; font-weight:600; }
+.monitor-config-layout {display:flex;min-height:0;flex:1;gap:16px;width:100%;}
+.monitor-config-grid {display:grid;align-items:start;align-content:start;gap:16px;min-width:0;flex:1;}
+.monitor-config-grid.large {overflow-y:auto;padding-right:4px;}
+.monitor-config-nav {display:flex;flex-direction:column;flex-shrink:0;gap:4px;width:192px;overflow-y:auto;}
+.monitor-config-nav button {display:flex;align-items:center;gap:8px;padding:6px 12px;background:none;color:var(--text-secondary);border:0;border-radius:6px;text-align:left;}
+.monitor-config-nav button[aria-current=true] {background:var(--cf-soft);color:var(--cf-text);font-weight:500;}
+.monitor-config-nav button:hover {background:var(--cf-soft);}
+.monitor-config-nav i {margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--cf-brand-fill);flex-shrink:0;}
+.monitor-config-field {min-width:0;}
+.monitor-config-field > label { display: block; margin-bottom: 8px; font-weight:500; }
+.monitor-config-field .monitor-field-help {margin:8px 0 0;font-size:12px;line-height:1.625;}
+.monitor-config-field :deep(.admin-toolbar-group) {width:100%;}
+.monitor-config-field input:not([type=checkbox]), .monitor-config-field textarea, .monitor-config-field select { width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; color: var(--text-primary); background: light-dark(transparent, oklch(1 0 0 / 4.5%)); border: 1px solid light-dark(var(--border-color), oklch(1 0 0 / 15%)); border-radius: 6px; box-shadow:0 1px 2px #0000000d; }
+.monitor-config-field input:not([type=checkbox]) {height:36px;padding:4px 12px;}
 .monitor-config-field textarea { resize: vertical; }
-@media (max-width: 640px) { .monitor-theme-list { grid-template-columns: 1fr; } .monitor-theme-manager > .monitor-heading { flex-wrap: wrap; } }
+.monitor-config-field.monitor-boolean {border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:color-mix(in oklab,var(--cf-soft) 30%,transparent);position:relative;}
+.monitor-boolean > label {display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;font-weight:500;}
+.monitor-switch-title {display:block;}
+.monitor-switch-help {display:block;margin-top:2px;color:var(--text-secondary);font-size:12px;line-height:16px;font-weight:400;}
+.monitor-boolean input[role=switch] {appearance:none;width:32px;height:18px;flex-shrink:0;border:1px solid transparent;border-radius:999px;background:var(--cf-soft);position:relative;cursor:pointer;}
+.monitor-boolean input[role=switch]:checked {background:var(--cf-brand-fill);}
+.monitor-boolean input[role=switch]::after {content:'';position:absolute;top:0;left:0;width:16px;height:16px;border-radius:50%;background:light-dark(white,oklch(.984 .003 247.858));transition:transform 150ms;}
+.monitor-boolean input[role=switch]:checked::after {transform:translateX(14px);background:var(--cf-on-brand);}
+.monitor-reset {margin-right:auto;}
+@media(min-width:640px){.monitor-config-grid.large{grid-template-columns:repeat(2,minmax(0,1fr));}.monitor-wide,.monitor-config-heading{grid-column:1/-1;}}
+@media (max-width: 639px) { .monitor-theme-list { grid-template-columns: 1fr; } .monitor-config-layout {flex-direction:column;} .monitor-config-nav {flex-direction:row;width:auto;overflow-x:auto;margin:0 -4px;padding:0 4px 4px;overflow-y:hidden;} .monitor-config-nav button{white-space:nowrap;} }
 </style>

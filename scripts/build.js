@@ -33,6 +33,8 @@ if (fs.existsSync(monitorThemesDir)) {
       path.join(distDir, '_monitor_theme', theme.name),
       { overwrite: false }
     );
+    const preview = path.join(monitorThemesDir, theme.name, 'preview.png');
+    if (fs.existsSync(preview)) fs.copySync(preview, path.join(distDir, '_monitor_theme_metadata', theme.name, 'preview.png'));
   }
   console.log(`Copied ${themes.length} Monitor theme packages`);
 }

@@ -27,7 +27,7 @@ import AdminIcon from './AdminIcon.vue'
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { t } from '../../../utils/i18n.js'
 import '../../../styles/admin.css'
-const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'group', 'edit', 'download', 'download-confirm', 'terminal'].includes(value) }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
+const props = defineProps({ open: { type: Boolean, default: false }, title: { type: String, required: true }, size: { type: String, default: 'default', validator: value => ['default', 'add', 'group', 'edit', 'download', 'download-confirm', 'terminal', 'monitor', 'monitor-large', 'monitor-confirm', 'monitor-image'].includes(value) }, busy: { type: Boolean, default: false }, descriptionId: { type: String, default: '' } })
 const emit = defineEmits(['close', 'after-leave'])
 const dialog = ref(null)
 const titleId = `admin-dialog-${++nextId}`
@@ -116,7 +116,10 @@ watch(() => props.open, async open => {
   document.addEventListener('keydown', keydown, true)
   document.addEventListener('focusin', focusin)
   // A consumer or the user may already own focus before this asynchronous open finishes.
-  if (!['group', 'download'].includes(props.size) && topmost() && !dialogElement()?.contains(document.activeElement)) focusFirst()
+  if (!['group', 'download'].includes(props.size) && topmost() && !dialogElement()?.contains(document.activeElement)) {
+    if (props.size.startsWith('monitor')) dialogElement()?.focus()
+    else focusFirst()
+  }
 }, { immediate: true, flush: 'post' })
 onBeforeUnmount(release)
 </script>

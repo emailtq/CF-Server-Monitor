@@ -1,17 +1,21 @@
 import { AppError } from '../utils/errors.js';
-import { installMonitorTheme } from './monitorThemePackages.js';
+import { installMonitorTheme, loadMonitorPackageRegistry } from './monitorThemePackages.js';
 import { MONITOR_ARCHIVE_LIMIT } from '../shared/monitorThemeArchive.js';
 
 export function parseMonitorRepository(address) {
   try {
-    const url = new URL(address);
-    const match = /^\/([A-Za-z0-9_-][A-Za-z0-9_.-]{0,99})\/([A-Za-z0-9_-][A-Za-z0-9_.-]{0,99})\/?$/.exec(url.pathname);
-    if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.port || url.username || url.password || url.search || url.hash || !match) throw new Error();
-    return `${match[1]}/${match[2].replace(/\.git$/, '')}`;
+    const input = address.trim();
+    const url = input.startsWith('github.com/') ? `https://${input}` : input;
+    // Read the raw owner/repo before URL path normalisation; pasted suffixes are never fetched.
+    const match = /^https:\/\/github\.com(?::443)?\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})(?:[/?#]|$)/i.exec(url);
+    if (!match || url.includes('\\')) throw new Error();
+    const owner = match[1], repo = match[2].replace(/\.git$/, '');
+    if (!repo || [owner, repo].some(segment => segment === '.' || segment === '..')) throw new Error();
+    return `${owner}/${repo}`;
   } catch { throw new AppError('monitorThemeRepositoryInvalid', 400); }
 }
 
-export async function installMonitorRepository(env, address, expectedShort, expectedRevision) {
+export async function installMonitorRepository(env, address, expectedShort, expectedRevision, expectedVersion) {
   if (!env.DB) throw new AppError('monitorThemeStorageUnavailable', 503);
   const repository = parseMonitorRepository(address);
   const controller = new AbortController();
@@ -34,6 +38,11 @@ export async function installMonitorRepository(env, address, expectedShort, expe
     const release = JSON.parse(new TextDecoder().decode(buffer));
     if (typeof release.tag_name !== 'string' || !release.tag_name || release.tag_name.length > 200 ||
         !release.assets?.some(asset => asset.name === 'theme.tar.gz' && asset.size > 0 && asset.size <= MONITOR_ARCHIVE_LIMIT)) throw new AppError('monitorThemePackageMissing', 400);
+    if (expectedVersion !== undefined && release.tag_name.replace(/^v/, '') === expectedVersion) {
+      const { registry } = await loadMonitorPackageRegistry(env.DB);
+      if ((Object.hasOwn(registry, expectedShort) ? registry[expectedShort] : null) !== expectedRevision) throw new AppError('monitorThemeConflict', 409);
+      return { updated: false, version: expectedVersion };
+    }
     let url = new URL(`https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag_name)}/theme.tar.gz`);
     stage = 'download';
     for (let redirects = 0; redirects <= 3; redirects++) {
@@ -48,7 +57,8 @@ export async function installMonitorRepository(env, address, expectedShort, expe
       if (!response.ok) throw new AppError('monitorThemeDownloadFailed', 502);
       if (Number(response.headers.get('Content-Length')) > MONITOR_ARCHIVE_LIMIT) { await response.body?.cancel(); throw new AppError('monitorThemeArchiveTooLarge', 413); }
       stage = 'install';
-      return await installMonitorTheme(env, response.body, { expectedShort, repository, expectedRevision });
+      const theme = await installMonitorTheme(env, response.body, { expectedShort, repository, expectedRevision });
+      return { ...theme, updated: true };
     }
     throw new AppError('monitorThemeDownloadFailed', 502);
   } catch (error) {

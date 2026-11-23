@@ -27,6 +27,30 @@ test('existing theme page mounts a separate Monitor manager with owned requests 
   assert.match(source, /theme\?\.builtin && short === 'default'/, 'builtin label follows admin locale, external manifests keep their own names');
   assert.match(source, /AdminDialog/);
 });
+
+test('native install input is visible on the theme page and submits bare repository links without browser URL validation', () => {
+  const { descriptor } = parse(readFileSync('src/frontend/views/admin/components/MonitorThemeManager.vue', 'utf8'));
+  const form = descriptor.template.ast.children[0].children.find(node => node.tag === 'template')?.children.find(node => node.tag === 'div' && node.props.some(prop => prop.name === 'class' && prop.value?.content === 'monitor-install-card'))?.children.find(node => node.tag === 'form');
+  assert.ok(form, 'install form lives inline before the theme list, not inside AdminDialog');
+  const input = form.children.find(node => node.tag === 'input' && node.props.some(prop => prop.name === 'id' && prop.value?.content === 'monitor-theme-repository'));
+  assert.ok(input);
+  for (const [name, value] of [['type', 'text'], ['inputmode', 'url'], ['autocapitalize', 'off'], ['autocorrect', 'off'], ['spellcheck', 'false']]) {
+    assert.ok(input.props.some(prop => prop.name === name && prop.value?.content === value), name);
+  }
+  assert.ok(form.props.some(prop => prop.name === 'on' && prop.arg?.content === 'submit' && prop.modifiers.some(mod => mod.content === 'prevent')));
+});
+
+test('theme management uses native current/builtin badges, metadata, icon actions and non-blocking toast', () => {
+  const source=readFileSync('src/frontend/views/admin/components/MonitorThemeManager.vue','utf8');
+  for (const name of ['monitorThemeUse','monitorThemeUsing','monitorThemeCurrent','monitorThemeBuiltin','theme.author','theme.url','monitorThemeSource','monitorThemeThumbnail','AdminToast']) assert.ok(source.includes(name),name);
+  assert.match(source,/state.effective === theme.short/, 'effective default is visibly in use even without a saved selection');
+  assert.match(source,/name="sliders-horizontal"/);
+  assert.match(source,/name="refresh-cw"/);
+  assert.doesNotMatch(source,/emit\('alert-message'/);
+  assert.match(source,/reader.readAsDataURL/, 'thumbnail rendering uses the data: source already allowed by CF CSP');
+  assert.doesNotMatch(source,/URL.createObjectURL/);
+  assert.match(source,/v-if="theme.preview"/, 'native thumbnails reserve their layout from catalog metadata before image bytes arrive');
+});
 async function fixture(t) {
   const mf = new Miniflare({ modules: true, script: 'export default {fetch() {return new Response();}}', d1Databases: { DB: 'theme-management' } });
   t.after(() => mf.dispose());

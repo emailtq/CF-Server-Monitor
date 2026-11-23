@@ -1,8 +1,9 @@
 # Native Monitor themes
 
 These are the reviewed static release bundles used by the Worker default frontend.
-The build copies only each release's `dist/` directory to `dist/_monitor_theme/<short>/`;
-the metadata files stay in this source directory and are not published as assets.
+The build copies each release's `dist/` directory to `dist/_monitor_theme/<short>/`.
+The original Default v1.4.3 `preview.png` is copied separately to an internal metadata
+namespace for the authenticated admin thumbnail. Manifest files stay in this source directory.
 
 | short | release | upstream | source archive SHA-256 |
 | --- | --- | --- | --- |
@@ -39,11 +40,16 @@ CF-only appearance controls in default mode; admin language/theme and public dat
 controls remain available. Site title is edited under Settings.
 
 Default's **Show summary** setting is its manifest-declared boolean. Saving `false` hides
-the original four summary blocks; **Restore defaults** stores `{}`, allowing the release's
-own default `true`. ServerStatus declares no settings and has no empty settings dialog.
+the original four summary blocks. **Restore defaults** resets the draft; **Save** then
+stores `{}`, allowing the release's own default `true`. Cancel leaves saved values intact.
+ServerStatus declares no settings and has no empty settings dialog.
 Other themes draw their settings directly from `theme.json`: string, multiline text,
 number with bounds, boolean, select and section headings. Malformed fields are omitted;
 keys a version no longer declares are preserved when saving and cleared by reset.
+Large forms use the original section navigation and two-column field layout; number
+validation includes sections not currently visible. The Use/In use badges, icon actions,
+source links, preview.png zoom and non-blocking notifications follow Minimal admin.
+Checking updates compares the release tag first and does not download an unchanged version.
 Selection and per-theme overrides use dedicated settings rows. Deployment bindings are not backed up.
 Invalid authoritative state is an error, not a fallback theme.
 

@@ -87,7 +87,7 @@ export async function parseMonitorThemeArchive(source, onChunk = async () => {})
     } }));
     reader = new ArchiveReader(counted.pipeThrough(new DecompressionStream('gzip')).getReader(), onChunk);
     const files = Object.create(null), entries = new Map(), dirs = new Set();
-    let manifest, payload = 0, count = 0, fileCount = 0, override = {}, longName = '';
+    let manifest, preview, payload = 0, count = 0, fileCount = 0, override = {}, longName = '';
     while (true) {
       const header = await reader.read(512);
       if (!header) throw invalid();
@@ -151,6 +151,7 @@ export async function parseMonitorThemeArchive(source, onChunk = async () => {})
       payload += size;
       if (payload > MAX_PAYLOAD) throw invalid();
       if (type === '0' && name.startsWith('dist/')) files[name.slice(5)] = { offset: reader.offset, size };
+      if (type === '0' && name === 'preview.png') preview = { offset: reader.offset, size };
       if (name === 'theme.json') {
         if (size > 64 * 1024) throw invalid();
         manifest = JSON.parse(decoder.decode(await reader.read(size)));
@@ -161,7 +162,7 @@ export async function parseMonitorThemeArchive(source, onChunk = async () => {})
         ['name', 'description', 'version', 'author', 'url'].some(key => typeof manifest[key] !== 'string')) throw invalid();
     const clean = Object.fromEntries(['name', 'short', 'description', 'version', 'author', 'url', 'config'].filter(key =>
       Object.hasOwn(manifest, key)).map(key => [key, manifest[key]]));
-    return { manifest: clean, files, size: reader.total, compressedSize: compressed };
+    return { manifest: clean, files, ...(preview ? { preview } : {}), size: reader.total, compressedSize: compressed };
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw invalid();

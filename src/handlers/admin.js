@@ -856,6 +856,7 @@ async function handleSendTestNotificationAction({ env, data }) {
 
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   get_monitor_themes: handleMonitorThemeAdmin,
+  get_monitor_theme_thumbnail: handleMonitorThemeAdmin,
   install_monitor_theme: handleMonitorThemeAdmin,
   update_monitor_theme: handleMonitorThemeAdmin,
   delete_monitor_theme: handleMonitorThemeAdmin,

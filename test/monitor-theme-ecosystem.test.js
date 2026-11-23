@@ -198,12 +198,66 @@ test('GitHub install admits only a native release asset and constrained HTTPS re
     if(String(url).includes('github.com/example/')) return new Response(null,{status:302,headers:{Location:location}});
     return new Response(packageBytes());
   });
-  await installMonitorRepository(env,'https://github.com/example/native-theme');
+  await installMonitorRepository(env,'github.com/example/native-theme/releases?url=https://private.example/#readme');
+  assert.equal(seen[0], 'https://api.github.com/repos/example/native-theme/releases/latest');
   assert.equal((await loadMonitorThemes(env.DB)).themes.find(theme=>theme.short==='third').canUpdate,true);
   location='https://private.example/theme';
   await assert.rejects(()=>installMonitorRepository(env,'https://github.com/example/native-theme'),/monitorThemeDownloadFailed/);
   assert.equal(seen.some(url=>url.includes('private.example')),false);
-  for(const url of ['http://github.com/a/b','https://github.com/a/b?token=bad','https://example.test/a/b','https://github.com/a/b/releases']) assert.throws(()=>parseMonitorRepository(url),/monitorThemeRepositoryInvalid/);
+  for(const url of ['http://github.com/a/b','https://example.test/a/b']) assert.throws(()=>parseMonitorRepository(url),/monitorThemeRepositoryInvalid/);
+});
+
+test('pasted native GitHub links resolve only owner/repository, including bare host and Releases pages', () => {
+  for (const address of [
+    'https://github.com/owner/theme', ' github.com/owner/theme ',
+    'https://github.com/owner/theme.git/', 'https://github.com/owner/theme/releases',
+    'https://github.com/owner/theme/releases/tag/v1.0', 'https://github.com/owner/theme/tree/main',
+    'https://github.com/owner/theme/blob/main/theme.json', 'https://github.com/owner/theme?tab=readme-ov-file#readme',
+    'github.com/owner/theme/releases/download/v1.0/theme.tar.gz?download=1',
+    'https://github.com/owner/theme?url=https://private.example/',
+    'https://github.com/owner/theme/../../other/repo'
+  ]) assert.equal(parseMonitorRepository(address), 'owner/theme', address);
+  for (const address of [
+    null, {}, '', 'https://github.com/owner', 'http://github.com/owner/theme',
+    'https://github.com.evil.test/owner/theme', 'https://example.test/owner/theme',
+    'https://user:pass@github.com/owner/theme', 'https://github.com:444/owner/theme',
+    'https://github.com/owner/..', 'https://github.com/owner/.git',
+    'https://github.com/%6fwner/theme', 'https://github.com/owner/theme%2fother',
+    'https://github.com/owner\\theme'
+  ]) assert.throws(() => parseMonitorRepository(address), /monitorThemeRepositoryInvalid/, String(address));
+});
+
+test('native update check skips same-version downloads and accepts builtin replacements without changing selection', async t => {
+  const env = await fixture(t), origin = 'https://native.example.test';
+  const sys = {is_public:'true',jwt_secret:'theme-update-fixture-authority-not-a-real-credential'};
+  await env.DB.prepare('INSERT INTO settings VALUES (?,?)').bind('site_options', JSON.stringify(sys)).run();
+  const token = await generateToken(env, sys);
+  const initial = await installMonitorTheme(env, stream(packageBytes()));
+  let tag = 'v1.0', downloads = 0, short = 'third';
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (String(url).includes('api.github.com')) return Response.json({tag_name:tag,assets:[{name:'theme.tar.gz',size:1234}]});
+    downloads++; return new Response(packageBytes({...manifest,short,version:tag.slice(1)}));
+  });
+  const update = theme => worker.fetch(new Request(origin+'/admin/api', {method:'POST',headers:{Origin:origin,Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({action:'update_monitor_theme',theme})}), env);
+  let response = await update('third');
+  assert.equal(response.status, 200); assert.equal((await response.json()).updated, false);
+  assert.equal(downloads, 0); assert.equal((await loadMonitorThemes(env.DB)).themes.find(t=>t.short==='third').revision, initial.revision);
+  tag='v2.0'; response=await update('third');assert.equal((await response.json()).updated,true);assert.equal(downloads,1);
+  short='default'; response=await update('default');assert.equal(response.status,200);assert.equal((await response.json()).themes.find(t=>t.short==='default').builtin,false);
+  assert.equal((await loadMonitorThemes(env.DB)).selected,null);
+});
+
+test('native package preview.png is catalog metadata and returned only through authenticated admin reads', async t => {
+  const env=await fixture(t),origin='https://native.example.test',sys={is_public:'true',jwt_secret:'thumbnail-fixture-authority-not-a-real-credential'};
+  await env.DB.prepare('INSERT INTO settings VALUES (?,?)').bind('site_options',JSON.stringify(sys)).run();
+  const token=await generateToken(env,sys);
+  await installMonitorTheme(env,stream(packageBytes(manifest,[tarEntry('preview.png','PNG original thumbnail')])));
+  assert.equal((await loadMonitorThemes(env.DB)).themes.find(t=>t.short==='third').preview,true);
+  const read = headers => worker.fetch(new Request(origin+'/admin/api',{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify({action:'get_monitor_theme_thumbnail',theme:'third'})}),env);
+  assert.equal((await read({Origin:origin})).status,401);
+  assert.equal((await read({Authorization:`Bearer ${token}`,Origin:'https://other.example'})).status,403);
+  const response=await read({Authorization:`Bearer ${token}`,Origin:origin});
+  assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'image/png');assert.equal(await response.text(),'PNG original thumbnail');
 });
 
 test('failed storage/metadata completion preserves previous active version and never exposes a partial package',async t=>{

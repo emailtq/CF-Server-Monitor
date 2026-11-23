@@ -102,6 +102,24 @@ body.admin-ui-surface .mikus-sakura-background { display: none; }
 .admin-ui.admin-dialog-overlay { position: fixed; inset: 0; z-index: 1000; background: #00000080; display: flex; align-items: center; justify-content: center; padding: 16px; }
 /* Native drag stays native; its gutter fits inside the existing right padding. */
 .admin-ui .admin-dialog { --admin-dialog-padding: 24px; --admin-scrollbar-hit: 20px; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; max-width: 512px; max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--cf-border); border-radius: 8px; background: var(--cf-panel); color: var(--cf-text); box-shadow: 0 10px 30px #00000026; position: relative; overflow: hidden; }
+.admin-ui .admin-dialog[class*="admin-dialog-monitor"] {background:light-dark(oklch(1 0 0),oklch(.129 .042 264.695));border-radius:8px;}
+.admin-ui .admin-dialog-monitor-confirm {max-width:448px;}
+.admin-ui .admin-dialog-monitor-image,.admin-ui .admin-dialog-monitor-large {max-width:896px;}
+.admin-ui .admin-dialog-monitor-large {height:min(736px,calc(100dvh - 32px));}
+.admin-ui .admin-dialog-monitor-large .admin-dialog-scroll {display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.admin-ui .admin-dialog-monitor-large .admin-dialog-body {display:flex;flex:1;min-height:0;overflow:hidden;}
+.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-footer {flex-direction:row;align-items:center;gap:8px;border-top:1px solid var(--cf-border);padding-top:16px;}
+.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-footer > button {width:auto;}
+.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-footer .monitor-install-button {height:36px;padding:0 16px;}
+.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-head {text-align:left;padding-right:24px;margin-bottom:16px;}
+.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-head h2 {font-size:18px;font-weight:600;line-height:1;}
+.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-head p {font-size:14px;line-height:20px;color:var(--cf-muted);margin-top:8px;}
+.admin-ui .admin-dialog-monitor-large .admin-dialog-scroll {flex:1;}
+.admin-ui .admin-dialog-monitor-large .admin-dialog-body {flex-shrink:1;}
+/* Keep Minimal's icon placement with CF's larger accessible hit target. */
+.admin-ui.admin-ui.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-close {top:2px;right:2px;width:44px;height:44px;opacity:.7;color:var(--cf-text);}
+.admin-ui.admin-ui.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-close svg {transform:none;}
+@media(max-width:639px){.admin-ui .admin-dialog[class*="admin-dialog-monitor"] .admin-dialog-head{text-align:center;}}
 .admin-ui .admin-dialog { transition: max-height 200ms ease; }
 @media (prefers-reduced-motion: reduce) { .admin-ui .admin-dialog { transition: none; } }
 .admin-ui .admin-dialog-scroll { display:flex; flex-direction:column; gap:inherit; min-height:0; padding:var(--admin-dialog-padding); padding-right:calc(var(--admin-dialog-padding) - var(--admin-scrollbar-hit)); overflow-y:auto; overflow-x:hidden; scrollbar-gutter:stable; scroll-padding:4px; overscroll-behavior:contain; }

@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
+test('theme palette changes hold only native theme-manager transitions and keep public preferences unchanged', async () => {
+  const vite=await createServer({configFile:false,appType:'custom',logLevel:'silent',server:{middlewareMode:true}});
+  const saved={document:globalThis.document,window:globalThis.window,localStorage:globalThis.localStorage};
+  const head=[],holds=[];let manager=true;
+  try {
+    globalThis.window=undefined;globalThis.localStorage={getItem:()=>null};
+    globalThis.document={querySelector:()=>manager?{}:null,head:{append(el){head.push(el);}},createElement:()=>({textContent:'',remove(){head.splice(head.indexOf(this),1);}}),body:{offsetWidth:1,classList:{remove(){},add(){holds.push(head.map(el=>el.textContent).join(''));}}}};
+    const {applyDefaultTheme}=await vite.ssrLoadModule('/src/frontend/composables/useTheme.js');
+    applyDefaultTheme('light');assert.match(holds[0],/\.monitor-theme-manager/);assert.match(holds[0],/transition:none!important/);assert.equal(head.length,0);
+    manager=false;applyDefaultTheme('light');assert.equal(holds[1],'');
+  } finally {Object.assign(globalThis,saved);await vite.close();}
+});
+
 test('optional admin ownership isolates delayed transport effects without changing default/current/terminal callers', async () => {
   const vite = await createServer({ configFile: false, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
   const saved = { window: globalThis.window, localStorage: globalThis.localStorage, fetch: globalThis.fetch, document: globalThis.document };
@@ -80,5 +93,12 @@ test('optional admin ownership isolates delayed transport effects without changi
     globalThis.fetch = () => new Promise(resolve => { releaseUpload = () => resolve(Response.json({}, {status:401})); });
     const uploading = api.uploadMonitorTheme(file, 0, owner()); generation++; releaseUpload();
     assert.equal((await uploading).stale, true); assert.equal(store.get('jwt_token'), 'current-jwt'); assert.deepEqual(redirects, []);
+    seed(); globalThis.fetch = async () => new Response('PNG fixture', {headers:{'Content-Type':'image/png'}});
+    const thumbnail = await api.fetchMonitorThemeThumbnail('default',0,owner());
+    assert.equal(thumbnail.data.type,'image/png'); assert.equal(await thumbnail.data.text(),'PNG fixture');
+    let releaseThumbnail;
+    globalThis.fetch = () => new Promise(resolve => { releaseThumbnail=()=>resolve(new Response('old PNG',{headers:{'Content-Type':'image/png'}})); });
+    const pendingThumbnail=api.fetchMonitorThemeThumbnail('default',0,owner());generation++;releaseThumbnail();
+    assert.equal((await pendingThumbnail).stale,true);
   } finally { Object.assign(globalThis, saved); await vite.close(); }
 });
