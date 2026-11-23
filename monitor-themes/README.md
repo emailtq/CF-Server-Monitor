@@ -50,6 +50,9 @@ Large forms use the original section navigation and two-column field layout; num
 validation includes sections not currently visible. The Use/In use badges, icon actions,
 source links, preview.png zoom and non-blocking notifications follow Minimal admin.
 Checking updates compares the release tag first and does not download an unchanged version.
+The Worker reads that tag from GitHub's official `releases/latest` redirect, restricted
+to the same repository. It does not consume the shared unauthenticated REST API quota.
+For a new version, the original `theme.tar.gz` is checked when downloaded and unpacked.
 Selection and per-theme overrides use dedicated settings rows. Deployment bindings are not backed up.
 Invalid authoritative state is an error, not a fallback theme.
 

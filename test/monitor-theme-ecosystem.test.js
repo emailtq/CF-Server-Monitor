@@ -194,12 +194,13 @@ test('GitHub install admits only a native release asset and constrained HTTPS re
   const seen=[];
   t.mock.method(globalThis,'fetch',async(url,options)=>{
     seen.push(String(url));assert.equal(options.headers.Authorization,undefined);
-    if(String(url).includes('api.github.com')) return Response.json({tag_name:'v1.0',assets:[{name:'theme.tar.gz',size:1234}]});
+    if(String(url).endsWith('/releases/latest')) return new Response(null,{status:302,headers:{Location:'https://github.com/example/native-theme/releases/tag/v1.0'}});
     if(String(url).includes('github.com/example/')) return new Response(null,{status:302,headers:{Location:location}});
     return new Response(packageBytes());
   });
   await installMonitorRepository(env,'github.com/example/native-theme/releases?url=https://private.example/#readme');
-  assert.equal(seen[0], 'https://api.github.com/repos/example/native-theme/releases/latest');
+  assert.equal(seen[0], 'https://github.com/example/native-theme/releases/latest');
+  assert.equal(seen.some(url=>url.includes('api.github.com')),false,'release lookup does not consume the shared REST API quota');
   assert.equal((await loadMonitorThemes(env.DB)).themes.find(theme=>theme.short==='third').canUpdate,true);
   location='https://private.example/theme';
   await assert.rejects(()=>installMonitorRepository(env,'https://github.com/example/native-theme'),/monitorThemeDownloadFailed/);
@@ -235,7 +236,7 @@ test('native update check skips same-version downloads and accepts builtin repla
   const initial = await installMonitorTheme(env, stream(packageBytes()));
   let tag = 'v1.0', downloads = 0, short = 'third';
   t.mock.method(globalThis, 'fetch', async url => {
-    if (String(url).includes('api.github.com')) return Response.json({tag_name:tag,assets:[{name:'theme.tar.gz',size:1234}]});
+    if (String(url).endsWith('/releases/latest')) {const repository=new URL(url).pathname.split('/').slice(1,3).join('/');return new Response(null,{status:302,headers:{Location:`https://github.com/${repository}/releases/tag/${tag}`}});}
     downloads++; return new Response(packageBytes({...manifest,short,version:tag.slice(1)}));
   });
   const update = theme => worker.fetch(new Request(origin+'/admin/api', {method:'POST',headers:{Origin:origin,Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({action:'update_monitor_theme',theme})}), env);
@@ -292,7 +293,7 @@ test('GitHub installation executes through the real Workers fetch and gzip runti
   let requests=0;
   const mf=new Miniflare({modules:true,script:bundle.outputFiles[0].text,compatibilityDate:'2024-12-01',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'repository-runtime'},outboundService:async request=>{
     requests++;const url=new URL(request.url);
-    if(url.hostname==='api.github.com')return Response.json({tag_name:'v1',assets:[{name:'theme.tar.gz',size:1234}]});
+    if(url.pathname.endsWith('/releases/latest'))return new Response(null,{status:302,headers:{Location:'https://github.com/example/native-theme/releases/tag/v1'}});
     return new Response(packageBytes());
   }});
   t.after(()=>mf.dispose());const DB=await mf.getD1Database('DB');await DB.prepare('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)').run();
@@ -304,14 +305,32 @@ test('GitHub installation executes through the real Workers fetch and gzip runti
 test('a repository update cannot replace an install completed while release metadata was downloading',async t=>{
   const env=await fixture(t),first=await installMonitorTheme(env,stream(packageBytes()));let latest;
   t.mock.method(globalThis,'fetch',async url=>{
-    if(String(url).includes('api.github.com')) {
+    if(String(url).endsWith('/releases/latest')) {
       latest=await installMonitorTheme(env,stream(packageBytes({...manifest,version:'newer'})));
-      return Response.json({tag_name:'old',assets:[{name:'theme.tar.gz',size:1234}]});
+      return new Response(null,{status:302,headers:{Location:'https://github.com/example/native-theme/releases/tag/old'}});
     }
     return new Response(packageBytes());
   });
   await assert.rejects(()=>installMonitorRepository(env,'https://github.com/example/native-theme','third',first.revision),/monitorThemeConflict/);
   assert.equal((await loadMonitorThemes(env.DB)).themes.find(theme=>theme.short==='third').revision,latest.revision);
+});
+
+test('official latest release redirect is confined to the same repository and validates the original asset at download', async t => {
+  const env=await fixture(t);let location='/example/native-theme/releases/tag/v1.0',assetStatus=200;const seen=[];
+  t.mock.method(globalThis,'fetch',async (url,options)=>{
+    seen.push(String(url));assert.equal(options.redirect,'manual');assert.equal(options.headers.Authorization,undefined);
+    if(String(url).includes('api.github.com'))return new Response('quota exhausted',{status:403});
+    if(String(url).endsWith('/releases/latest'))return new Response(null,{status:302,headers:{Location:location}});
+    return new Response(assetStatus===200?packageBytes():null,{status:assetStatus});
+  });
+  const installed=await installMonitorRepository(env,'https://github.com/example/native-theme');
+  assert.equal(installed.short,'third');assert.deepEqual(seen,['https://github.com/example/native-theme/releases/latest','https://github.com/example/native-theme/releases/download/v1.0/theme.tar.gz']);
+  for(const invalid of ['http://github.com/example/native-theme/releases/tag/v1','https://github.com:444/example/native-theme/releases/tag/v1','https://user:secret@github.com/example/native-theme/releases/tag/v1','https://private.example/tag/v1','https://github.com/other/repo/releases/tag/v1','/example/native-theme/tree/main','/example/native-theme/releases/tag/v1?token=bad','/example/native-theme/releases/tag/v1#readme','/example/native-theme/releases/tag/%0A','/example/native-theme/releases/tag/'+ 'v'.repeat(201)]) {
+    location=invalid;const before=seen.length;await assert.rejects(()=>installMonitorRepository(env,'https://github.com/example/native-theme'),/monitorThemeDownloadFailed/);assert.equal(seen.length,before+1,'invalid release redirects are not followed');
+  }
+  location='/example/native-theme/releases/tag/v2';assetStatus=404;
+  await assert.rejects(()=>installMonitorRepository(env,'https://github.com/example/native-theme'),/monitorThemePackageMissing/);
+  assert.equal((await loadMonitorThemes(env.DB)).themes.find(theme=>theme.short==='third').revision,installed.revision);
 });
 
 test('theme catalog reads manifest metadata without loading every release file index',async t=>{
