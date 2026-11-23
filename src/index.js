@@ -1,4 +1,5 @@
 import { encryptTurnstileData, isTurnstileVerified } from './middleware/turnstile.js';
+import { handleMonitorThemeUpload } from './handlers/monitorThemeUpload.js';
 import { flushLoginEvents, recoverPanelLoginEvents } from './services/loginEvents.js';
 import { cleanupLoginEvents } from './database/loginEvents.js';
 import { publicExtraPingNodes } from './shared/extraPing.js';
@@ -137,12 +138,26 @@ export default {
     setDebug(env.DEBUG);
 
     const url = new URL(request.url);
-    // This isolates requests delivered to the Worker; Cloudflare's asset-first routing precedes fetch().
+    // Worker-first routing resolves native theme files before CF assets; admin/install namespaces stay CF-owned.
+    let adminResource = false;
+    try {
+      const ref = new URL(request.headers.get('Referer'));
+      adminResource = ref.origin === url.origin && /^\/admin(?:\/|$)/.test(ref.pathname);
+    } catch {}
+    if (env.ASSETS && ['GET', 'HEAD'].includes(request.method) && (
+      /^\/(static|files|mikus|os-icons)(\/|$)/.test(url.pathname) ||
+      /^\/(install[^/]*|uninstall[^/]*|cf-server-monitor\.ps1|manifest\.json)$/.test(url.pathname) ||
+      (adminResource && /^\/(flags\/|favicon\.)/.test(url.pathname)))) return env.ASSETS.fetch(request);
+    const uploadResponse = await handleMonitorThemeUpload(request, env, url);
+    if (uploadResponse) return uploadResponse;
+    // Internal release paths are never exposed directly, including when an embedded asset exists.
     const monitorCompatResponse = await handleMonitorCompat(request, env, url);
     if (monitorCompatResponse) return monitorCompatResponse;
 
     const method = request.method;
     const path = url.pathname;
+
+    if (env.ASSETS && ['GET', 'HEAD'].includes(method) && /^\/(flags\/|favicon\.)/.test(path)) return env.ASSETS.fetch(request);
 
     const corsAllowedOrigins = getCorsAllowedOrigins(env);
     

@@ -7,10 +7,12 @@ import { createHistoryTableSql } from '../src/utils/historyFields.js';
 import { buildHistoryId } from '../src/database/indexOptimization.js';
 import { generateToken } from '../src/middleware/auth.js';
 import { hashPassword } from '../src/utils/common.js';
+import { installMonitorTheme } from '../src/services/monitorThemePackages.js';
+import { selectMonitorTheme } from '../src/services/monitorThemes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const theme = process.argv[2] || 'default';
-if (!['default', 'serverstatus'].includes(theme)) throw new Error('usage: node scripts/preview-monitor-themes.mjs [default|serverstatus]');
+if (!['default', 'serverstatus'].includes(theme) && !theme.endsWith('.tar.gz')) throw new Error('usage: node scripts/preview-monitor-themes.mjs [default|serverstatus|path/to/theme.tar.gz] [port]');
 const host = '127.0.0.1.localhost';
 const adminSettings = { is_public: 'true', username: 'preview', password: await hashPassword('preview-only'), jwt_secret: 'ephemeral-monitor-theme-fixture-authority' };
 const adminToken = await generateToken({}, adminSettings);
@@ -23,7 +25,6 @@ const bundle = await build({ stdin: { resolveDir: root, contents: `
         return new Response('<!doctype html><script>localStorage.setItem("jwt_token",'+JSON.stringify(env.FIXTURE_ADMIN_TOKEN)+');localStorage.setItem("language_preference",'+JSON.stringify(url.searchParams.get('lang') === 'en' ? 'en' : 'zh')+');location.replace("/admin#/admin?tab=themeStore")</script>', {headers:{'Content-Type':'text/html','Cache-Control':'no-store'}});
       }
       if (url.pathname === '/theme') return Response.json({themes:[],schema:1});
-      if (['/static/','/mikus/','/flags/','/os-icons/'].some(prefix=>url.pathname.startsWith(prefix)) || ['/manifest.json','/favicon.png','/favicon.ico'].includes(url.pathname)) return env.ASSETS.fetch(request);
       return worker.fetch(request, env, ctx);
     } };
   ` }, bundle: true, write: false, format: 'esm', platform: 'browser', external: ['cloudflare:*'] });
@@ -38,7 +39,7 @@ const assets = async request => {
     return new Response(request.method === 'HEAD' ? null : body, { headers: { 'Content-Type': contentTypes[ext] || 'application/octet-stream' } });
   } catch { return new Response('Not Found', { status: 404 }); }
 };
-const mf = new Miniflare({ ...(process.argv[3] ? { port: Number(process.argv[3]) } : {}), modules: true, script: bundle.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'monitor-theme-preview' }, durableObjects: { METRICS_BROADCASTER: { className: 'PreviewHub', useSQLite: true } }, serviceBindings: { ASSETS: assets }, bindings: { MONITOR_COMPAT_HOST: host, MONITOR_COMPAT_THEME: theme, FIXTURE_ADMIN_TOKEN: adminToken } });
+const mf = new Miniflare({ ...(process.argv[3] ? { port: Number(process.argv[3]) } : {}), modules: true, script: bundle.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'monitor-theme-preview' }, r2Buckets: { MONITOR_THEME_BUCKET: 'ephemeral-theme-packages' }, durableObjects: { METRICS_BROADCASTER: { className: 'PreviewHub', useSQLite: true } }, serviceBindings: { ASSETS: assets }, bindings: { MONITOR_COMPAT_HOST: host, MONITOR_COMPAT_THEME: ['default', 'serverstatus'].includes(theme) ? theme : 'default', FIXTURE_ADMIN_TOKEN: adminToken } });
 const db = await mf.getD1Database('DB');
 const now = Math.floor(Date.now() / 1000) * 1000;
 await db.batch([
@@ -50,6 +51,11 @@ await db.batch([
   db.prepare("INSERT INTO servers (id,name,sort_order,server_group,region,history_partition_id,timestamp) VALUES ('preview-node','Preview node',1,'Demo','US',20,?)").bind(now),
   db.prepare(`INSERT INTO metrics_history (id,server_id,timestamp,cpu,load_avg,ram_total,ram_used,swap_total,swap_used,disk_total,disk_used,net_in_speed,net_out_speed,net_rx,net_tx,net_rx_monthly,net_tx_monthly,processes,tcp_conn,udp_conn,cpu_cores,cpu_info,os,arch,kernel_version,boot_time,agent_version,region) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(buildHistoryId(20, now), 'preview-node', now, 18.5, '0.3 0.2 0.1', 2048, 512, 128, 32, 51200, 12000, 4, 8, 123456, 654321, 11111, 22222, 44, 12, 3, 4, 'Preview CPU', 'Debian 12', 'x86_64', '6.1', now - 3600_000, 'preview-1.0', 'US')
 ]);
+if (theme.endsWith('.tar.gz')) {
+  const installed = await installMonitorTheme({ DB: db, MONITOR_THEME_BUCKET: await mf.getR2Bucket('MONITOR_THEME_BUCKET') }, new Blob([await fs.readFile(path.resolve(theme))]).stream());
+  await selectMonitorTheme(db, installed.short);
+  console.log(`Installed original package ${installed.short} ${installed.version}`);
+}
 const broadcaster = await mf.getDurableObjectNamespace('METRICS_BROADCASTER');
 const hub = broadcaster.get(broadcaster.idFromName('global'));
 const sample = {

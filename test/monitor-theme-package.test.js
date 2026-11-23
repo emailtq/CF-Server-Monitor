@@ -31,6 +31,6 @@ test('bundled Monitor packages keep their audited metadata and isolated dist roo
 
   for (const config of ['wrangler.toml', '.github/workflows/deploy.yml']) {
     assert.match(fs.readFileSync(path.join(root, config), 'utf8'),
-      /run_worker_first\s*=\s*\["\/_monitor_theme\/\*",\s*"\/dashboard\.html"\]/);
+      /run_worker_first\s*=\s*true/);
   }
 });

@@ -80,7 +80,7 @@ jobs:
           [assets]
           directory = "./dist"
           binding = "ASSETS"
-          run_worker_first = ["/_monitor_theme/*", "/dashboard.html"]
+          run_worker_first = true
 
           [[d1_databases]]
           binding = "DB"
@@ -123,6 +123,7 @@ jobs:
           MONITOR_COMPAT_HOST: ${{ vars.MONITOR_COMPAT_HOST }}
           MONITOR_COMPAT_THEME: ${{ vars.MONITOR_COMPAT_THEME }}
           MONITOR_FRONTEND_MODE: ${{ vars.MONITOR_FRONTEND_MODE }}
+          MONITOR_THEME_BUCKET: ${{ vars.MONITOR_THEME_BUCKET }}
         run: node scripts/monitor-theme-vars.mjs >> wrangler.toml
 
       # wrangler v4 的 `deploy` 会自动根据 wrangler.toml 中的 [[durable_objects.bindings]]

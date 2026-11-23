@@ -1,4 +1,4 @@
-# Bundled Monitor themes
+# Native Monitor themes
 
 These are the reviewed static release bundles used by the Worker default frontend.
 The build copies only each release's `dist/` directory to `dist/_monitor_theme/<short>/`;
@@ -17,9 +17,11 @@ The upstream repositories publish these bundles under the MIT license. The appli
 texts are kept beside the vendored packages as `LICENSE-default.txt` and
 `LICENSE-serverstatus.txt`; the release archives themselves did not include those files.
 
-Cloudflare Static Assets are asset-first by default. Both the local Wrangler config and the
-generated deployment config route `/_monitor_theme/*` through the Worker first, so direct
-requests cannot bypass the Worker's rejection of internal paths.
+Both local and generated deployment configs use `run_worker_first = true`. The Worker
+resolves the selected theme's whole `dist/` tree, including root fonts, images, flags and
+scripts, before static assets can intercept it. CF admin static files, installation files,
+OS icons and admin-context flags retain their own routes. Direct `/_monitor_theme/*`
+requests are rejected.
 
 No hostname variable is needed: `/` and `/node/:id` serve Default out of the box.
 Optionally set `MONITOR_COMPAT_THEME` to `default` or `serverstatus`. A saved admin selection
@@ -29,8 +31,8 @@ compatibility host. Invalid deployment values fail configuration validation.
 
 ## Choose and configure from CF admin
 
-Open **Admin → Themes → Minimal Monitor themes**. Preview either bundled release, select
-one for the homepage, or choose **Follow deployment**. A saved D1 selection takes
+Open **Admin → Themes → Minimal Monitor themes**. Preview or select an installed release,
+or choose **Follow deployment**. A saved D1 selection takes
 precedence over `MONITOR_COMPAT_THEME`; with neither selected, Default is used. This does
 not require a separate hostname. The theme page hides legacy GitHub-theme, Mikus and
 CF-only appearance controls in default mode; admin language/theme and public data visibility
@@ -39,8 +41,10 @@ controls remain available. Site title is edited under Settings.
 Default's **Show summary** setting is its manifest-declared boolean. Saving `false` hides
 the original four summary blocks; **Restore defaults** stores `{}`, allowing the release's
 own default `true`. ServerStatus declares no settings and has no empty settings dialog.
-Selection and per-theme overrides use dedicated settings rows and are included in server
-settings backups as `settings.monitor_theme`; deployment bindings are not backed up.
+Other themes draw their settings directly from `theme.json`: string, multiline text,
+number with bounds, boolean, select and section headings. Malformed fields are omitted;
+keys a version no longer declares are preserved when saving and cleared by reset.
+Selection and per-theme overrides use dedicated settings rows. Deployment bindings are not backed up.
 Invalid authoritative state is an error, not a fallback theme.
 
 Private sites use the existing CF administrator login session. Global Turnstile opens an
@@ -54,11 +58,55 @@ across SPA navigation and WebSockets by an HTML bootstrap. Formal HTML also adds
 protocol marker, keeping unmarked CF clients on their existing incremental protocol, and
 migrates old `/#/server/<UUID>` and `/#/admin` links. Vendored JS/CSS files are unchanged.
 Root-relative assets and APIs retain the same authenticated preview context with no-store
-responses; ordinary homepage requests do not consume a theme-selection cookie. Arbitrary
-runtime archive installation is not provided.
+responses; ordinary homepage requests do not consume a theme-selection cookie. A
+`monitor_revision` URL context pins each page and its imports to an immutable release,
+so an update or removal does not break assets for an already-open page.
+
+## Install the original upstream package
+
+Configure a private R2 bucket binding named `MONITOR_THEME_BUCKET`. In GitHub deployment,
+set the repository variable of the same name to an existing bucket name; the config helper
+emits the binding without creating a bucket or enabling billing. Builtin themes work without R2.
+Account R2 activation must be completed in Cloudflare first. See [R2 setup](https://developers.cloudflare.com/r2/get-started/)
+and [pricing](https://developers.cloudflare.com/r2/pricing/); retained revisions count toward storage.
+
+Choose **Install theme**, then enter `https://github.com/owner/repository` or upload its
+original `theme.tar.gz`. The repository route uses the latest release's exact `theme.tar.gz`
+asset, not a source archive or a GitHub tree theme. Themes execute same-origin JavaScript
+with access to site data; the dialog asks administrators to trust the author before installation.
+
+Admission checks gzip/tar paths, checksums, duplicates, entry types and size budgets:
+32 MiB compressed, 2000 entries, 8 MiB per file and 64 MiB file payload. The package needs
+root `theme.json` and `dist/index.html`. Links, devices, traversal and nested source archives
+are rejected. The uncompressed tar is streamed to an indexed immutable R2 object;
+only a complete validated upload publishes the D1 registry pointer. Failed/conflicting
+updates leave the previous release active. Theme JS/CSS files are not patched.
+
+Installation does not write the saved selection. A previously removed selected short
+resumes its saved selection when reinstalled. **Update theme** keeps configuration and
+requires the same short; upload-only themes without a GitHub source can be updated by
+uploading another package. **Remove theme** removes the active registry pointer, restores
+the builtin of the same short or falls back to Default, and retains config and revision bytes.
+Old revisions are not automatically garbage-collected; removal does not reclaim their R2 space.
+
+The shared adapter provides native me/nodes/history/live and generic theme config GET/PUT.
+Theme-specific SPA routes such as `/instance/:id` work without a CF theme implementation.
+Unknown API/admin/Agent paths never become SPA HTML. Optional integrations such as
+`/chicken/api/nodes` still require their own service. CF does not invent absent daily totals,
+virtualization details or aggregate packet-loss metrics. The package's own missing-data UI remains in use.
+
+## Back up settings and reinstall packages separately
+
+Server settings backups retain the old `{selected,configs}` format for builtin-only state.
+Dynamic state uses `settings.monitor_theme = {version:2,selected,configs,packages}`. The
+package entries record short, version, URL and optional GitHub repository, not executable
+bytes or live R2/D1 revision pointers. Import restores choices/configs but never installs code.
+Keep the original packages separately and reinstall the recorded versions after restoring
+to another deployment. Until a selected custom short is installed, the effective homepage is Default.
 
 For isolated development QA, build with `npm run build:frontend`, then run
-`npm run preview:monitor-theme -- default`. The script prints a Monitor hostname URL and a
+`npm run preview:monitor-theme -- default`, or pass a local `theme.tar.gz` path. The script uses
+ephemeral local R2 and prints a Monitor hostname URL and a
 local-only auto-login `/_fixture/admin` URL; `localhost` on the same printed port exercises
 the actual default homepage without a hostname binding and authenticated preview. All data and fixture login authority
 are ephemeral, with no Cloudflare credentials or production connection.

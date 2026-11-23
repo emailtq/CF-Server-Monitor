@@ -49,7 +49,7 @@ try {
     await page.locator('[data-page=alerts]').click();
     await page.locator('.admin-rule-list').waitFor({ state: 'visible' });
     assert.equal(await page.locator('section .admin-routing-preview').count(), 0, 'alerts must not contain a separate SSH source diagnostic block');
-    await page.locator('section > p[role=status]').waitFor();
+    await page.locator('.admin-rule-list').locator('..').locator(':scope > p[role=status]').waitFor();
     assert.equal(await page.evaluate(() => matchMedia('(pointer:coarse)').matches), width < 400);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     report.checks.push({ width, theme, locale, coarse: width < 400, diagnosticsAbsent: true, uncertainVisible: true });

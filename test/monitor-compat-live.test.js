@@ -324,3 +324,12 @@ test('opening and periodic send failures release Monitor sockets', async t => {
   assert.equal((await h.health()).subscribers, 0);
   assert.equal((await h.reads()).timerActive, false);
 });
+
+test('an empty peer close frame completes the native close handshake so themes can reconnect',async t=>{
+  const h=await fixture(t),peer=await h.socket({path:'/api/ws?monitor_protocol=1'});
+  await snapshot(peer);peer.socket.close();
+  await waitFor(()=>peer.socket.readyState===WebSocket.CLOSED,1500);
+  assert.equal(await peer.closed,1000);
+  assert.equal((await h.health()).subscribers,0);
+  await snapshot(await h.socket({path:'/api/ws?monitor_protocol=1'}));
+});

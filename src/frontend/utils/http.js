@@ -36,7 +36,7 @@ const createHeaders = (includeAuth = true, includeTurnstile = true, baseUrl = nu
     includeTurnstileVerified = true
   } = options
   const headers = {
-    'Content-Type': 'application/json'
+    'Content-Type': options.rawBody ? 'application/gzip' : 'application/json'
   }
   
   if (includeAuth) {
@@ -150,7 +150,7 @@ const request = async (method, url, body, options = {}) => {
     const res = await doFetch(`${base}${url}`, {
       method,
       headers,
-      body: body != null ? JSON.stringify(body) : undefined,
+      body: body != null ? (options.rawBody ? body : JSON.stringify(body)) : undefined,
       credentials: 'include',
       signal: options.signal
     }, timeoutMs)

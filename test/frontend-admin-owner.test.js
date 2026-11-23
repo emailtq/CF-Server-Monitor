@@ -70,5 +70,15 @@ test('optional admin ownership isolates delayed transport effects without changi
     callbacks.at(-1).callback('old-widget-token'); assert.equal(store.get('turnstile_token'), 'current-turnstile');
     callbacks.at(-1).errorCallback(); callbacks.at(-1).expiredCallback(); assert.equal(store.get('turnstile_token'), 'current-turnstile');
     turnstile.renderTurnstile('#fixture', 'fixture-key', { requestOwner: owner() }); callbacks.at(-1).callback('new-widget-token'); assert.equal(store.get('turnstile_token'), 'new-widget-token');
+    seed(); const file = new Blob([new Uint8Array([31,139,8,0])]); let sent;
+    globalThis.fetch = async (url, init) => { sent = { url, init }; return Response.json({ success: true }); };
+    await api.uploadMonitorTheme(file, 0, owner());
+    assert.equal(sent.init.body, file, 'the original gzip body is not JSON-encoded');
+    assert.equal(sent.init.headers['Content-Type'], 'application/gzip');
+    assert.equal(sent.init.headers.Authorization, 'Bearer current-jwt');
+    let releaseUpload;
+    globalThis.fetch = () => new Promise(resolve => { releaseUpload = () => resolve(Response.json({}, {status:401})); });
+    const uploading = api.uploadMonitorTheme(file, 0, owner()); generation++; releaseUpload();
+    assert.equal((await uploading).stale, true); assert.equal(store.get('jwt_token'), 'current-jwt'); assert.deepEqual(redirects, []);
   } finally { Object.assign(globalThis, saved); await vite.close(); }
 });

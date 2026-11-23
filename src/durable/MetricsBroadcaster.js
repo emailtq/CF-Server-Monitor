@@ -602,7 +602,8 @@ export class MetricsBroadcaster {
       server.accept();
       server.addEventListener('close', event => {
         this._forgetMonitorCompatSocket(server);
-        try { server.close(event.code, event.reason); } catch (_) {}
+        // Reserved event-only codes cannot be echoed on the wire; an empty close frame reports 1005.
+        try { server.close([1005, 1006, 1015].includes(event.code) ? 1000 : event.code, event.reason); } catch (_) {}
       });
       server.addEventListener('error', () => this._closeMonitorCompatSocket(server));
       this.monitorCompatSockets.add(server);

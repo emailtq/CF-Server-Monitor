@@ -31,7 +31,7 @@ import { checkAgentImage } from '../utils/agentImage.js';
 import { changeLatencyTasks, migrateLatencyConfig, loadLatencyTasks } from '../database/latencyTasks.js';
 import { validateLatencyBackup, withLegacyLatencyHistory } from '../shared/latencyTasks.js';
 import { handleMonitorThemeAdmin } from './monitorThemeAdmin.js';
-import { loadMonitorThemes, importMonitorThemes } from '../services/monitorThemes.js';
+import { exportMonitorThemes, importMonitorThemes } from '../services/monitorThemes.js';
 import { validMonitorThemeBackup } from '../shared/monitorThemes.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
@@ -856,6 +856,9 @@ async function handleSendTestNotificationAction({ env, data }) {
 
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   get_monitor_themes: handleMonitorThemeAdmin,
+  install_monitor_theme: handleMonitorThemeAdmin,
+  update_monitor_theme: handleMonitorThemeAdmin,
+  delete_monitor_theme: handleMonitorThemeAdmin,
   select_monitor_theme: handleMonitorThemeAdmin,
   save_monitor_theme_config: handleMonitorThemeAdmin,
   start_monitor_theme_preview: handleStartMonitorThemePreviewAction,
@@ -1491,11 +1494,11 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         const siteSettings = await loadSiteSettings(env.DB);
         const appearanceSettings = await loadAppearanceOptions(env.DB);
         const notificationConfig = data.includeNotificationSecrets ? await loadNotificationConfig(env.DB, siteSettings) : null;
-        const { selected, configs } = await loadMonitorThemes(env.DB);
+        const monitorTheme = await exportMonitorThemes(env.DB);
         return createSuccessResponse({
           success: true,
           servers: (servers.results || []).map(({terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at, ...server}) => server),
-          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), monitor_theme: { selected, configs }, ...(siteSettings.latency_tasks ? { latency_tasks: siteSettings.latency_tasks } : {}), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
+          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), monitor_theme: monitorTheme, ...(siteSettings.latency_tasks ? { latency_tasks: siteSettings.latency_tasks } : {}), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
           ...(notificationConfig ? { notificationBackup: { sensitive: true, warning: 'notification_backup_contains_credentials' } } : {}),
           message: 'serversExported'
         });

@@ -67,7 +67,7 @@ test('only the configured exact hostname enters the compatibility router', async
     ['other.example.test', ORIGIN]
   ]) {
     const url = new URL(`${origin}/not-a-monitor-route`);
-    const compat = await handleMonitorCompat(new Request(url), { MONITOR_COMPAT_HOST: configured }, url);
+    const compat = await handleMonitorCompat(new Request(url), { MONITOR_FRONTEND_MODE: 'legacy', MONITOR_COMPAT_HOST: configured }, url);
     assert.equal(compat, null, `${configured} / ${origin}`);
   }
 

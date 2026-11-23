@@ -18,7 +18,13 @@ test('existing theme page mounts a separate Monitor manager with owned requests 
   const script = compileScript(descriptor, { id: 'monitor-manager' });
   assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: 'MonitorThemeManager.vue', id: 'monitor-manager', compilerOptions: { bindingMetadata: script.bindings } }).errors, []);
   assert.match(source, /result.stale/);
-  assert.match(source, /theme.config\?\.length/);
+  assert.match(source, /monitorConfigForm/);
+  assert.match(source, /monitorConfigOverrides/);
+  assert.match(source, /uploadMonitorTheme/);
+  assert.match(source, /type="file"/);
+  assert.match(source, /field.type === 'select'/);
+  assert.match(source, /monitorThemeTrust/);
+  assert.match(source, /theme\?\.builtin && short === 'default'/, 'builtin label follows admin locale, external manifests keep their own names');
   assert.match(source, /AdminDialog/);
 });
 async function fixture(t) {

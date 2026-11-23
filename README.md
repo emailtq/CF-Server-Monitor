@@ -486,6 +486,8 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 
 Worker 首页默认直接使用极简探针原版 **Default v1.4.3**，无需配置独立 hostname。后台「主题商店」可切换到 **ServerStatus v1.5.1**、预览及恢复沿用部署选择；Default 的设置可关闭顶部汇总区。D1 选择优先于 `MONITOR_COMPAT_THEME`，两者未设置时使用 Default。
 
+配置私有 `MONITOR_THEME_BUCKET` R2 绑定后，后台可直接安装极简主题仓库最新 Release 的 `theme.tar.gz` 或上传原包，并进行预览、更新、移除和原生配置。无需为每个主题开发 CF 版本；原包 JS/CSS 不改，完整 `dist/` 资源与主题详情路由由通用适配层承接。请只安装可信作者的主题；扩展服务和 CF 缺少的指标仍需单独对接。没有 R2 时内置主题照常可用。设置备份不含可执行主题包，迁移时须另行保留、重装原包。
+
 前台沿用所选原版主题的布局、深浅色及交互，后台仍使用 CF 管理界面。站名在「设置」修改；后台语言/深浅色及费用、到期、流量显示开关保留。旧 CF 背景、Mikus、GitHub tree 主题和全局 `theme_options` 不控制新的极简首页。
 
 私有站继续使用 CF 管理员会话；全局 Turnstile 会先显示验证页，通过后以 HttpOnly Cookie 记住一小时。API 和实时连接执行同一权限检查。旧 `/#/server/<UUID>` 详情链接自动跳转到稳定数字 ID 的 `/node/:id`，原 Agent 和 CF API 客户端入口保留。

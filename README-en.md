@@ -485,6 +485,8 @@ Built-in sources include Cloudflare Turnstile, Cloudflare Analytics, Google Font
 
 The Worker homepage now serves the original Minimal Monitor **Default v1.4.3** without a separate hostname. **Admin → Themes** lets you select **ServerStatus v1.5.1**, preview either release, restore the deployment choice, and toggle Default's summary. D1 selection takes precedence over `MONITOR_COMPAT_THEME`; neither set means Default.
 
+With a private `MONITOR_THEME_BUCKET` R2 binding, install the original latest-release `theme.tar.gz` from a Minimal theme repository or upload it in admin. Preview, update, remove and manifest-driven configuration use a shared adapter: no separate CF implementation or JS/CSS edits per theme. Full dist resources and theme-specific page routes are supported. Install only trusted authors' code; optional external services and absent CF metrics still need their own integration. Builtins work without R2. Settings backups do not include executable packages; retain and reinstall the original packages when migrating.
+
 The frontend retains the selected release's layout, light/dark appearance and interactions. CF admin remains available. Edit the site title under Settings; admin language/theme and price, expiry and traffic visibility controls remain available. Legacy CF backgrounds, Mikus, GitHub tree themes and global `theme_options` do not control the new homepage.
 
 Private sites continue to use CF administrator sessions. Global Turnstile opens an access gate and remembers successful verification for one hour in an HttpOnly cookie. APIs and live streams enforce the same access policy. Old `/#/server/<UUID>` links redirect to stable numeric `/node/:id` links; Agent and existing CF API entry points remain usable.

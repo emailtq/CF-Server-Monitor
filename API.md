@@ -1111,7 +1111,7 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 
 ### 2.8 极简探针主题兼容 API
 
-实现以 Monitor v1.5.2、Default v1.4.3 和 ServerStatus v1.5.1 的读取协议为基线。Worker 默认在 `/`、`/node/:id`、`/assets/*` 及下列 API 启用极简原版前台，无需 `MONITOR_COMPAT_HOST`。CF 后台、`/api/config`、`/theme`、数据库维护、Agent 和终端入口继续由原处理器鉴权。未知页面不再回退旧 CF 首页；内部 `/_monitor_theme/*` 普通请求返回 `404`。`MONITOR_FRONTEND_MODE=legacy` 恢复旧 CF 前台，此时可用精确 `MONITOR_COMPAT_HOST` 保留先前的公开-only 极简入口。正式极简 HTML 给同源 WebSocket 添加 `monitor_protocol=1`；未标记的旧客户端 `/api/ws` 继续使用 §2.5 的 CF 增量协议（legacy 独立极简 hostname 除外）。旧 `/#/server/<UUID>` 链接映射至可见节点的稳定 `/node/:id`，`/#/admin` 转入原后台。
+实现以 Monitor v1.5.2、Default v1.4.3 和 ServerStatus v1.5.1 的读取协议为基线。Worker 默认使用极简原版前台，无需 `MONITOR_COMPAT_HOST`；动态主题可提供完整 `dist/` 资源和 `/instance/:id` 等 SPA 路由。CF 后台、`/api/config`、`/theme`、数据库维护、Agent 和终端入口继续由原处理器鉴权。页面回退至所选原版主题，不回退旧 CF 首页；未知 API、管理或内部路径返回 `404`，`/_monitor_theme/*` 普通请求亦为 `404`。`MONITOR_FRONTEND_MODE=legacy` 恢复旧 CF 前台，此时可用精确 `MONITOR_COMPAT_HOST` 保留先前的公开-only 极简入口。正式极简 HTML 给同源 WebSocket 添加 `monitor_protocol=1`；未标记的旧客户端 `/api/ws` 继续使用 §2.5 的 CF 增量协议（legacy 独立极简 hostname 除外）。旧 `/#/server/<UUID>` 链接映射至可见节点的稳定 `/node/:id`，`/#/admin` 转入原后台。
 
 读取接口仅接受 `GET`，使用原生 JSON，不包裹 CF 的 `status/data`，不开放浏览器跨域读取。默认前台的私有站须有效 CF 管理员会话（Bearer 或 `cfsm_auth` Cookie），未登录返回 `401`。全局 Turnstile 还须有效的一小时加密验证凭据（HttpOnly `cfsm_monitor_verified` Cookie 或既有 `X-Turnstile-Verified`），缺失/伪造/过期返回 `403`，登录不能绕过；读取失败返回 `503`。公开无验证页面可匿名读取。`/api/me` 对未登录状态返回原版登录信息，读取失败返回 `503`，不会伪装为已登录。legacy 独立极简 hostname 保留先前仅明确公开、未启用全局 Turnstile 的读取合同。
 
@@ -1122,31 +1122,38 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 | `/api/me` | `{"authed":false,"github":false,"public_page":true,"site_name":"站点名称","history_days":1}`；`authed` 表示当前 CF 管理员会话有效，私有或尚未通过验证时 `public_page` 为 `false`；配置故障返回 `503`。 |
 | `/api/nodes` | `{"nodes":[…],"admin":false}`；仅含可见节点，按 CF 排序。正整数 `id` 与节点 UUID 持久映射，删除后不分配给其他节点。 |
 | `/api/nodes/:id/metrics?hours=&points=&series=` | `{"metrics":[…],"ping":[…],"probes":{},"loss":{},"step":60}`；`step` 为实际采样步长（秒）。先从节点快照取得 ID；映射表初始化之前返回 `503`，之后隐藏、删除或无映射的节点返回 `404`。`hours` 默认 6、限于 1–24；`points` 默认 240、限于 60–240；省略 `series` 返回两类数据，`metrics` 或 `ping` 只返回所选类别。无效数字或重复参数返回 `400`，有效范围内无样本返回空数组，查询繁忙返回 `503`。 |
-| `/api/themes/default/config` | D1 保存的公开覆盖值，如 `{"show_summary":false}`；无覆盖或恢复默认时为 `{}`，Default 使用原版默认值 `true`。读取/格式损坏返回 `503`。不读取 CF 全局 `theme_options`，其他主题 `short` 未开放。 |
+| `/api/themes/:short/config` | D1 保存的公开覆盖值，如 Default 的 `{"show_summary":false}`；无覆盖或恢复默认时为 `{}`。short 为 1–128 位字母、数字、下划线或连字符。读取/格式损坏返回 `503`，不读取 CF 全局 `theme_options`。默认模式支持原生 `PUT`：必须管理员登录、精确同源 `Origin` 并满足 Turnstile；JSON 对象最多 64 KiB，成功 `204`，无效字段类型 `400`、超限 `413`。旧 legacy 入口仍为只读。 |
 | `/api/ws?monitor_protocol=1` | 默认极简前台 WebSocket `101`。首帧及其后约每 2 秒为完整的 `/api/nodes` 快照，编码为文本 JSON。接受附加 `gzip`，但仍发送文本；无需发送订阅消息，客户端应用消息不会修改订阅，不发送 CF `hello` 或增量。legacy 独立极简 hostname 使用未标记 `/api/ws`。 |
 
 **数据差异：**快照使用 CF 的 5 分钟在线定义；`last_seen` 和历史 `ts` 用 Unix 秒，容量、速率及累计流量分别用字节、字节/秒及字节。离线或缺少必需采样时 `metrics` 为 `null`。地址和虚拟化信息不对外提供；计费及流量遵守 CF 展示开关，累计数据用 CF Agent 计数，不模拟 Monitor 的历史累计、日流量或周期开始时间。历史资源点来自 CF D1 的已有采样，不表示精确均值或峰值；探测点包含 `task_id`、`ts`、`latency`（毫秒；明确超时为 `null`）及可用的采样 `loss`，`probes` 映射任务 ID 到公开标签；汇总 `loss` 保持 `{}`，不估算窗口丢包和中位数。
 
 **实时限制：**仅允许无 `Origin` 的客户端或 `Origin` 精确等于请求自己的 origin（含协议及端口）；其他显式 origin（含 `null`）拒绝，普通 GET 返回 `426`。全局广播对象最多接收 64 个此协议连接（含正在握手的连接）；满额时在读取权限前返回 `503`。各握手独立验证当前 policy，私有授权连接不能放行匿名或 legacy 连接。推送以单一共享时钟合并 D1 基线和较新的实时样本；活跃期间约每 10 秒更新一次权限、节点可见性及展示数据，并逐连接重验登录/验证凭据（到期后在下一帧前重读，不继续发送过期快照）。关闭最后一个兼容连接时停止定时刷新。失去授权或验证过期的连接关闭 `1008`；数据读取或推送失败关闭 `1013`，客户端可退避重连。此专用流使用标准 WebSocket，订阅活跃时会保持 Durable Object 运行；不占用 Agent 授权 alarm，也不改变原站的 WebSocket 休眠设置。
 
-#### 2.8.1 后台管理已打包的主题
+#### 2.8.1 后台管理原生主题包
 
-后台「主题商店」的「极简探针主题」管理 Default / ServerStatus，并直接改变默认首页。D1 选择优先于 `MONITOR_COMPAT_THEME`，两者均未选择时使用 Default。默认模式隐藏 CF-only 外观、GitHub 地址及 Mikus 控件，保留其存储供 legacy 恢复使用；后台语言、深浅色、公开数据展示开关和设置页站名仍可编辑。显式无效部署值或损坏的 D1 状态返回 `503`，不静默切换。
+后台「主题商店」的「极简探针主题」管理内置与动态安装的原生主题。D1 选择优先于 `MONITOR_COMPAT_THEME`，两者均未选择时使用 Default；被移除的选中 short 保留选择/配置，实际首页回到 Default，同名重装会恢复原选择。默认模式隐藏旧 CF-only 外观、GitHub tree 地址及 Mikus 控件，保留其存储供 legacy 恢复使用；后台语言、深浅色、公开数据展示开关和设置页站名仍可编辑。显式无效部署值或损坏的 D1 状态返回 `503`，不静默丢弃。
 
 以下操作均为已登录管理员的 `POST /admin/api`，响应 `Cache-Control: no-store`：
 
 | action | 输入与结果 |
 | --- | --- |
-| `get_monitor_themes` | 返回 canonical manifest `themes`、`selected`（未选择为 `null`）、`effective`、逐主题 `configs`、`defaultFrontend`、有效 `hostname` 或 `null`、`previewStatus`。 |
-| `select_monitor_theme` | `theme` 为 `default`、`serverstatus`；`null` 恢复沿用部署选择。返回更新后的管理状态。 |
-| `save_monitor_theme_config` | `theme` 和 `config` 对象；Default 只接受布尔 `show_summary`，ServerStatus 只接受 `{}`。`{}` 恢复该主题默认值，其他主题配置不变。默认值不重复存储。 |
-| `start_monitor_theme_preview` | `theme` 为两个合法 short 之一；与既有 CF 预览一样使用 Bearer 登录，返回 `preview_url` 并设置安全的 HttpOnly `cfsm_theme_preview_auth` Cookie。URL 不携带 JWT。默认模式下私有站可用有效管理员权限预览；Turnstile 仍须先验证。不能读取时返回 `409` 与明确原因。 |
+| `get_monitor_themes` | 返回内置与已安装 manifest `themes`（含 `builtin`、`revision` 及动态主题 `canUpdate`）、`selected`（未选择为 `null`）、`effective`、逐主题 `configs`、`runtimeStorage`、`defaultFrontend`、有效 `hostname` 或 `null`、`previewStatus`。 |
+| `select_monitor_theme` | `theme` 为已安装 short；`null` 恢复沿用部署选择。返回更新后的管理状态。 |
+| `save_monitor_theme_config` | `theme` 和最多 64 KiB 的 `config` 对象。内置 Default 仍接受布尔 `show_summary`；动态主题按原生 manifest 字段类型和范围校验，保留版本未知覆盖键。`{}` 重置该主题，其他主题不变；与 manifest 相同的默认值不重复存储。 |
+| `install_monitor_theme` | `repository` 为完整 `https://github.com/owner/repository`；安装最新 Release 的 `theme.tar.gz`。需要私有 R2 绑定、登录、精确同源 Origin 和 viewer 验证。安装不写入选择，返回完整管理状态。 |
+| `update_monitor_theme` | `theme` 为动态安装 short，从其 GitHub 源重装最新原包；包内 short 必须相同，保留配置和已发布旧 revision。与安装相同的权限要求。 |
+| `delete_monitor_theme` | `theme` 为动态安装 short，移除 active registry 指针；同名内置包恢复，否则实际页面回到 Default。保留配置和旧 revision，操作不释放旧版 R2 空间。要求登录、同源 Origin 和 viewer 验证。 |
+| `start_monitor_theme_preview` | `theme` 为已安装 short；与既有 CF 预览一样使用 Bearer 登录，返回包含 short/revision 的 `preview_url` 并设置安全的 HttpOnly `cfsm_theme_preview_auth` Cookie。URL 不携带 JWT。默认模式下私有站可用有效管理员权限预览；Turnstile 仍须先验证。不能读取时返回 `409` 与明确原因。 |
 
-主题数据使用独立 settings 行 `monitor_theme_selection`、`monitor_theme_config:default`、`monitor_theme_config:serverstatus`，不覆盖旧站点/外观行。服务器设置备份的 `settings.monitor_theme` 包含 `{selected,configs}`；导入前校验全部字段和类型，缺少该字段的旧备份不更改极简主题，不迁移 hostname 或部署变量。未知主题、配置字段/类型返回 `400 monitorThemeInvalid`，存储故障返回 `503 monitorThemeUnavailable`。
+`POST /admin/api/monitor-themes/upload` 使用原始 gzip 二进制 body，而非 JSON 或 multipart。先验证管理员、精确同源 Origin 和 viewer policy，再读取最多 32 MiB 的原始包；成功返回 `{success:true,theme}`，不会改变选择。包须包含根 `theme.json` 和 `dist/index.html`。路径、校验和、重复项、链接/设备和展开预算均受校验；全包通过并写入不可变 R2 对象后才发布 D1 registry。失败不替换上一版；并发状态冲突返回 `409 monitorThemeConflict`。
+
+主题数据使用独立 settings 行 `monitor_theme_selection`、`monitor_theme_config:<short>`、`monitor_theme_packages` 和 `monitor_theme_release:<revision>`，不覆盖旧站点/外观行。仅内置状态的旧备份保持 `{selected,configs}`；动态备份为 `{version:2,selected,configs,packages}`，packages 仅记录 short/version/url/repository，不包含可执行字节或 live 指针。导入恢复选择/配置，主题包须另行保留并重装；未安装的选中 short 实际使用 Default。缺少该字段的旧备份不更改极简主题，不迁移绑定或部署变量。无效主题/配置返回 `400 monitorThemeInvalid`，缺少 R2 返回 `503 monitorThemeStorageUnavailable`，存储故障返回 `503 monitorThemeUnavailable`。
 
 **预览上下文：**预览从 `/?monitor_preview=<short>` 开始。每次 HTML、资源、API 与实时连接都验证既有预览登录凭据，并执行上面的 viewer policy；只返回可见节点，私有管理员预览也不返回隐藏节点或管理字段。short 参数或伪造 Cookie 不能授权；普通首页不因预览 Cookie 切换主题。根相对资源/API 从同源预览文档或模块的 Referer 取得 short。预览资源先以 `307` 跳转至带 short 的同源 URL，使动态 JS 导入和 CSS 资源也能传递上下文；WebSocket 通过同样的查询参数带上下文。预览 HTML 响应添加导航/实时上下文脚本保持标签独立，正式 HTML 添加新协议 marker 和旧 hash 链接迁移脚本；所有打包 JS/CSS 保持原字节。预览与主题资源响应均不缓存。退出预览使用普通首页 URL。
 
-打包主题由构建生成，不安装任意远程主题压缩包。GitHub Pages 独立 CF 前端及共用源码不随 Worker 默认首页切换迁移。
+正式与预览页面的 `monitor_revision` 上下文会随导航和同源资源 Referer 传递；资源必要时通过 `307` 将上下文写入 URL，保持旧标签页的动态模块和字体不随更新漂移。完整 dist 资源都按版本索引读取，原包 JS/CSS 不改。`run_worker_first=true` 与 CF 静态命名空间透传同步于本地及 CI 配置。
+
+运行时安装需要已开通的 R2 及私有 `MONITOR_THEME_BUCKET` 绑定；GitHub 同名 Repository Variable 指定已有 bucket，生成配置不会开通计费或创建资源。内置主题不依赖 R2。第三方主题是管理员信任的同源代码；`/chicken/api/nodes` 等扩展服务仍需独立实现。GitHub Pages 独立 CF 前端及共用源码不随 Worker 默认首页切换迁移。
 
 ***
 

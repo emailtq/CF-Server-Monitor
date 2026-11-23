@@ -4,7 +4,7 @@ import worker from '../src/index.js';
 
 const HOST = 'theme.example.test';
 const ORIGIN = `https://${HOST}`;
-const EMPTY_THEME_DB = { prepare() { return { bind() { return this; }, async all() { return { success: true, results: [] }; } }; } };
+const EMPTY_THEME_DB = { prepare() { return { bind() { return this; }, async first() { return null; }, async all() { return { success: true, results: [] }; } }; } };
 
 function createAssets(files, seen = []) {
   return {

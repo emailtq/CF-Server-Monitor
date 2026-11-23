@@ -436,6 +436,9 @@ export const adminApi = async (data, apiIndex = 0, requestOwner, signal) => {
   return result
 }
 
+export const uploadMonitorTheme = (file, apiIndex = 0, requestOwner) =>
+  http.postByIndex('/admin/api/monitor-themes/upload', file, apiIndex, { rawBody: true, requestOwner })
+
 export const login = async (username, password, turnstileToken = '', apiIndex = 0, requestOwner) => {
   if (requestOwner && !requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
   if (turnstileToken) {
