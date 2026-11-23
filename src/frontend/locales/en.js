@@ -8,7 +8,7 @@ export default {
   monitorThemeInstallHint: "Install theme.tar.gz from the latest release, or upload the original package (up to 32 MiB). Preview before switching.",
   monitorThemeRemoveHint: "New pages will use the builtin of the same name, or Default. Configuration and old assets for open pages are retained.",
   monitorThemeInstalled: "Theme installed. Preview or switch to it.",
-  monitorThemeStorageUnavailable: "Third-party theme installation requires R2 storage. Builtin themes are still available.",
+  monitorThemeStorageUnavailable: "Theme storage is unavailable. Check this site's D1 database.",
   monitorThemeRepositoryInvalid: "Enter a complete https://github.com/owner/repository URL",
   monitorThemeDownloadFailed: "Theme download failed. Check the repository or try again later.",
   monitorThemePackageMissing: "The latest release has no valid theme.tar.gz",

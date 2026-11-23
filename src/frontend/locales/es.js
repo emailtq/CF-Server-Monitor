@@ -8,7 +8,7 @@ export default {
   monitorThemeInstallHint: "Instala theme.tar.gz de la última versión o sube el paquete original (máximo 32 MiB). Previsualiza antes de cambiar.",
   monitorThemeRemoveHint: "Las páginas nuevas usarán el tema integrado del mismo nombre o Default. Se conservan la configuración y los recursos de las páginas abiertas.",
   monitorThemeInstalled: "Tema instalado. Puedes previsualizarlo o activarlo.",
-  monitorThemeStorageUnavailable: "Instalar temas externos requiere almacenamiento R2. Los temas integrados siguen disponibles.",
+  monitorThemeStorageUnavailable: "El almacenamiento de temas no está disponible. Revisa la base de datos D1 del sitio.",
   monitorThemeRepositoryInvalid: "Introduce la URL completa https://github.com/autor/repositorio",
   monitorThemeDownloadFailed: "No se pudo descargar el tema. Revisa el repositorio o inténtalo más tarde.",
   monitorThemePackageMissing: "La última versión no contiene un theme.tar.gz válido",

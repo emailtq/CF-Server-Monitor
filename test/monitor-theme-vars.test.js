@@ -28,7 +28,7 @@ test('default frontend deployment accepts a theme without an opt-in hostname and
   assert.throws(()=>renderMonitorVars({mode:'other'}),/MONITOR_FRONTEND_MODE/);
 });
 
-test('optional private R2 binding is emitted outside vars without creating resources',()=>{
-  assert.equal(renderMonitorVars({bucket:'monitor-themes'}),'\n[[r2_buckets]]\nbinding = "MONITOR_THEME_BUCKET"\nbucket_name = "monitor-themes"\n');
-  for(const bucket of ['../other','a','https://bucket','upperCase','bucket\n[vars]']) assert.throws(()=>renderMonitorVars({bucket}),/MONITOR_THEME_BUCKET/);
+test('native theme deployment never emits a new storage binding even with the previous bucket input',()=>{
+  assert.equal(renderMonitorVars({bucket:'monitor-themes'}),'');
+  assert.equal(renderMonitorVars({mode:'monitor',bucket:'monitor-themes'}),'MONITOR_FRONTEND_MODE = "monitor"\n');
 });

@@ -12,7 +12,7 @@ export function parseMonitorRepository(address) {
 }
 
 export async function installMonitorRepository(env, address, expectedShort, expectedRevision) {
-  if (!env.MONITOR_THEME_BUCKET) throw new AppError('monitorThemeStorageUnavailable', 503);
+  if (!env.DB) throw new AppError('monitorThemeStorageUnavailable', 503);
   const repository = parseMonitorRepository(address);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);

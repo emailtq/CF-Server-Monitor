@@ -64,11 +64,11 @@ so an update or removal does not break assets for an already-open page.
 
 ## Install the original upstream package
 
-Configure a private R2 bucket binding named `MONITOR_THEME_BUCKET`. In GitHub deployment,
-set the repository variable of the same name to an existing bucket name; the config helper
-emits the binding without creating a bucket or enabling billing. Builtin themes work without R2.
-Account R2 activation must be completed in Cloudflare first. See [R2 setup](https://developers.cloudflare.com/r2/get-started/)
-and [pricing](https://developers.cloudflare.com/r2/pricing/); retained revisions count toward storage.
+Use the site's existing `DB` D1 binding. No R2, new database or extra deployment variable
+is needed. The first runtime install creates the dedicated `monitor_theme_chunks` table;
+builtin selection and configuration do not create it. Existing D1 capacity applies:
+500 MB per database on Free or 10 GB on Workers Paid. Retained theme releases share that
+space with site data; see [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
 Choose **Install theme**, then enter `https://github.com/owner/repository` or upload its
 original `theme.tar.gz`. The repository route uses the latest release's exact `theme.tar.gz`
@@ -78,7 +78,8 @@ with access to site data; the dialog asks administrators to trust the author bef
 Admission checks gzip/tar paths, checksums, duplicates, entry types and size budgets:
 32 MiB compressed, 2000 entries, 8 MiB per file and 64 MiB file payload. The package needs
 root `theme.json` and `dist/index.html`. Links, devices, traversal and nested source archives
-are rejected. The uncompressed tar is streamed to an indexed immutable R2 object;
+are rejected. The uncompressed tar is streamed into indexed immutable D1 BLOB chunks
+of at most 512 KiB, with eight inserts per bounded transaction;
 only a complete validated upload publishes the D1 registry pointer. Failed/conflicting
 updates leave the previous release active. Theme JS/CSS files are not patched.
 
@@ -87,7 +88,11 @@ resumes its saved selection when reinstalled. **Update theme** keeps configurati
 requires the same short; upload-only themes without a GitHub source can be updated by
 uploading another package. **Remove theme** removes the active registry pointer, restores
 the builtin of the same short or falls back to Default, and retains config and revision bytes.
-Old revisions are not automatically garbage-collected; removal does not reclaim their R2 space.
+Old revisions are not automatically garbage-collected; removal does not reclaim their D1
+rows. Failed installs remove only their unpublished revision. Files are read in bounded
+chunk ranges, and same-origin/revision-pinned Worker cache entries speed subsequent reads.
+Cache eviction or a cache outage recovers from D1, not from the remote theme author.
+Browser-facing resource requests still enforce viewer/preview policy and use `no-store`.
 
 The shared adapter provides native me/nodes/history/live and generic theme config GET/PUT.
 Theme-specific SPA routes such as `/instance/:id` work without a CF theme implementation.
@@ -100,13 +105,13 @@ virtualization details or aggregate packet-loss metrics. The package's own missi
 Server settings backups retain the old `{selected,configs}` format for builtin-only state.
 Dynamic state uses `settings.monitor_theme = {version:2,selected,configs,packages}`. The
 package entries record short, version, URL and optional GitHub repository, not executable
-bytes or live R2/D1 revision pointers. Import restores choices/configs but never installs code.
+bytes or live D1 revision pointers. Import restores choices/configs but never installs code.
 Keep the original packages separately and reinstall the recorded versions after restoring
 to another deployment. Until a selected custom short is installed, the effective homepage is Default.
 
 For isolated development QA, build with `npm run build:frontend`, then run
 `npm run preview:monitor-theme -- default`, or pass a local `theme.tar.gz` path. The script uses
-ephemeral local R2 and prints a Monitor hostname URL and a
+ephemeral local D1 and prints a Monitor hostname URL and a
 local-only auto-login `/_fixture/admin` URL; `localhost` on the same printed port exercises
 the actual default homepage without a hostname binding and authenticated preview. All data and fixture login authority
 are ephemeral, with no Cloudflare credentials or production connection.

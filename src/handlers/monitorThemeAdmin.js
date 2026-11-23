@@ -42,7 +42,7 @@ export async function handleMonitorThemeAdmin({ request, env, data, previewAuthC
       if (previewAuthCookie) headers['Set-Cookie'] = previewAuthCookie;
       return Response.json({ success: true, preview_url: url.toString() }, { headers });
     }
-    return Response.json({ success: true, ...state, hostname, defaultFrontend, runtimeStorage: !!env.MONITOR_THEME_BUCKET, previewStatus: access.status }, { headers });
+    return Response.json({ success: true, ...state, hostname, defaultFrontend, runtimeStorage: !!env.DB, previewStatus: access.status }, { headers });
   } catch (error) {
     return Response.json({ error: error instanceof AppError ? error.message : 'monitorThemeUnavailable' }, { status: error instanceof AppError ? error.code : 503, headers });
   }

@@ -39,7 +39,7 @@ const assets = async request => {
     return new Response(request.method === 'HEAD' ? null : body, { headers: { 'Content-Type': contentTypes[ext] || 'application/octet-stream' } });
   } catch { return new Response('Not Found', { status: 404 }); }
 };
-const mf = new Miniflare({ ...(process.argv[3] ? { port: Number(process.argv[3]) } : {}), modules: true, script: bundle.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'monitor-theme-preview' }, r2Buckets: { MONITOR_THEME_BUCKET: 'ephemeral-theme-packages' }, durableObjects: { METRICS_BROADCASTER: { className: 'PreviewHub', useSQLite: true } }, serviceBindings: { ASSETS: assets }, bindings: { MONITOR_COMPAT_HOST: host, MONITOR_COMPAT_THEME: ['default', 'serverstatus'].includes(theme) ? theme : 'default', FIXTURE_ADMIN_TOKEN: adminToken } });
+const mf = new Miniflare({ ...(process.argv[3] ? { port: Number(process.argv[3]) } : {}), modules: true, script: bundle.outputFiles[0].text, compatibilityDate: '2024-12-01', compatibilityFlags: ['nodejs_compat'], d1Databases: { DB: 'monitor-theme-preview' }, durableObjects: { METRICS_BROADCASTER: { className: 'PreviewHub', useSQLite: true } }, serviceBindings: { ASSETS: assets }, bindings: { MONITOR_COMPAT_HOST: host, MONITOR_COMPAT_THEME: ['default', 'serverstatus'].includes(theme) ? theme : 'default', FIXTURE_ADMIN_TOKEN: adminToken } });
 const db = await mf.getD1Database('DB');
 const now = Math.floor(Date.now() / 1000) * 1000;
 await db.batch([
@@ -52,7 +52,7 @@ await db.batch([
   db.prepare(`INSERT INTO metrics_history (id,server_id,timestamp,cpu,load_avg,ram_total,ram_used,swap_total,swap_used,disk_total,disk_used,net_in_speed,net_out_speed,net_rx,net_tx,net_rx_monthly,net_tx_monthly,processes,tcp_conn,udp_conn,cpu_cores,cpu_info,os,arch,kernel_version,boot_time,agent_version,region) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(buildHistoryId(20, now), 'preview-node', now, 18.5, '0.3 0.2 0.1', 2048, 512, 128, 32, 51200, 12000, 4, 8, 123456, 654321, 11111, 22222, 44, 12, 3, 4, 'Preview CPU', 'Debian 12', 'x86_64', '6.1', now - 3600_000, 'preview-1.0', 'US')
 ]);
 if (theme.endsWith('.tar.gz')) {
-  const installed = await installMonitorTheme({ DB: db, MONITOR_THEME_BUCKET: await mf.getR2Bucket('MONITOR_THEME_BUCKET') }, new Blob([await fs.readFile(path.resolve(theme))]).stream());
+  const installed = await installMonitorTheme({ DB: db }, new Blob([await fs.readFile(path.resolve(theme))]).stream());
   await selectMonitorTheme(db, installed.short);
   console.log(`Installed original package ${installed.short} ${installed.version}`);
 }

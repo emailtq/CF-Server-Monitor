@@ -8,7 +8,7 @@ export default {
   monitorThemeInstallHint: "最新リリースの theme.tar.gz をインストールするか、元のパッケージをアップロードします（最大 32 MiB）。切り替える前にプレビューしてください。",
   monitorThemeRemoveHint: "新しいページには同名の内蔵テーマ、または Default を使用します。設定と開いているページ用の旧リソースは保持されます。",
   monitorThemeInstalled: "テーマをインストールしました。プレビューまたは切り替えができます。",
-  monitorThemeStorageUnavailable: "サードパーティ製テーマのインストールには R2 ストレージが必要です。内蔵テーマは引き続き使用できます。",
+  monitorThemeStorageUnavailable: "テーマの保存先を利用できません。このサイトの D1 データベースを確認してください。",
   monitorThemeRepositoryInvalid: "完全な https://github.com/作者/リポジトリ URL を入力してください",
   monitorThemeDownloadFailed: "テーマのダウンロードに失敗しました。リポジトリを確認するか、後で再試行してください。",
   monitorThemePackageMissing: "最新リリースに有効な theme.tar.gz がありません",

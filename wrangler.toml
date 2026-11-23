@@ -17,10 +17,6 @@ crons = ["*/1 * * * *", "0 * * * *"]
 directory = "./dist"
 binding = "ASSETS"
 run_worker_first = true
-# Runtime package installation needs a private R2 bucket; enable R2 in your account before binding one.
-# [[r2_buckets]]
-# binding = "MONITOR_THEME_BUCKET"
-# bucket_name = "your-monitor-themes"
 
 [[d1_databases]]
 binding = "DB"

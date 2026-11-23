@@ -38,7 +38,8 @@ async function serveTheme(request, env, url, preview, defaultFrontend) {
   if (!['GET', 'HEAD'].includes(request.method)) return null;
   const path = themePath(url.pathname);
   if (!path) return null;
-  if (!env.ASSETS && !env.MONITOR_THEME_BUCKET) return createNotFoundResponse();
+  // An unconfigured legacy frontend must keep returning404 without touching its DB.
+  if (!env.ASSETS && !defaultFrontend && !preview) return createNotFoundResponse();
   const revision = preview?.revision || monitorResourceRevision(request, url);
   if (revision && !validMonitorRevision(revision)) return Response.json({ error: 'monitorThemeInvalid' }, { status: 400, headers: NO_STORE });
   const resource = /\.[^/]+$/.test(path) && path !== 'index.html';
@@ -56,8 +57,8 @@ async function serveTheme(request, env, url, preview, defaultFrontend) {
     if (!defaultFrontend && !preview && release.builtin && (url.pathname === '/index.html' || !/^(index\.html|node\/[1-9]\d*|assets\/.+|favicon\.[^/]+|apple-touch-icon\.png)$/.test(path))) return createNotFoundResponse();
     const builtinPage = release.builtin && /^node\/[1-9]\d*$/.test(path);
     if (builtinPage) index = true;
-    response = await readMonitorThemeFile(env, release.manifest.short, builtinPage ? 'index.html' : path, release.revision, request.method, url.search);
-    if (!response && !resource && !index) { index = true; response = await readMonitorThemeFile(env, release.manifest.short, 'index.html', release.revision, request.method); }
+    response = await readMonitorThemeFile(env, release.manifest.short, builtinPage ? 'index.html' : path, release.revision, request.method, url.search, url.origin);
+    if (!response && !resource && !index) { index = true; response = await readMonitorThemeFile(env, release.manifest.short, 'index.html', release.revision, request.method, '', url.origin); }
     if (!response && index && !release.builtin && !preview && !revision) {
       release = await resolveMonitorThemeRelease(env, 'default', 'builtin-default');
       response = await readMonitorThemeFile(env, 'default', 'index.html', 'builtin-default', request.method);

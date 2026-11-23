@@ -8,7 +8,7 @@ export default {
   monitorThemeInstallHint: "安裝儲存庫最新 Release 的 theme.tar.gz，或上傳原始套件（最大 32 MiB）。安裝後先預覽，再切換。",
   monitorThemeRemoveHint: "移除後不再用於新頁面；內建同名主題會恢復，否則首頁回到 Default。設定和已開啟頁面的舊版資源保留。",
   monitorThemeInstalled: "主題已安裝，可以預覽或切換",
-  monitorThemeStorageUnavailable: "第三方主題安裝需要設定 R2 儲存。內建主題仍可使用。",
+  monitorThemeStorageUnavailable: "主題儲存暫時無法使用，請檢查本站的 D1 資料庫。",
   monitorThemeRepositoryInvalid: "請輸入完整的 https://github.com/作者/儲存庫 網址",
   monitorThemeDownloadFailed: "主題下載失敗，請檢查儲存庫或稍後重試",
   monitorThemePackageMissing: "最新 Release 沒有有效的 theme.tar.gz",

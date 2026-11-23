@@ -8,7 +8,7 @@ export default {
   monitorThemeInstallHint: "Pasang theme.tar.gz dari rilis terbaru atau unggah paket asli (maksimal 32 MiB). Pratinjau sebelum beralih.",
   monitorThemeRemoveHint: "Halaman baru akan memakai tema bawaan bernama sama atau Default. Konfigurasi dan aset halaman yang masih terbuka disimpan.",
   monitorThemeInstalled: "Tema terpasang. Pratinjau atau beralih ke tema ini.",
-  monitorThemeStorageUnavailable: "Pemasangan tema pihak ketiga memerlukan penyimpanan R2. Tema bawaan tetap tersedia.",
+  monitorThemeStorageUnavailable: "Penyimpanan tema tidak tersedia. Periksa database D1 situs ini.",
   monitorThemeRepositoryInvalid: "Masukkan URL lengkap https://github.com/penulis/repositori",
   monitorThemeDownloadFailed: "Unduhan tema gagal. Periksa repositori atau coba lagi nanti.",
   monitorThemePackageMissing: "Rilis terbaru tidak memiliki theme.tar.gz yang valid",

@@ -1140,20 +1140,20 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 | `get_monitor_themes` | 返回内置与已安装 manifest `themes`（含 `builtin`、`revision` 及动态主题 `canUpdate`）、`selected`（未选择为 `null`）、`effective`、逐主题 `configs`、`runtimeStorage`、`defaultFrontend`、有效 `hostname` 或 `null`、`previewStatus`。 |
 | `select_monitor_theme` | `theme` 为已安装 short；`null` 恢复沿用部署选择。返回更新后的管理状态。 |
 | `save_monitor_theme_config` | `theme` 和最多 64 KiB 的 `config` 对象。内置 Default 仍接受布尔 `show_summary`；动态主题按原生 manifest 字段类型和范围校验，保留版本未知覆盖键。`{}` 重置该主题，其他主题不变；与 manifest 相同的默认值不重复存储。 |
-| `install_monitor_theme` | `repository` 为完整 `https://github.com/owner/repository`；安装最新 Release 的 `theme.tar.gz`。需要私有 R2 绑定、登录、精确同源 Origin 和 viewer 验证。安装不写入选择，返回完整管理状态。 |
+| `install_monitor_theme` | `repository` 为完整 `https://github.com/owner/repository`；安装最新 Release 的 `theme.tar.gz`。复用现有 D1，无需额外存储绑定；要求登录、精确同源 Origin 和 viewer 验证。安装不写入选择，返回完整管理状态。 |
 | `update_monitor_theme` | `theme` 为动态安装 short，从其 GitHub 源重装最新原包；包内 short 必须相同，保留配置和已发布旧 revision。与安装相同的权限要求。 |
-| `delete_monitor_theme` | `theme` 为动态安装 short，移除 active registry 指针；同名内置包恢复，否则实际页面回到 Default。保留配置和旧 revision，操作不释放旧版 R2 空间。要求登录、同源 Origin 和 viewer 验证。 |
+| `delete_monitor_theme` | `theme` 为动态安装 short，移除 active registry 指针；同名内置包恢复，否则实际页面回到 Default。保留配置和旧 revision，操作不删除旧版 D1 文件行。要求登录、同源 Origin 和 viewer 验证。 |
 | `start_monitor_theme_preview` | `theme` 为已安装 short；与既有 CF 预览一样使用 Bearer 登录，返回包含 short/revision 的 `preview_url` 并设置安全的 HttpOnly `cfsm_theme_preview_auth` Cookie。URL 不携带 JWT。默认模式下私有站可用有效管理员权限预览；Turnstile 仍须先验证。不能读取时返回 `409` 与明确原因。 |
 
-`POST /admin/api/monitor-themes/upload` 使用原始 gzip 二进制 body，而非 JSON 或 multipart。先验证管理员、精确同源 Origin 和 viewer policy，再读取最多 32 MiB 的原始包；成功返回 `{success:true,theme}`，不会改变选择。包须包含根 `theme.json` 和 `dist/index.html`。路径、校验和、重复项、链接/设备和展开预算均受校验；全包通过并写入不可变 R2 对象后才发布 D1 registry。失败不替换上一版；并发状态冲突返回 `409 monitorThemeConflict`。
+`POST /admin/api/monitor-themes/upload` 使用原始 gzip 二进制 body，而非 JSON 或 multipart。先验证管理员、精确同源 Origin 和 viewer policy，再读取最多 32 MiB 的原始包；成功返回 `{success:true,theme}`，不会改变选择。包须包含根 `theme.json` 和 `dist/index.html`。路径、校验和、重复项、链接/设备和展开预算均受校验；解压 tar 按最大 512 KiB 的 BLOB 分块写入 `monitor_theme_chunks`，每批最多八行，全包通过并写入完成后才发布 D1 registry。失败清理本次未发布版本，不替换上一版；并发状态冲突返回 `409 monitorThemeConflict`。
 
-主题数据使用独立 settings 行 `monitor_theme_selection`、`monitor_theme_config:<short>`、`monitor_theme_packages` 和 `monitor_theme_release:<revision>`，不覆盖旧站点/外观行。仅内置状态的旧备份保持 `{selected,configs}`；动态备份为 `{version:2,selected,configs,packages}`，packages 仅记录 short/version/url/repository，不包含可执行字节或 live 指针。导入恢复选择/配置，主题包须另行保留并重装；未安装的选中 short 实际使用 Default。缺少该字段的旧备份不更改极简主题，不迁移绑定或部署变量。无效主题/配置返回 `400 monitorThemeInvalid`，缺少 R2 返回 `503 monitorThemeStorageUnavailable`，存储故障返回 `503 monitorThemeUnavailable`。
+主题数据使用独立 settings 行 `monitor_theme_selection`、`monitor_theme_config:<short>`、`monitor_theme_packages` 和 `monitor_theme_release:<revision>`，文件使用独立 `monitor_theme_chunks` 表，不覆盖旧站点/外观行。首次运行时安装创建文件表，普通内置主题读取不创建。仅内置状态的旧备份保持 `{selected,configs}`；动态备份为 `{version:2,selected,configs,packages}`，packages 仅记录 short/version/url/repository，不包含可执行字节或 live 指针。导入恢复选择/配置，主题包须另行保留并重装；未安装的选中 short 实际使用 Default。缺少该字段的旧备份不更改极简主题，不迁移绑定或部署变量。无效主题/配置返回 `400 monitorThemeInvalid`，缺少 D1 绑定返回 `503 monitorThemeStorageUnavailable`，存储故障或容量不足返回 `503 monitorThemeUnavailable`。`runtimeStorage` 表示现有 D1 绑定可供安装使用，不是数据库健康或剩余额度的检测结果。
 
-**预览上下文：**预览从 `/?monitor_preview=<short>` 开始。每次 HTML、资源、API 与实时连接都验证既有预览登录凭据，并执行上面的 viewer policy；只返回可见节点，私有管理员预览也不返回隐藏节点或管理字段。short 参数或伪造 Cookie 不能授权；普通首页不因预览 Cookie 切换主题。根相对资源/API 从同源预览文档或模块的 Referer 取得 short。预览资源先以 `307` 跳转至带 short 的同源 URL，使动态 JS 导入和 CSS 资源也能传递上下文；WebSocket 通过同样的查询参数带上下文。预览 HTML 响应添加导航/实时上下文脚本保持标签独立，正式 HTML 添加新协议 marker 和旧 hash 链接迁移脚本；所有打包 JS/CSS 保持原字节。预览与主题资源响应均不缓存。退出预览使用普通首页 URL。
+**预览上下文：**预览从 `/?monitor_preview=<short>` 开始。每次 HTML、资源、API 与实时连接都验证既有预览登录凭据，并执行上面的 viewer policy；只返回可见节点，私有管理员预览也不返回隐藏节点或管理字段。short 参数或伪造 Cookie 不能授权；普通首页不因预览 Cookie 切换主题。根相对资源/API 从同源预览文档或模块的 Referer 取得 short。预览资源先以 `307` 跳转至带 short 的同源 URL，使动态 JS 导入和 CSS 资源也能传递上下文；WebSocket 通过同样的查询参数带上下文。预览 HTML 响应添加导航/实时上下文脚本保持标签独立，正式 HTML 添加新协议 marker 和旧 hash 链接迁移脚本；所有打包 JS/CSS 保持原字节。浏览器侧预览与主题资源响应使用 `no-store`；Worker 内部可按同源/不可变 revision 缓存原始文件，每次请求仍在读取缓存前验证权限。退出预览使用普通首页 URL。
 
 正式与预览页面的 `monitor_revision` 上下文会随导航和同源资源 Referer 传递；资源必要时通过 `307` 将上下文写入 URL，保持旧标签页的动态模块和字体不随更新漂移。完整 dist 资源都按版本索引读取，原包 JS/CSS 不改。`run_worker_first=true` 与 CF 静态命名空间透传同步于本地及 CI 配置。
 
-运行时安装需要已开通的 R2 及私有 `MONITOR_THEME_BUCKET` 绑定；GitHub 同名 Repository Variable 指定已有 bucket，生成配置不会开通计费或创建资源。内置主题不依赖 R2。第三方主题是管理员信任的同源代码；`/chicken/api/nodes` 等扩展服务仍需独立实现。GitHub Pages 独立 CF 前端及共用源码不随 Worker 默认首页切换迁移。
+运行时安装复用现有 D1，不需要 R2、新数据库或额外存储变量。文件按有界范围读取；内部缓存失效后从 D1 恢复，不依赖原作者服务器继续在线。数据库现有容量限制仍适用（Free 每库 500 MB，Workers Paid 每库 10 GB），已发布旧版本为打开的页面保留并占用空间。第三方主题是管理员信任的同源代码；`/chicken/api/nodes` 等扩展服务仍需独立实现。GitHub Pages 独立 CF 前端及共用源码不随 Worker 默认首页切换迁移。
 
 ***
 

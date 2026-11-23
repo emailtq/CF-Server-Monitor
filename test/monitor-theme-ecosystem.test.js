@@ -28,10 +28,10 @@ export function packageBytes(meta=manifest,entries=[]) {
 }
 const stream=bytes=>new Blob([bytes]).stream();
 async function fixture(t) {
-  const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response();}}',d1Databases:{DB:'ecosystem'},r2Buckets:{MONITOR_THEME_BUCKET:'theme-fixture'}});
+  const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response();}}',d1Databases:{DB:'ecosystem'}});
   t.after(()=>mf.dispose());
   const DB=await mf.getD1Database('DB');await DB.prepare('CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT)').run();
-  return {DB,MONITOR_THEME_BUCKET:await mf.getR2Bucket('MONITOR_THEME_BUCKET')};
+  return {DB};
 }
 
 test('native third-party install/select/update/delete uses one registry and keeps old revision assets/configuration',async t=>{
@@ -81,11 +81,15 @@ test('native schema form filters malformed fields and preserves version-owned un
   assert.equal(Object.hasOwn(monitorConfigOverrides(special,{},valuesWithSpecial),'__proto__'),true);
 });
 
-test('builtin selection/config works without R2, runtime install refuses absent storage',async t=>{
-  const env=await fixture(t);delete env.MONITOR_THEME_BUCKET;
+test('native installation needs only the existing D1 and leaves builtin-only databases unchanged',async t=>{
+  const env=await fixture(t);
   assert.equal((await loadMonitorThemes(env.DB)).effective,'default');
   await selectMonitorTheme(env.DB,'serverstatus');assert.equal((await loadMonitorThemes(env.DB)).effective,'serverstatus');
-  await assert.rejects(()=>installMonitorTheme(env,stream(packageBytes())),/monitorThemeStorage/);
+  assert.equal(await env.DB.prepare("SELECT name FROM sqlite_master WHERE name='monitor_theme_chunks'").first(),null);
+  const installed=await installMonitorTheme(env,stream(packageBytes()));
+  assert.equal(installed.short,'third');
+  assert.equal((await loadMonitorThemes(env.DB)).effective,'serverstatus');
+  await assert.rejects(()=>installMonitorTheme({},stream(packageBytes())),/monitorThemeStorage/);
 });
 
 test('dynamic original dist, arbitrary SPA deep links, config GET/PUT and revision-pinned modules share viewer gates',async t=>{
@@ -207,10 +211,16 @@ test('failed storage/metadata completion preserves previous active version and n
   const failingDB={prepare(query){if(query.startsWith('INSERT INTO settings(key,value) VALUES (?,?)')) return {bind(){return this;},async run(){throw new Error('write interrupted');}};return env.DB.prepare(query);}};
   await assert.rejects(()=>installMonitorTheme({...env,DB:failingDB},stream(packageBytes({...manifest,version:'2'}))),/monitorThemeUnavailable/);
   assert.equal((await loadMonitorThemes(env.DB)).themes.find(theme=>theme.short==='third').revision,first.revision);
-  assert.equal((await env.MONITOR_THEME_BUCKET.list()).objects.length,1);
-  const brokenBucket={async createMultipartUpload(){return {async uploadPart(){throw new Error('R2 connection interrupted');},async abort(){}};}};
+  assert.equal((await env.DB.prepare('SELECT COUNT(DISTINCT revision) AS count FROM monitor_theme_chunks').first()).count,1);
+  const brokenDB={prepare:query=>env.DB.prepare(query),async batch(){throw new Error('D1 connection interrupted');}};
   const expanded=packageBytes({...manifest,version:'large'},[tarEntry('dist/large.bin',Buffer.alloc(6*1024*1024))]);
-  await assert.rejects(()=>installMonitorTheme({...env,MONITOR_THEME_BUCKET:brokenBucket},stream(expanded)),error=>error.code===503&&error.message==='monitorThemeUnavailable');
+  await assert.rejects(()=>installMonitorTheme({...env,DB:brokenDB},stream(expanded)),error=>error.code===503&&error.message==='monitorThemeUnavailable');
+  assert.equal((await env.DB.prepare('SELECT COUNT(DISTINCT revision) AS count FROM monitor_theme_chunks').first()).count,1);
+  let batches=0;
+  const lateDB={prepare:query=>env.DB.prepare(query),async batch(statements){if(++batches===2)throw new Error('later chunk transaction interrupted');return env.DB.batch(statements);}};
+  await assert.rejects(()=>installMonitorTheme({...env,DB:lateDB},stream(expanded)),/monitorThemeUnavailable/);
+  assert.equal(batches,2);
+  assert.equal((await env.DB.prepare('SELECT COUNT(DISTINCT revision) AS count FROM monitor_theme_chunks').first()).count,1,'committed staging chunks are cleaned after later batch failure');
 });
 
 test('native short names cannot mutate config object prototypes and each archive budget is enforced',async t=>{
@@ -226,7 +236,7 @@ test('native short names cannot mutate config object prototypes and each archive
 test('GitHub installation executes through the real Workers fetch and gzip runtime',async t=>{
   const bundle=await build({stdin:{resolveDir:process.cwd(),contents:`import {installMonitorRepository} from './src/services/monitorThemeRepository.js';export default {async fetch(request,env){try{return Response.json(await installMonitorRepository(env,'https://github.com/example/native-theme'));}catch(error){return Response.json({error:error.message},{status:error.code||500});}}};`},bundle:true,write:false,format:'esm',platform:'browser'});
   let requests=0;
-  const mf=new Miniflare({modules:true,script:bundle.outputFiles[0].text,compatibilityDate:'2024-12-01',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'repository-runtime'},r2Buckets:{MONITOR_THEME_BUCKET:'repository-runtime'},outboundService:async request=>{
+  const mf=new Miniflare({modules:true,script:bundle.outputFiles[0].text,compatibilityDate:'2024-12-01',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'repository-runtime'},outboundService:async request=>{
     requests++;const url=new URL(request.url);
     if(url.hostname==='api.github.com')return Response.json({tag_name:'v1',assets:[{name:'theme.tar.gz',size:1234}]});
     return new Response(packageBytes());
@@ -263,4 +273,49 @@ test('a removed selected theme with no saved overrides still exports an importab
   const backup=await exportMonitorThemes(env.DB);assert.equal(validMonitorThemeBackup(backup),true);
   assert.deepEqual(backup.configs.third,{});await importMonitorThemes(env.DB,backup);
   assert.equal((await loadMonitorThemes(env.DB)).selected,'third');
+});
+
+test('D1 chunks preserve arbitrary binary ranges within row and invocation budgets',async t=>{
+  const env=await fixture(t),bytes=Uint8Array.from({length:8*1024*1024},(_,i)=>i%251);
+  let writes=0;
+  const DB={prepare:query=>env.DB.prepare(query),async batch(statements){writes++;assert.ok(statements.length<=8);return env.DB.batch(statements);}};
+  const theme=await installMonitorTheme({...env,DB},stream(packageBytes(manifest,[tarEntry('dist/large.bin',bytes),tarEntry('dist/empty.bin','')])));
+  assert.ok(writes<=4,'tar chunks are batched, not one query per row');
+  const rows=await env.DB.prepare('SELECT part,typeof(data) AS type,length(data) AS size FROM monitor_theme_chunks WHERE revision=? ORDER BY part').bind(theme.revision).all();
+  assert.ok(rows.results.length>16);
+  assert.ok(rows.results.every((row,i)=>row.part===i&&row.type==='blob'&&row.size>0&&row.size<=512*1024));
+  const response=await readMonitorThemeFile(env,'third','large.bin',theme.revision);
+  assert.equal(response.headers.get('Content-Length'),String(bytes.length));
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()),bytes);
+  const head=await readMonitorThemeFile(env,'third','large.bin',theme.revision,'HEAD');
+  assert.equal(await head.text(),'');assert.equal(head.headers.get('Content-Length'),String(bytes.length));
+  assert.equal(await (await readMonitorThemeFile(env,'third','empty.bin',theme.revision)).text(),'');
+  await env.DB.prepare('DELETE FROM monitor_theme_chunks WHERE revision=? AND part=1').bind(theme.revision).run();
+  await assert.rejects(()=>readMonitorThemeFile(env,'third','large.bin',theme.revision),/monitorThemeUnavailable/,'missing chunks must not become truncated success');
+});
+
+test('revision/origin-pinned cache avoids chunk reads and always recovers from D1 on eviction or cache failure',async t=>{
+  const env=await fixture(t),first=await installMonitorTheme(env,stream(packageBytes()));
+  const entries=new Map(),keys=[];let broken=false,reads=0;
+  const previous=globalThis.caches;
+  globalThis.caches={default:{async match(key){if(broken)throw new Error('cache unavailable');return entries.get(key.url)?.clone();},async put(key,response){keys.push(key.url);if(broken)throw new Error('cache unavailable');entries.set(key.url,new Response(await response.arrayBuffer(),{headers:response.headers}));}}};
+  t.after(()=>{if(previous===undefined)delete globalThis.caches;else globalThis.caches=previous;});
+  const DB={prepare(query){if(query.includes('monitor_theme_chunks'))reads++;return env.DB.prepare(query);}};
+  const get=origin=>readMonitorThemeFile({...env,DB},'third','assets/app.js',first.revision,'GET','',origin);
+  assert.equal(await (await get('https://native.example.test')).text(),'export const native = true');
+  const before=reads;assert.ok(before>0);
+  assert.equal(await (await get('https://native.example.test')).text(),'export const native = true');assert.equal(reads,before);
+  assert.ok(keys[0].startsWith('https://native.example.test/'));assert.ok(keys[0].includes(first.revision));
+  await get('https://another.example.test');assert.ok(reads>before,'origins cannot share cache authority');
+  entries.clear();await removeMonitorTheme(env,'third');
+  assert.equal(await (await get('https://native.example.test')).text(),'export const native = true','evicted old revision survives removal without its remote origin');
+  broken=true;assert.equal(await (await get('https://native.example.test')).text(),'export const native = true');
+});
+
+test('small theme files read only their own byte slices, not complete shared archive chunks',async t=>{
+  const env=await fixture(t),theme=await installMonitorTheme(env,stream(packageBytes()));
+  let returned=0;
+  const DB={prepare(query){const statement=env.DB.prepare(query);if(query.includes('hex('))return {bind(...values){const bound=statement.bind(...values);return {async all(){const result=await bound.all();returned=result.results.reduce((total,row)=>total+row.bytes.length/2,0);return result;}};}};return statement;}};
+  assert.equal(await (await readMonitorThemeFile({...env,DB},'third','fonts/font.woff2',theme.revision)).text(),'font');
+  assert.equal(returned,4,'cold tiny-file requests must not transfer512KiB from D1');
 });

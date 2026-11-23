@@ -8,7 +8,7 @@ export default {
   monitorThemeInstallHint: "安装仓库最新 Release 的 theme.tar.gz，或上传原始包（最大 32 MiB）。安装后先预览，再切换。",
   monitorThemeRemoveHint: "移除后不再用于新页面；内置同名主题会恢复，否则首页回到 Default。配置和已打开页面的旧版资源保留。",
   monitorThemeInstalled: "主题已安装，可以预览或切换",
-  monitorThemeStorageUnavailable: "第三方主题安装需要配置 R2 存储。内置主题仍可使用。",
+  monitorThemeStorageUnavailable: "主题存储暂不可用，请检查本站的 D1 数据库。",
   monitorThemeRepositoryInvalid: "请输入完整的 https://github.com/作者/仓库 地址",
   monitorThemeDownloadFailed: "主题下载失败，请检查仓库或稍后重试",
   monitorThemePackageMissing: "最新 Release 没有有效的 theme.tar.gz",
