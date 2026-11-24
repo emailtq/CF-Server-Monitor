@@ -132,6 +132,8 @@ test('report preserves an integer counter above the JS safe range', () => {
 
 ### Task 3: 当前Go Agent原生模式、精确采集与CF批量
 
+**项目接受本地候选（2026-11-24），运行门禁未关闭：** 项目实际Go定向99顶层PASS/4consumerSKIP、Node真实Execute/Run→Worker两入口1/1且0skip；candidate可提交并供Task4消费。固定hub1.5.2完整互通、Linux/macOS实采/tests/race、Windowsrace缺执行资源，项目持有，Task3不得标全部完成/发布。详见stage3/PROJECT-ACCEPTANCE与runtime-dependencies。Task4独立D1开发继续，不用编译替代运行。
+
 **Files (Agent repo):**
 - Create: `internal/cfprobe/monitor_protocol.go`、`monitor_metrics.go`、`monitor_protocol_test.go`、`monitor_metrics_test.go`。
 - Modify: `types.go`、`config.go`、`cli.go`、`node_registration.go`、`agent.go`、`metrics_common.go`与各平台采集文件、`report_transport.go`、`report_context_test.go`、`report_transport_test.go`、安装脚本及README。
@@ -143,12 +145,12 @@ test('report preserves an integer counter above the JS safe range', () => {
 - 新采集内部`NativeSample`使用数值CPU/load/bytes/counters及epoch，旧`Metrics`仍可通过边界输出供未迁移用法使用。
 - `encodeMonitorNotification(method string, params any) ([]byte,error)`：标准报文；CF batch使用设计的明确stream/sequence结构。
 
-- [ ] 写RED：原hub没有type:hello/ack也能开始report；3秒capability超时仍标准运行；其他rpc.method文本不误当CF配置或ACK。
-- [ ] 写RED：显式网卡、过滤集合变化、重启、计数下降、采集失败不发送伪0；保留原字节精度。Linux对照原采集规则，Windows/macOS等公开说明不存在字段的实际状态。
-- [ ] 在原采集器中增加bytes/epoch/facts，而非MiB乘回；采样和发送时间分离，空闲批量仍保留均值/峰值必需输入。
-- [ ] 标准peer只收standard report/ping.result；新CF peer协商后，标准report发送活跃实时最新值，cf.report.batch约60秒提交冻结历史/probe批次。空闲只需低频批次及心跳；保留dynamic interval、HTTPfallback、退避、校时和配置持久化，不对每个实时帧要求落盘ACK。
-- [ ] CF fallback使用新JSON-RPC batch endpoint，同stream/sequence重试；失败不自动切弱鉴权、跨origin或旧协议。原hub不提供fallback时明确禁用该扩展。
-- [ ] 修订安装器让新模式使用明确参数、同一节点token和安全文件权限；增加标准`--server/--token/--interval/--iface`调用到新模式的兼容入口并测试，不改旧`-url=/update`含义；CLI旧用法/自动更新不得被强迫切协议。
+- [x] 写RED：原hub没有type:hello/ack也能开始report；3秒capability超时仍标准运行；其他rpc.method文本不误当CF配置或ACK。
+- [x] 写RED：显式网卡、过滤集合变化、重启、计数下降、采集失败不发送伪0；保留原字节精度。Linux对照原采集规则，Windows/macOS等公开说明不存在字段的实际状态。
+- [x] 在原采集器中增加bytes/epoch/facts，而非MiB乘回；采样和发送时间分离，空闲批量仍保留均值/峰值必需输入。
+- [x] 标准peer只收standard report/ping.result；新CF peer协商后，标准report发送活跃实时最新值，cf.report.batch约60秒提交冻结历史/probe批次。空闲只需低频批次及心跳；保留dynamic interval、HTTPfallback、退避、校时和配置持久化，不对每个实时帧要求落盘ACK。
+- [x] CF fallback使用新JSON-RPC batch endpoint，同stream/sequence重试；失败不自动切弱鉴权、跨origin或旧协议。原hub不提供fallback时明确禁用该扩展。
+- [x] 修订安装器让新模式使用明确参数、同一节点token和安全文件权限；增加标准`--server/--token/--interval/--iface`调用到新模式的兼容入口并测试，不改旧`-url=/update`含义；CLI旧用法/自动更新不得被强迫切协议。
 - [ ] Go1.27.3三平台test/vet/race和原安装/终端/SSH测试GREEN；受控Linux比较新Go Agent→固定原hub和新backend两条真实链路。
 
 ```go
