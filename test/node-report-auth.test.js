@@ -6,6 +6,7 @@ import { generateToken, checkAuth, getTerminalJwtPrincipal } from '../src/middle
 import { hashPassword } from '../src/utils/common.js';
 import { handleAdminAPI } from '../src/handlers/admin.js';
 import { MetricsBroadcaster } from '../src/durable/MetricsBroadcaster.js';
+import { hasReportCredentials } from '../src/middleware/nodeAuth.js';
 
 async function setup() {
   const h = await harness();
@@ -18,6 +19,37 @@ let sequence = 0;
 const report = (extra = {}) => ({id:'node-a', metrics:{cpu:'12', timestamp:Date.now() - 3600000 + ++sequence * 1000}, ...extra});
 const post = (h, body, headers = h.agentHeaders(), path = '/update') => h.fetch(path, {
   method:'POST', headers:{'Content-Type':'application/json', ...headers}, body:JSON.stringify(body)
+});
+
+test('credential aliases keep the original nodeAuth helper and reject nested HTTP/WSS reports plus credential queries', async () => {
+  const aliases = ['secret', 'token', 'node_token', 'nodeToken', 'nodetoken', 'terminal_token',
+    'terminalToken', 'terminaltoken', 'api_secret', 'apiSecret', 'apisecret', 'authorization',
+    'auth_token', 'authToken', 'authtoken', 'ws_token', 'wsToken', 'wstoken'];
+  for (const alias of aliases.flatMap(key => [key, key.toUpperCase()])) {
+    assert.equal(hasReportCredentials({ nested: [{ [alias]: null }] }), true, alias);
+  }
+  assert.equal(hasReportCredentials({ node_token_status: 'safe', tokenVersion: 1, credentialVersion: 1 }), false);
+  const h = await setup();
+  try {
+    for (const alias of aliases) {
+      const body = report({ nested: [{ [alias]: 'test-alias-marker' }] });
+      const response = await post(h, body);
+      assert.equal(response.status, 401, alias);
+      assert.equal((await response.text()).includes('test-alias-marker'), false);
+      assert.equal((await post(h, report(), h.agentHeaders(), `/update?${alias}=test-alias-marker`)).status, 401, alias);
+    }
+    for (const alias of ['nodeToken', 'api_secret', 'authToken', 'wsToken']) {
+      const peer = await h.socket('/update', h.agentHeaders());
+      assert.equal(peer.response.status, 101);
+      const error = await send(peer, report({ nested: [{ [alias]: 'test-alias-marker' }] }));
+      assert.equal(error.type, 'error');
+      assert.equal(error.code, 401);
+      assert.equal(JSON.stringify(error).includes('test-alias-marker'), false);
+      await until(() => peer.ws.readyState !== 1);
+    }
+    assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM metrics_history').first()).count, 0);
+    assert.equal((await post(h, report())).status, 200);
+  } finally { await h.dispose(); }
 });
 
 test('install reads provision once, preserve terminal-off monitoring, and demand explicit reset for unreadable ciphertext', async () => {

@@ -17,6 +17,7 @@ import { handleUpdate, handleWebSocketUpgrade, handleUpdateWebSocketUpgrade } fr
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
 import { handleMonitorCompat } from './handlers/monitorCompat.js';
+import { handleMonitorAgentUpgrade } from './handlers/monitorAgent.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
 import { omitNullLossProbeFields } from './handlers/dashboard.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
@@ -151,6 +152,8 @@ export default {
     const uploadResponse = await handleMonitorThemeUpload(request, env, url);
     if (uploadResponse) return uploadResponse;
     // Internal release paths are never exposed directly, including when an embedded asset exists.
+    const monitorAgentResponse = await handleMonitorAgentUpgrade(request, env, url);
+    if (monitorAgentResponse) return monitorAgentResponse;
     const monitorCompatResponse = await handleMonitorCompat(request, env, url);
     if (monitorCompatResponse) return monitorCompatResponse;
 

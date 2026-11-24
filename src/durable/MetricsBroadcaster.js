@@ -16,6 +16,7 @@ import { acceptSshEvents, validateSshEventReport, scheduleLoginDelivery, sshLogi
 import { saveMetricsHistory } from '../database/schema.js';
 import { projectLatencyMetrics } from '../shared/latencyTasks.js';
 import { authenticateNodeRequest, hasReportCredentials } from '../middleware/nodeAuth.js';
+import { MonitorAgentSession, MONITOR_AGENT_KIND, isValidMonitorPrincipal } from './MonitorAgentSession.js';
 import { validTerminalObservation, saveTerminalObservation, terminalObservationMaxAge } from '../database/terminal.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
@@ -43,7 +44,8 @@ import {
   normalizeAgentVersion,
   normalizeCorrectionValue,
   normalizeMetricSamples,
-  toBroadcastSamples
+  toBroadcastSamples,
+  handleUpdate
 } from '../handlers/update.js';
 import {
   AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS,
@@ -313,6 +315,7 @@ export class MetricsBroadcaster {
     this.monitorCompatState = null;
     this.monitorCompatRefresh = null;
     this.monitorViewerContexts = new Map();
+    this.monitorAgentSession = new MonitorAgentSession(this);
 
     // 自动响应 ping 心跳，DO 无需被唤醒
     // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketRequestResponsePair
@@ -452,7 +455,7 @@ export class MetricsBroadcaster {
   _getFrontendWebSockets() {
     return this.state.getWebSockets().filter(ws => {
       const attachment = ws.deserializeAttachment();
-      return !attachment || attachment.kind !== AGENT_REPORT_KIND;
+      return !attachment || ![AGENT_REPORT_KIND, MONITOR_AGENT_KIND].includes(attachment.kind);
     });
   }
 
@@ -653,6 +656,7 @@ export class MetricsBroadcaster {
       cleaned = true;
       this.standardAgentWebSocketCount = Math.max(0, this.standardAgentWebSocketCount - 1);
       this.standardAgentWebSockets.delete(ws);
+      this.monitorAgentSession.release(ws).catch(() => {});
     };
 
     server.addEventListener('message', event => {
@@ -1157,7 +1161,7 @@ export class MetricsBroadcaster {
   async _scheduleAgentWssHourAlarm() {
     if (!this.state?.storage || typeof this.state.storage.setAlarm !== 'function') return false;
     try {
-      const leases = this._getAgentReportWebSockets().map(ws => ws.deserializeAttachment()).filter(attachment => attachment?.authenticated)
+      const leases = [...this._getAgentReportWebSockets(), ...this.monitorAgentSession.sockets()].map(ws => ws.deserializeAttachment()).filter(attachment => attachment?.authenticated)
         .map(attachment => attachment.leaseUntil || Date.now());
       if (!leases.length) return true;
       await this.state.storage.setAlarm(Math.min(this._nextUtcHourAlarmTime(), ...leases));
@@ -1169,30 +1173,32 @@ export class MetricsBroadcaster {
   }
 
   async alarm() {
-    for (const ws of this._getAgentReportWebSockets()) {
-      if (!this._hasAgentLease(ws)) continue;
-      await this._authorizeAgentSocket(ws, true, false);
-    }
-    let settings;
-    try { settings = await loadSiteSettings(this.env.DB, { forceRefresh: true }); }
-    catch (_) { await this._rescheduleAgentAuthorization(); return; }
-    const scheduleState = getWssReportScheduleState(settings);
-    if (!scheduleState.configured) {
-      this._closeAgentReportWebSockets();
-      return;
-    }
-    if (!scheduleState.active) {
-      this._closeInactiveAgentReportWebSockets();
-      return;
-    }
-    if (this._getAgentReportWebSockets().length > 0) {
-      await this._rescheduleAgentAuthorization();
-    }
+    this.agentAuthorizationAlarmRunning = true;
+    try {
+      await this.monitorAgentSession.checkAlarm();
+      for (const ws of this._getAgentReportWebSockets()) {
+        if (!this._hasAgentLease(ws)) continue;
+        await this._authorizeAgentSocket(ws, true, false);
+      }
+      let settings;
+      try { settings = await loadSiteSettings(this.env.DB, { forceRefresh: true }); }
+      catch (_) { await this._rescheduleAgentAuthorization(); return; }
+      const scheduleState = getWssReportScheduleState(settings);
+      if (!scheduleState.configured) {
+        this._closeAgentReportWebSockets();
+      } else if (!scheduleState.active) {
+        this._closeInactiveAgentReportWebSockets();
+      }
+      if (this._getAgentReportWebSockets().length > 0 || this.monitorAgentSession.sockets().length > 0) {
+        await this._rescheduleAgentAuthorization();
+      }
+    } finally {this.agentAuthorizationAlarmRunning = false;}
   }
 
   async _rescheduleAgentAuthorization() {
     if (await this._scheduleAgentWssHourAlarm()) return;
     for (const ws of this._getAgentReportWebSockets()) this._closeWsWithError(ws, 'Authorization alarm unavailable', 503);
+    for (const ws of this.monitorAgentSession.sockets()) this.monitorAgentSession.close(ws);
   }
 
   async _handleAgentConfigChanged(request) {
@@ -1207,7 +1213,7 @@ export class MetricsBroadcaster {
     }
 
     if (body?.latencyTasksChanged === true) {
-      const nodes = [...new Set(this._getAgentReportWebSockets().map(ws => ws.deserializeAttachment()?.serverId).filter(Boolean))];
+      const nodes = [...new Set([...this._getAgentReportWebSockets(), ...this.monitorAgentSession.sockets()].map(ws => ws.deserializeAttachment()?.serverId).filter(Boolean))];
       for (const serverId of nodes) await this._handleAgentConfigChanged(new Request('http://internal/agent-config-changed', { method: 'POST', body: JSON.stringify({ serverId }) }));
       return Response.json({ ok: true, notified: nodes.length });
     }
@@ -1232,7 +1238,8 @@ export class MetricsBroadcaster {
     }
 
     const serverId = String(body?.serverId || '').trim();
-    if (!this._isValidServerId(serverId)) {
+    const legacyServerId = this._isValidServerId(serverId);
+    if (!legacyServerId && !isValidMonitorPrincipal({serverId,tokenVersion:1})) {
       return new Response(JSON.stringify({ error: 'invalid serverId' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
@@ -1241,6 +1248,9 @@ export class MetricsBroadcaster {
 
     clearServerDetailCache();
     this.agentServerDetails.delete(serverId);
+    await this.monitorAgentSession.refreshTasks(serverId);
+    // Native node IDs are not frontend subscription scopes; only legacy peers need CF config descriptors.
+    if (!legacyServerId) return Response.json({ok:true,matched:0,delivered:0},{headers:{'Cache-Control':'no-store'}});
 
     const descriptor = await this._loadAgentConfigDescriptor(serverId, true, AGENT_CONFIG_SCHEMA_VERSION);
     if (!descriptor) {
@@ -1514,8 +1524,9 @@ export class MetricsBroadcaster {
       );
       // 月流量阈值告警：写入成功后台非阻塞执行（waitUntil），不阻塞 WebSocket 消息循环
       if (typeof this.state?.waitUntil === 'function') {
-        this.state.waitUntil((async () => {
+        this.state.waitUntil(this.monitorAgentSession.run(serverId, async () => {
           try {
+            if (attachment.generation && !this.monitorAgentSession.isCurrent(attachment)) return;
             const trafficServerDetail = await this._getAgentServerDetail(serverId);
             if (!trafficServerDetail) return;
             await evaluateTrafficAlert(this.env, trafficServerDetail, metrics, {
@@ -1527,7 +1538,7 @@ export class MetricsBroadcaster {
           } catch (e) {
             console.error('[traffic-alert] DO evaluate failed:', e);
           }
-        })());
+        }));
       }
       const persistedAt = Date.now();
       state.lastD1WriteTs = persistedAt;
@@ -1552,16 +1563,24 @@ export class MetricsBroadcaster {
   }
 
   async _handleAgentReportMessage(ws, rawMessage, attachment = {}) {
-    // 帧尺寸守卫必须在 decode/JSON.parse 之前：超大帧先复制再解析会白烧 DO 的 CPU 配额。
-    const rawSize = typeof rawMessage === 'string'
-      ? rawMessage.length
-      : (rawMessage?.byteLength ?? rawMessage?.buffer?.byteLength ?? 0);
+    const rawSize = typeof rawMessage === 'string' ? rawMessage.length : (rawMessage?.byteLength ?? rawMessage?.buffer?.byteLength ?? 0);
     if (rawSize > UPDATE_MAX_REQUEST_BYTES) {
-      // 当前 Agent 单帧约 60KB，此路径只对异常客户端生效。
-      this._closeWsWithError(ws, 'Payload too large', 413, { text: 'payload_too_large' }, WS_MESSAGE_TOO_BIG, 'Payload too large');
+      this._closeWsWithError(ws, 'Payload too large', 413, {text:'payload_too_large'}, WS_MESSAGE_TOO_BIG, 'Payload too large');
       return;
     }
+    const current = ws.deserializeAttachment() || attachment;
+    return this.monitorAgentSession.run(current.serverId, () => {
+      const owner = this.monitorAgentSession.owners.get(current.serverId);
+      if ((current.generation && !this.monitorAgentSession.isCurrent(current)) ||
+          (!current.generation && owner?.active && owner.source === 'monitor')) {
+        this._closeWsWithError(ws, 'Node session replaced', 409);
+        return;
+      }
+      return this._handleOwnedAgentReportMessage(ws, rawMessage, current);
+    });
+  }
 
+  async _handleOwnedAgentReportMessage(ws, rawMessage, attachment = {}) {
     let msg = null;
     try {
       msg = JSON.parse(this._decodeWsMessage(rawMessage) || '{}');
@@ -1714,6 +1733,11 @@ export class MetricsBroadcaster {
     catch (_) { return new Response('Node authentication unavailable', {status:503}); }
     if (!node) return new Response('Invalid node token', {status:401});
 
+    return this.monitorAgentSession.run(node.serverId, () => this._openLegacyAgentWebSocket(request, url, node, authenticatedAt));
+  }
+
+  async _openLegacyAgentWebSocket(request, url, node, authenticatedAt) {
+
     const origin = request.headers.get('Origin');
     const allowedOrigins = parseAllowedOrigins(this.env.CORS_ALLOWED_ORIGINS);
     const realOrigin = request.headers.get('X-Real-Origin') || `${url.protocol}//${url.host}`;
@@ -1727,6 +1751,8 @@ export class MetricsBroadcaster {
       return this._createAgentWssUnavailableResponse(scheduleState);
     }
 
+    const owner = await this.monitorAgentSession.claim(node, 'legacy');
+
     // @ts-ignore - Cloudflare Workers runtime provides WebSocketPair
     const nextHour = new Date(Date.now());
     nextHour.setUTCMinutes(60, 0, 0);
@@ -1737,6 +1763,7 @@ export class MetricsBroadcaster {
       authenticated: true,
       serverId: node.serverId,
       tokenVersion: node.tokenVersion,
+      generation: owner.generation,
       leaseUntil: authenticatedAt + 60000,
       historyPartitionId: 0,
       region: request.headers.get('cf-ipcountry') || '',
@@ -1765,6 +1792,10 @@ export class MetricsBroadcaster {
     if (!await this._scheduleAgentWssHourAlarm() || !this._hasAgentLease(agentSocket)) {
       this._closeWsWithError(agentSocket, 'Authorization alarm unavailable', 503);
       return new Response('Node authorization unavailable', {status:503});
+    }
+    if (!await this._authorizeAgentSocket(agentSocket, true, false) || !this.monitorAgentSession.isCurrent(agentSocket.deserializeAttachment())) {
+      this._closeWsWithError(agentSocket, 'Node token revoked', 401);
+      return new Response('Invalid node token', {status:401});
     }
 
     const responseHeaders = new Headers();
@@ -1823,6 +1854,35 @@ export class MetricsBroadcaster {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    if (method === 'GET' && path === '/monitor-agent' && url.origin === 'https://metrics.internal') {
+      return this.monitorAgentSession.upgrade(request);
+    }
+    if (method === 'POST' && path === '/legacy-report' && url.origin === 'https://metrics.internal') {
+      const originalUrl = request.headers.get('X-CFSM-Report-URL');
+      let original;
+      try {
+        if (new URL(originalUrl).protocol !== 'https:' || new URL(originalUrl).pathname !== '/update') return new Response('Invalid report route', {status:403});
+        original = new Request(originalUrl, request);
+        const node = await authenticateNodeRequest(original, this.env.DB);
+        if (!node) return new Response('Invalid node token', {status:401});
+        return await this.monitorAgentSession.run(node.serverId, async () => {
+          const owner = this.monitorAgentSession.owners.get(node.serverId);
+          if (owner?.active && owner.source === 'monitor') return new Response('Node native session owns reporting', {status:409});
+          return handleUpdate(original, this.env, this.state, {
+            trafficAlert:operation => this.state.waitUntil(this.monitorAgentSession.run(node.serverId, () => {
+              if ((this.monitorAgentSession.owners.get(node.serverId)?.generation || 0) !== (owner?.generation || 0)) return;
+              return operation();
+            })),
+            observeTerminal:(id, data, ts) => this._observeTerminalReport(id, data, ts),
+            broadcast:async (id, samples, reportTs) => {
+              const updates = [{serverId:id,samples}];
+              if (this._getAgentRealtimeState(reportTs).realtimeActive) await this._ingestRealtimeUpdates(updates,reportTs,{batchFrontend:true});
+              else this._cacheLatestReportUpdates(updates,reportTs);
+            }
+          });
+        });
+      } catch (_) {return new Response('Node report unavailable', {status:503});}
+    }
     if (method === 'GET' && request.url === MONITOR_COMPAT_LIVE_URL) {
       return this._openMonitorCompatSocket(request);
     }
@@ -1843,23 +1903,32 @@ export class MetricsBroadcaster {
 
     if (method === 'POST' && path === '/node-invalidated' && url.origin === 'https://metrics.internal') {
       const data = await request.json();
-      if (!this._isValidServerId(data.serverId) || !Number.isSafeInteger(data.tokenVersion) || data.tokenVersion < 1) return new Response('Invalid node', {status:400});
-      // D1 is authoritative; delayed notifications must not close a newer generation.
-      const current = await this.env.DB.prepare(`SELECT n.token_version, s.id AS live_id FROM terminal_nodes n
-        LEFT JOIN servers s ON s.id = n.server_id WHERE n.server_id = ?`).bind(data.serverId).first();
-      if (!current || current.token_version < data.tokenVersion) return new Response('Invalid epoch', {status:409});
-      if (current.token_version === data.tokenVersion || !current.live_id) {
-        this.agentServerDetails.delete(data.serverId);
-        this.agentHistoryWrites.delete(data.serverId);
-        this.latestReportUpdates.delete(data.serverId);
-        this.terminalObservations.delete(data.serverId);
-        this.pendingFrontendBroadcasts.delete(data.serverId);
-      }
-      for (const ws of this._getAgentReportWebSockets()) {
-        const attachment = ws.deserializeAttachment();
-        if (attachment?.serverId === data.serverId && (!current.live_id || attachment.tokenVersion < data.tokenVersion)) this._closeWsWithError(ws, 'Node token revoked', 401);
-      }
-      return Response.json({ok:true});
+      if (!isValidMonitorPrincipal(data)) return new Response('Invalid node', {status:400});
+      return this.monitorAgentSession.run(data.serverId, async () => {
+        // D1 is authoritative; delayed notifications must not close a newer generation.
+        const current = await this.env.DB.prepare(`SELECT n.token_version, s.id AS live_id FROM terminal_nodes n
+          LEFT JOIN servers s ON s.id = n.server_id WHERE n.server_id = ?`).bind(data.serverId).first();
+        if (!current || current.token_version < data.tokenVersion) return new Response('Invalid epoch', {status:409});
+        if (current.token_version === data.tokenVersion || !current.live_id) {
+          this.agentServerDetails.delete(data.serverId);
+          this.agentHistoryWrites.delete(data.serverId);
+          this.latestReportUpdates.delete(data.serverId);
+          this.terminalObservations.delete(data.serverId);
+          this.pendingFrontendBroadcasts.delete(data.serverId);
+        }
+        for (const ws of this._getAgentReportWebSockets()) {
+          const attachment = ws.deserializeAttachment();
+          if (attachment?.serverId === data.serverId && (!current.live_id || attachment.tokenVersion < data.tokenVersion)) this._closeWsWithError(ws, 'Node token revoked', 401);
+        }
+        for (const ws of this.monitorAgentSession.sockets()) {
+          const attachment = ws.deserializeAttachment();
+          if (attachment.serverId === data.serverId && (!current.live_id || attachment.tokenVersion < current.token_version)) {
+            this.monitorAgentSession.close(ws, 'Node token revoked');
+          }
+        }
+        if (!current.live_id || this.monitorAgentSession.owners.get(data.serverId)?.tokenVersion < current.token_version) this.monitorAgentSession.inputs.delete(data.serverId);
+        return Response.json({ok:true});
+      });
     }
 
     if (method === 'POST' && path === '/terminal-observation' && url.origin === 'https://metrics.internal') {
@@ -1958,23 +2027,25 @@ export class MetricsBroadcaster {
         });
       }
 
-      const reportTs = Date.now();
-      const subscribers = this._getFrontendSubscriberCount();
-      if (subscribers === 0) {
-        return new Response(JSON.stringify({ ok: true, skipped: true, subscribers: 0 }), {
+      return this.monitorAgentSession.run(serverId, async () => {
+        const reportTs = Date.now();
+        const subscribers = this._getFrontendSubscriberCount();
+        if (subscribers === 0 || this.monitorAgentSession.owners.get(serverId)?.nativeTakenOver) {
+          return new Response(JSON.stringify({ ok: true, skipped: true, subscribers: 0 }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (this._shouldCacheResourceAlertSamples(reportTs)) {
+          await this._ensureResourceAlertSnapshotLoaded();
+          await this._cacheResourceAlertSamples([{
+            serverId,
+            samples: [{ ts: reportTs, data: payload }]
+          }], reportTs);
+        }
+        this._broadcast(serverId, payload);
+        return new Response(JSON.stringify({ ok: true, subscribers }), {
           headers: { 'Content-Type': 'application/json' }
         });
-      }
-      if (this._shouldCacheResourceAlertSamples(reportTs)) {
-        await this._ensureResourceAlertSnapshotLoaded();
-        await this._cacheResourceAlertSamples([{
-          serverId,
-          samples: [{ ts: reportTs, data: payload }]
-        }], reportTs);
-      }
-      this._broadcast(serverId, payload);
-      return new Response(JSON.stringify({ ok: true, subscribers }), {
-        headers: { 'Content-Type': 'application/json' }
       });
     }
 
@@ -2017,21 +2088,17 @@ export class MetricsBroadcaster {
       }
 
       const reportTs = Date.now();
-      if (latestReportOnly && subscribers === 0) {
-        this._cacheLatestReportUpdates(normalizedUpdates, reportTs);
-        return new Response(JSON.stringify({
-          ok: true,
-          count: normalizedUpdates.length,
-          subscribers,
-          latestReportOnly: true
-        }), {
-          headers: { 'Content-Type': 'application/json' }
+      for (const update of normalizedUpdates) {
+        await this.monitorAgentSession.run(update.serverId, async () => {
+          // Old queued Worker pushes have no generation; never revive them after native takeover.
+          if (this.monitorAgentSession.owners.get(update.serverId)?.nativeTakenOver) return;
+          if (latestReportOnly && subscribers === 0) this._cacheLatestReportUpdates([update], reportTs);
+          else await this._ingestRealtimeUpdates([update], reportTs);
         });
       }
 
-      await this._ingestRealtimeUpdates(normalizedUpdates, reportTs);
-
-      return new Response(JSON.stringify({ ok: true, count: normalizedUpdates.length, subscribers }), {
+      return new Response(JSON.stringify({ ok: true, count: normalizedUpdates.length, subscribers,
+        ...(latestReportOnly && subscribers === 0 ? {latestReportOnly:true} : {}) }), {
         headers: { 'Content-Type': 'application/json' }
       });
     }
@@ -2492,6 +2559,11 @@ export class MetricsBroadcaster {
 
   async webSocketMessage(ws, message) {
     const attachment = ws.deserializeAttachment() || {};
+    if (attachment.kind === MONITOR_AGENT_KIND) {
+      try {await this.monitorAgentSession.message(ws, message);}
+      catch (_) {this.monitorAgentSession.close(ws);}
+      return;
+    }
     if (attachment.kind === AGENT_REPORT_KIND) {
       // 与标准 WebSocket 路径保持一致：未捕获异常会直接抛给 DO runtime，可能重置整个对象。
       try {
@@ -2551,10 +2623,10 @@ export class MetricsBroadcaster {
   }
 
   // WebSocket 关闭 — DO 自动清理，无需手动移除
-  webSocketClose(ws, code, reason) {}
+  webSocketClose(ws, code, reason) {this.monitorAgentSession.release(ws).catch(() => {});}
 
   // WebSocket 错误 — DO 自动处理
-  webSocketError(ws, error) {}
+  webSocketError(ws, error) {this.monitorAgentSession.release(ws).catch(() => {});}
 }
 
 export default MetricsBroadcaster;

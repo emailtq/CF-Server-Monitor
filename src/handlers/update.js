@@ -587,11 +587,26 @@ function reportTransportError(request) {
   });
 }
 
-export async function handleUpdate(request, env, ctx) {
+export async function handleUpdate(request, env, ctx, ownedEffects = null) {
   const transportError = reportTransportError(request);
   if (transportError) return transportError;
+  const declaredLength = getDeclaredContentLength(request);
+  if (declaredLength !== null && declaredLength > UPDATE_MAX_REQUEST_BYTES) {
+    console.warn('[Update] 413 Payload too large:', {content_length:declaredLength,limit:UPDATE_MAX_REQUEST_BYTES});
+    return createPayloadTooLargeResponse();
+  }
+  // A bound global DO owns the complete operation. Never grant a lease then write freely in Worker.
+  if (env.METRICS_BROADCASTER && !ownedEffects) {
+    try {
+      const headers = new Headers(request.headers);
+      headers.set('X-CFSM-Report-URL', request.url);
+      if (request.cf?.country) headers.set('cf-ipcountry', request.cf.country);
+      const stub = env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global'));
+      return await stub.fetch(new Request('https://metrics.internal/legacy-report', {method:'POST',headers,body:request.body}));
+    } catch (_) {return new Response('Node report unavailable',{status:503});}
+  }
   const authState = { ok: false, ua: '' };
-  const response = await handleUpdateCore(request, env, ctx, authState);
+  const response = await handleUpdateCore(request, env, ctx, authState, ownedEffects);
 
   // 自定义 UA 只下发给已认证且本次请求成功的 agent，401/400/404 一律不带，避免暴露。
   const attachUa = authState.ok && authState.ua && response.ok;
@@ -611,19 +626,8 @@ export async function handleUpdate(request, env, ctx) {
   });
 }
 
-async function handleUpdateCore(request, env, ctx, authState = null) {
+async function handleUpdateCore(request, env, ctx, authState = null, ownedEffects = null) {
   try {
-    // 必须在 request.json() 之前：超大 body 的解析本身就可能耗尽 Worker CPU。
-    // 注意这是防呆而非硬上限：chunked 或缺少 Content-Length 的请求会跳过该检查。
-    const declaredLength = getDeclaredContentLength(request);
-    if (declaredLength !== null && declaredLength > UPDATE_MAX_REQUEST_BYTES) {
-      console.warn('[Update] 413 Payload too large:', {
-        content_length: declaredLength,
-        limit: UPDATE_MAX_REQUEST_BYTES
-      });
-      return createPayloadTooLargeResponse();
-    }
-
     const data = await request.json();
     if (hasReportCredentials(data)) return createUnauthorizedResponse('Report credentials must use Authorization');
     const node = await authenticateNodeRequest(request, env.DB, data?.id);
@@ -708,7 +712,9 @@ async function handleUpdateCore(request, env, ctx, authState = null) {
       const stub = env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global'));
       // Only authenticated, validated metadata crosses this internal boundary.
       try {
-        const result = await stub.fetch(new Request('https://metrics.internal/terminal-observation', {
+        const result = ownedEffects?.observeTerminal
+          ? Response.json(await ownedEffects.observeTerminal(id, data, latestSample.ts))
+          : await stub.fetch(new Request('https://metrics.internal/terminal-observation', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({id, terminal_enabled:data.terminal_enabled,
             report_at:data.time?.accurate_ts ?? data.time?.local_ts ?? latestSample.ts})
@@ -732,14 +738,19 @@ async function handleUpdateCore(request, env, ctx, authState = null) {
     const sshAck = await acceptSshEvents(env, node, sshReport);
     if (sshAck) { authState.sshAck = sshAck; scheduleLoginDelivery(env, ctx); }
     const broadcastSamples = toBroadcastSamples(id, samples, regionCode, agentVersion, latestMetrics);
-    cacheLatestReportUpdate(id, broadcastSamples, Date.now());
-    // 加入批量队列，由后台定时任务统一推送到 DO
-    queueBroadcastSamples(id, broadcastSamples);
-    ctx.waitUntil(_ensureBatchFlush(env));
+    if (ownedEffects) {
+      await ownedEffects.broadcast(id, broadcastSamples, Date.now());
+    } else {
+      cacheLatestReportUpdate(id, broadcastSamples, Date.now());
+      queueBroadcastSamples(id, broadcastSamples);
+      ctx.waitUntil(_ensureBatchFlush(env));
+    }
     // 月流量阈值告警：复用已加载的 serverDetail 与刚入库的 historyMetrics，非阻塞后台执行
-    ctx.waitUntil(evaluateTrafficAlert(env, serverDetail, historyMetrics, {
+    const trafficAlert = () => evaluateTrafficAlert(env, serverDetail, historyMetrics, {
       patchCache: (serverId, value) => patchServerDetailCache(serverId, { traffic_alert_state: value })
-    }));
+    });
+    if (ownedEffects?.trafficAlert) ownedEffects.trafficAlert(trafficAlert);
+    else ctx.waitUntil(trafficAlert());
 
     const clientConfigSchema = normalizeAgentConfigSchemaVersion(request.headers.get(AGENT_CONFIG_SCHEMA_HEADER));
     if (!clientConfigSchema) {

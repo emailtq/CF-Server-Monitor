@@ -97,6 +97,8 @@ test('native message count is separate from D1 write count', () => {
 
 ### Task 2: 原生接入、codec、数值ID和单节点会话
 
+**项目验收通过（2026-11-24）：** 最终Node22 codec/ID/真实WS组合55/55通过；共同owner覆盖legacy WS/POST实际写入，capabilities仅空交集，未实现durable batch不广告。证据与接口见stage2/PROJECT-ACCEPTANCE及RESULT；Task3开始，Task4/6/7保留其实际依赖。
+
 **Files:**
 - Create: `src/shared/monitorAgentProtocol.js`、`src/handlers/monitorAgent.js`、`src/durable/MonitorAgentSession.js`、`src/database/monitorProbeIds.js`。
 - Modify: `src/index.js`、`src/durable/MetricsBroadcaster.js`、`src/database/monitorCompatIds.js`；只把新增接入需要的会话职责抽离，不全面拆原DO。
@@ -109,13 +111,13 @@ test('native message count is separate from D1 write count', () => {
 - `getMonitorProbeIds(db, metricIds) -> Promise<Map<string,number>>`：持久、唯一、不复用删除ID。
 - `createMonitorRuntimeFixture(t, options) -> Promise<fixture>`：从现有Miniflare/auth/terminal测试搭建临时DB/DO，后续逐任务增加`rpcAsAgent(request)`、`countStartedPtys()`、`sendBatch(batch)`、`readLedger()`、`reconstructSessionFromDurableState()`。不连接生产，`reconstruct`仅重建内存而保留同一耐久DB。
 
-- [ ] 先写真实握手RED：匿名/错误token拒绝；正确token升级后可直接发hello，不需要旧server hello；同token新连接取代旧会话后旧close不能标记新连接离线。
-- [ ] 写counter词元RED与numeric ID并发稳定测试，包含删除/重建task generation；旧hash ID不覆盖新映射。
-- [ ] 使用已验证Workers `JSON.parse` reviver `context.source`读取counter，有限schema检查非负i64；通过公开输出serializer保留标准数值，不把counter改成对外字符串。
-- [ ] 将新入口放在`handleMonitorCompat`之前精确分派；保留旧`/update`和当前公开API不变；处理接口不是新增外部中转服务。
-- [ ] 会话认证和撤销复用`nodeAuth/nodeCredentials`；attachment不保存bearer。native/legacy共用按节点写入所有权，旧数据不得晚到覆盖新session。
-- [ ] 实现std task map；原标准Agent64任务边界与CF扩展大配置分开。能力限制在管理员操作前准确反馈，不静默删任务。
-- [ ] GREEN后复跑节点凭据/lease/旧WS测试；父验收原版Agent客户端或固定原报文真实WS连接，不只直接调用JS handler。
+- [x] 先写真实握手RED：匿名/错误token拒绝；正确token升级后可直接发hello，不需要旧server hello；同token新连接取代旧会话后旧close不能标记新连接离线。
+- [x] 写counter词元RED与numeric ID并发稳定测试，包含删除/重建task generation；旧hash ID不覆盖新映射。
+- [x] 使用已验证Workers `JSON.parse` reviver `context.source`读取counter，有限schema检查非负i64；通过公开输出serializer保留标准数值，不把counter改成对外字符串。
+- [x] 将新入口放在`handleMonitorCompat`之前精确分派；保留旧`/update`和当前公开API不变；处理接口不是新增外部中转服务。
+- [x] 会话认证和撤销复用`nodeAuth/nodeCredentials`；attachment不保存bearer。native/legacy共用按节点写入所有权，旧数据不得晚到覆盖新session。
+- [x] 实现std task map；原标准Agent64任务边界与CF扩展大配置分开。能力限制在管理员操作前准确反馈，不静默删任务。
+- [x] GREEN后复跑节点凭据/lease/旧WS测试；父验收原版Agent客户端或固定原报文真实WS连接，不只直接调用JS handler。
 
 ```js
 test('report preserves an integer counter above the JS safe range', () => {
