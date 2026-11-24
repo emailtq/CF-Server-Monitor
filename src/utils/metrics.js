@@ -4,6 +4,28 @@ import {
 } from './historyFields.js';
 import { normalizeExtraProbes, mergeExtraProbeMetrics } from '../shared/extraPing.js';
 
+const CF_TRAFFIC_FIELDS = ['net_rx','net_tx','net_rx_monthly','net_tx_monthly'];
+
+export function stringifyCFMetrics(data) {
+  return JSON.stringify(data,function(key,value) {
+    if(this?.monitor && CF_TRAFFIC_FIELDS.includes(key) && (typeof value==='string' || typeof value==='bigint')) {
+      return JSON.rawJSON(String(value));
+    }
+    return value;
+  });
+}
+
+export function parseCFMetrics(raw) {
+  return JSON.parse(raw,function(key,value,context) {
+    // Preserve the source token across DO -> Worker, before the final public serialization.
+    return this?.monitor && CF_TRAFFIC_FIELDS.includes(key) && typeof value==='number' ? context.source : value;
+  });
+}
+
+export function createCFMetricsResponse(data) {
+  return new Response(stringifyCFMetrics(data),{status:200,headers:{'Content-Type':'application/json'}});
+}
+
 export const DISK_IO_METRIC_FIELDS = [
   'read_bps',
   'write_bps',
@@ -70,7 +92,7 @@ export function normalizeDiskMetrics(metrics) {
     const value = hasDiskObject
       ? disk[field]
       : source[column];
-    return [field, toFiniteMetricNumber(value)];
+    return [field, toFiniteMetricNumber(value,source.monitor ? null : 0)];
   }));
 }
 
@@ -81,7 +103,11 @@ function createEmptyDiskMetricColumns(value = null) {
   ]));
 }
 
-export function flattenDiskMetrics(metrics) {
+export function flattenDiskMetrics(metrics, {preserveUnknown=false}={}) {
+  if(preserveUnknown) {
+    const source=metrics?.disk || {};
+    return Object.fromEntries(DISK_IO_METRIC_FIELDS.map(field=>[DISK_IO_FIELD_TO_COLUMN[field],toFiniteMetricNumber(source[field],null)]));
+  }
   if (!hasDiskMetricsPayload(metrics)) {
     return createEmptyDiskMetricColumns(null);
   }
@@ -124,6 +150,7 @@ export function coerceNumericMetricFields(payload) {
     if (!Object.prototype.hasOwnProperty.call(result, field)) continue;
     const value = result[field];
     if (value === null || value === undefined) continue;
+    if (result.monitor && CF_TRAFFIC_FIELDS.includes(field)) continue;
     const num = Number(value);
     result[field] = Number.isFinite(num) ? num : 0;
   }
@@ -227,4 +254,10 @@ export function mergeMetricsIntoServer(server, metrics) {
   server.ip_v6 = metrics.ip_v6 || '0';
   server.boot_time = metrics.boot_time || '';
   server.last_updated = metrics.timestamp || 0;
+  if(metrics.monitor) {
+    server.monitor=metrics.monitor;
+    for(const field of NUMERIC_METRIC_FIELDS)if(Object.hasOwn(metrics,field))server[field]=metrics[field];
+    if(Object.hasOwn(metrics,'load_avg'))server.load_avg=metrics.load_avg;
+    if(Object.hasOwn(metrics,'gpu_info'))server.gpu_info=metrics.gpu_info;
+  }
 }

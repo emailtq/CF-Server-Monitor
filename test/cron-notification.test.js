@@ -55,6 +55,7 @@ function makeDb(settings, servers = [makeServer(1)]) {
           return db.resourceState === null ? null : { value: JSON.stringify(db.resourceState) };
         },
         async all() {
+          if(sql.includes('sqlite_master'))return {results:[]};
           if (sql.includes("key = 'latency_tasks'") || sql.includes("key='latency_tasks'")) return {results: []};
           if (sql.includes('FROM servers')) {
             stats.servers++;

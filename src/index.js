@@ -5,6 +5,7 @@ import { cleanupLoginEvents } from './database/loginEvents.js';
 import { publicExtraPingNodes } from './shared/extraPing.js';
 import { publicLatencyNodes } from './shared/latencyTasks.js';
 import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './database/schema.js';
+import { maintainMonitorTelemetry } from './database/monitorTelemetry.js';
 import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './services/notification.js';
 import { loadNotificationConfig } from './database/notifications.js';
 import { updateDatabase } from './database/updateDatabase.js';
@@ -473,6 +474,14 @@ export default {
         debug('[Cron] 资源负载告警检测完成');
       }
     } else if (cron === '0 * * * *') {
+      try {
+        for(let chunk=0;chunk<20;chunk++) {
+          const cleanup=await maintainMonitorTelemetry(env.DB,{now:now.getTime()});
+          if(!cleanup.pending)break;
+        }
+      } catch (error) {
+        console.error('[Monitor] Retention cleanup failed:', error);
+      }
       try {
         await cleanupTerminalRecords(env.DB, now.getTime());
         await cleanupLoginEvents(env.DB, now.getTime());

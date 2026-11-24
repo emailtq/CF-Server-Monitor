@@ -2,7 +2,7 @@ import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, v
 import { getLatestMetrics, getLatestMetricsForAllServers, clearDashboardLatencyHistoryCache } from '../database/schema.js';
 import { getAllServers, clearServersListCache, clearAllCaches } from '../utils/cache.js';
 import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
-import { mergeMetricsIntoServer } from '../utils/metrics.js';
+import { mergeMetricsIntoServer, createCFMetricsResponse } from '../utils/metrics.js';
 import { normalizePctOrNull } from '../utils/traffic.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
@@ -23,6 +23,7 @@ import { handleTerminalAdminAction, disableTerminalAccess } from './terminal.js'
 import { handlePrepareRegistration } from './agentRegistration.js';
 import { ensureNodeToken, issueNodeToken } from '../database/nodeCredentials.js';
 import { notifyNodeCredentialsInvalidated } from '../utils/nodeCredentialNotify.js';
+import { prepareMonitorReporting } from '../services/monitorReporting.js';
 import { clearNodeReportCache } from './update.js';
 import { loadNotificationConfig, saveNotificationConfig, prepareNotificationChannel, notificationChannelSettings, validateNotificationBackup, importNotificationConfig } from '../database/notifications.js';
 import { assertNotificationObject, maskNotificationConfig, NOTIFICATION_CONFIG_MAX_BYTES, notificationConfigError, migrateLegacyNotifications } from '../shared/notificationConfig.js';
@@ -33,6 +34,7 @@ import { validateLatencyBackup, withLegacyLatencyHistory } from '../shared/laten
 import { handleMonitorThemeAdmin } from './monitorThemeAdmin.js';
 import { exportMonitorThemes, importMonitorThemes } from '../services/monitorThemes.js';
 import { validMonitorThemeBackup } from '../shared/monitorThemes.js';
+import { exportMonitorMetadata, importMonitorMetadata, validMonitorMetadata } from '../database/monitorBackup.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -770,7 +772,7 @@ async function handleListAction({ env, data, sys }) {
     stats.avg_cpu = (stats.total_cpu / stats.online).toFixed(2);
   }
 
-  return createSuccessResponse({
+  return createCFMetricsResponse({
     success: true,
     servers: serversWithStatus,
     stats
@@ -1403,7 +1405,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       const pingAssignments = editedPingFields.map(field => `${field} = ?, `).join('');
       
       try {
-        await env.DB.prepare(`
+        await env.DB.batch([env.DB.prepare(`
           UPDATE servers
           SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, ${pingAssignments}rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?
           WHERE id = ?
@@ -1435,7 +1437,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           normalizeBooleanFlag(is_hidden),
           normalizePctOrNull(traffic_alert_percent),
           id
-        ).run();
+        ),prepareMonitorReporting(env.DB,id,normalizedAgentConfig,networkInterfaces.value)]);
       } catch (e) {
         return handleServerMutationError(env.DB, e, 'serverUpdateFailed');
       }
@@ -1490,16 +1492,17 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     else if (data.action === 'export_servers') {
       try {
         if (data.includeNotificationSecrets !== undefined && typeof data.includeNotificationSecrets !== 'boolean') return createBadRequestResponse('notification_config_invalid');
-        // 顺序读取：settings 走缓存，真正的 D1 查询只有一次，没必要并发打同一连接。
+        // Settings use their cache; monitor metadata additionally preserves reserved identities and ledger baselines.
         const servers = await env.DB.prepare('SELECT * FROM servers ORDER BY sort_order ASC').all();
         const siteSettings = await loadSiteSettings(env.DB);
         const appearanceSettings = await loadAppearanceOptions(env.DB);
         const notificationConfig = data.includeNotificationSecrets ? await loadNotificationConfig(env.DB, siteSettings) : null;
         const monitorTheme = await exportMonitorThemes(env.DB);
+        const monitorMetadata=await exportMonitorMetadata(env.DB,(servers.results || []).map(s=>s.id));
         return createSuccessResponse({
           success: true,
           servers: (servers.results || []).map(({terminal_local_enabled, terminal_local_observed_at, terminal_local_report_at, ...server}) => server),
-          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), monitor_theme: monitorTheme, ...(siteSettings.latency_tasks ? { latency_tasks: siteSettings.latency_tasks } : {}), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
+          settings: { ...pickExportableSettings(siteSettings, appearanceSettings), monitor_theme: monitorTheme, monitor_metadata:monitorMetadata, ...(siteSettings.latency_tasks ? { latency_tasks: siteSettings.latency_tasks } : {}), ...(notificationConfig ? { notification_config: notificationConfig } : {}) },
           ...(notificationConfig ? { notificationBackup: { sensitive: true, warning: 'notification_backup_contains_credentials' } } : {}),
           message: 'serversExported'
         });
@@ -1510,6 +1513,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     }
     else if (data.action === 'import_servers') {
       const { servers: importData, settings: importSettings } = data;
+      if(importSettings?.monitor_metadata && !validMonitorMetadata(importSettings.monitor_metadata))return createBadRequestResponse('serversImportFailed');
       if (importSettings && Object.hasOwn(importSettings, 'monitor_theme') && !validMonitorThemeBackup(importSettings.monitor_theme)) return createBadRequestResponse('monitorThemeInvalid');
       if (importSettings?.latency_tasks && !validateLatencyBackup(importSettings.latency_tasks, validatePingNode)) return createBadRequestResponse('invalidLatencyTask');
       let notificationConfig;
@@ -1637,6 +1641,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
 
       if (hasServers) {
         clearServersListCache();
+      }
+      if(importSettings?.monitor_metadata) {
+        try {await importMonitorMetadata(env.DB,importSettings.monitor_metadata,[...serverIdMap.values()]);}
+        catch (_) {return createBadRequestResponse('serversImportFailed');}
       }
 
       let settingsResult;

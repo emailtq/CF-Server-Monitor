@@ -4,13 +4,14 @@ export function shouldUseSparseHistorySampling(queryHours) {
   return queryHours > SPARSE_HISTORY_MIN_HOURS;
 }
 
-function buildSampleJsonExpression(tableName, jsonColumns, sampleOrder, scoped) {
+function buildSampleJsonExpression(tableName, jsonColumns, sampleOrder, scoped, excluded, includeSource) {
   return `(
-    SELECT json_object(${jsonColumns})
+    SELECT json_object(${jsonColumns}${includeSource ? `, 'history_source', '${tableName}'` : ''})
     FROM ${tableName}
     WHERE id >= ranges.start_id
       AND id < ranges.end_id
       ${scoped ? 'AND server_id = (SELECT id FROM requested_server)' : ''}
+      ${excluded ? 'AND NOT EXISTS(SELECT 1 FROM blocked_ranges WHERE timestamp >= blocked_ranges.start_ts AND timestamp < blocked_ranges.end_ts)' : ''}
     ORDER BY id ${sampleOrder}
     LIMIT 1
   )`;
@@ -26,7 +27,9 @@ export function buildSparseHistoryQuery({
   oldTableExists,
   tableBoundary,
   sampleOrder = 'ASC',
-  serverId = null
+  serverId = null,
+  excludedRanges = [],
+  includeSource = false
 }) {
   const columnList = columns.split(',').map(column => column.trim()).filter(Boolean);
   const jsonColumns = ['timestamp', ...columnList]
@@ -44,11 +47,13 @@ export function buildSparseHistoryQuery({
   ];
   const scoped = serverId !== null;
   if (scoped) bindValues.push(serverId);
-  const currentSample = buildSampleJsonExpression('metrics_history', jsonColumns, normalizedSampleOrder, scoped);
+  const excluded = excludedRanges.length > 0;
+  if (excluded) bindValues.push(JSON.stringify(excludedRanges));
+  const currentSample = buildSampleJsonExpression('metrics_history', jsonColumns, normalizedSampleOrder, scoped, excluded, includeSource);
   let sampleExpression = currentSample;
 
   if (oldTableExists) {
-    const oldSample = buildSampleJsonExpression('metrics_history_old', jsonColumns, normalizedSampleOrder, scoped);
+    const oldSample = buildSampleJsonExpression('metrics_history_old', jsonColumns, normalizedSampleOrder, scoped, excluded, includeSource);
     sampleExpression = `COALESCE(
         CASE WHEN ranges.range_start < ? THEN ${oldSample} END,
         CASE WHEN ranges.range_end > ? THEN ${currentSample} END
@@ -92,7 +97,7 @@ export function buildSparseHistoryQuery({
             ) AS INTEGER
           ) AS end_id
         FROM sample_ranges
-      )${scoped ? ', requested_server(id) AS (VALUES (?))' : ''}
+      )${scoped ? ', requested_server(id) AS (VALUES (?))' : ''}${excluded ? ', blocked_ranges(start_ts,end_ts) AS (SELECT value->>0,value->>1 FROM json_each(?))' : ''}
       SELECT ${sampleExpression} AS sample_json
       FROM id_ranges AS ranges
       ORDER BY ranges.range_start ASC

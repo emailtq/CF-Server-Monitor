@@ -1,4 +1,5 @@
 import { getLatestTimestampsForAllServers } from '../database/schema.js';
+import { readMonitorLatest } from '../database/monitorTelemetry.js';
 import { clearServersListCache, getAllServers } from '../utils/cache.js';
 import {
   DEFAULT_NOTIFICATION_TEMPLATE,
@@ -692,6 +693,9 @@ export async function evaluateTrafficAlert(env, server, metrics, hooks = {}) {
     const identities = new Map(await Promise.all(rules.map(async r => [r.id, await createNotificationRuleIdentity(r)])));
     const override = normalizePctOrNull(server.traffic_alert_percent);
     if (override === 0) return;
+    const native=(await readMonitorLatest(env.DB,[server.id])).get(server.id);
+    if(native)metrics=native;
+    if(native && (metrics.net_rx_monthly==null || metrics.net_tx_monthly==null))return;
     const used = Math.round(getTrafficUsageBytes(metrics.net_rx_monthly, metrics.net_tx_monthly, server.traffic_calc_type));
     const row = await env.DB.prepare('SELECT traffic_alert_state FROM servers WHERE id = ?').bind(server.id).first();
     if (!row) return;

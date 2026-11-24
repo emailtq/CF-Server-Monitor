@@ -14,6 +14,8 @@ import { acceptSshEvents, validateSshEventReport, scheduleLoginDelivery, sshLogi
 // - Agent 上报连接使用标准 WebSocket API，避免高频指标消息计为 hibernation wakeup。
 
 import { saveMetricsHistory } from '../database/schema.js';
+import { stringifyCFMetrics } from '../utils/metrics.js';
+import { markMonitorLegacy, readMonitorHistoryRows } from '../database/monitorTelemetry.js';
 import { projectLatencyMetrics } from '../shared/latencyTasks.js';
 import { authenticateNodeRequest, hasReportCredentials } from '../middleware/nodeAuth.js';
 import { MonitorAgentSession, MONITOR_AGENT_KIND, isValidMonitorPrincipal } from './MonitorAgentSession.js';
@@ -102,6 +104,7 @@ function parseAllowedOrigins(corsAllowedOrigins) {
 }
 
 function toFiniteNumber(value) {
+  if(value===null || value===undefined || value==='')return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -208,8 +211,8 @@ function normalizeResourceAlertSample(sample) {
   const disk = diskTotal && diskTotal > 0 && diskUsed !== null
     ? (diskUsed / diskTotal) * 100
     : null;
-  const netIn = Math.max(0, toFiniteNumber(metrics.net_in_speed) ?? 0);
-  const netOut = Math.max(0, toFiniteNumber(metrics.net_out_speed) ?? 0);
+  const netIn = toFiniteNumber(metrics.net_in_speed);
+  const netOut = toFiniteNumber(metrics.net_out_speed);
 
   return {
     ts,
@@ -219,7 +222,8 @@ function normalizeResourceAlertSample(sample) {
     disk,
     netIn,
     netOut,
-    netTotal: netIn + netOut
+    netTotal: netIn===null || netOut===null ? null : netIn + netOut,
+    coverageMs:metrics.monitor?.resource?.coverageMs
   };
 }
 
@@ -255,12 +259,14 @@ function summarizeMetric(samples, metric) {
     .map(sample => getMetricValue(sample, metric))
     .filter(value => value !== null);
   if (values.length === 0) return null;
+  const weighted=samples.filter(s=>getMetricValue(s,metric)!==null && Number.isFinite(s.coverageMs));
+  const weight=weighted.reduce((n,s)=>n+s.coverageMs,0);
   const sum = values.reduce((total, value) => total + value, 0);
   return {
     current: values[values.length - 1],
     min: Math.min(...values),
     max: Math.max(...values),
-    avg: sum / values.length
+    avg: weighted.length===values.length && weight>0 ? weighted.reduce((n,s)=>n+s[metric]*s.coverageMs,0)/weight : sum / values.length
   };
 }
 
@@ -539,6 +545,7 @@ export class MetricsBroadcaster {
       clearTimeout(this.monitorCompatTimer);
       this.monitorCompatTimer = null;
       this.monitorCompatState = null;
+      this.state.waitUntil(this.monitorAgentSession.refreshActivity().catch(() => {}));
     }
   }
 
@@ -1162,7 +1169,7 @@ export class MetricsBroadcaster {
     if (!this.state?.storage || typeof this.state.storage.setAlarm !== 'function') return false;
     try {
       const leases = [...this._getAgentReportWebSockets(), ...this.monitorAgentSession.sockets()].map(ws => ws.deserializeAttachment()).filter(attachment => attachment?.authenticated)
-        .map(attachment => attachment.leaseUntil || Date.now());
+        .map(attachment => attachment.kind === MONITOR_AGENT_KIND ? (attachment.leaseUntil || Date.now()) - 30000 : attachment.leaseUntil || Date.now());
       if (!leases.length) return true;
       await this.state.storage.setAlarm(Math.min(this._nextUtcHourAlarmTime(), ...leases));
       return true;
@@ -1432,6 +1439,7 @@ export class MetricsBroadcaster {
   async _hintAgentRealtimeIntervals(realtimeState = null) {
     const now = Date.now();
     const state = realtimeState || this._getAgentRealtimeState(now);
+    await this.monitorAgentSession.refreshActivity(state);
     if (!state.frontendActive) return 0;
     if (now - this.lastAgentRealtimeHintAt < 1000) return 0;
     this.lastAgentRealtimeHintAt = now;
@@ -1857,6 +1865,9 @@ export class MetricsBroadcaster {
     if (method === 'GET' && path === '/monitor-agent' && url.origin === 'https://metrics.internal') {
       return this.monitorAgentSession.upgrade(request);
     }
+    if (method === 'POST' && path === '/monitor-batch' && url.origin === 'https://metrics.internal') {
+      return this.monitorAgentSession.httpBatch(request);
+    }
     if (method === 'POST' && path === '/legacy-report' && url.origin === 'https://metrics.internal') {
       const originalUrl = request.headers.get('X-CFSM-Report-URL');
       let original;
@@ -1868,6 +1879,7 @@ export class MetricsBroadcaster {
         return await this.monitorAgentSession.run(node.serverId, async () => {
           const owner = this.monitorAgentSession.owners.get(node.serverId);
           if (owner?.active && owner.source === 'monitor') return new Response('Node native session owns reporting', {status:409});
+          await markMonitorLegacy(this.env.DB,node.serverId,(owner?.generation || 0)+1);
           return handleUpdate(original, this.env, this.state, {
             trafficAlert:operation => this.state.waitUntil(this.monitorAgentSession.run(node.serverId, () => {
               if ((this.monitorAgentSession.owners.get(node.serverId)?.generation || 0) !== (owner?.generation || 0)) return;
@@ -2126,7 +2138,7 @@ export class MetricsBroadcaster {
       const updates = this._getLatestReportUpdates(normalizedServerIds.ids);
       const payload = { updates };
 
-      return new Response(JSON.stringify(payload), {
+      return new Response(stringifyCFMetrics(payload), {
         headers: {
           'Cache-Control': 'no-store',
           'Content-Type': 'application/json'
@@ -2155,6 +2167,10 @@ export class MetricsBroadcaster {
 
       this._activateResourceAlertCache();
       await this._ensureResourceAlertSnapshotLoaded();
+      for(const serverId of new Set(normalizedRules.rules.flatMap(r=>r.serverIds || []))) {
+        const now=Date.now(),rows=await readMonitorHistoryRows(this.env.DB,serverId,{from:now-11*60000,to:now+1});
+        if(rows !== null)this.resourceAlertWindows.set(serverId,{samples:rows.map(row=>normalizeResourceAlertSample({ts:row.timestamp,data:row})).filter(Boolean)});
+      }
       const result = await this._evaluateResourceAlertRules(normalizedRules.rules, {
         resultFormat: body?.resultFormat
       });
@@ -2543,7 +2559,7 @@ export class MetricsBroadcaster {
         .map(maskPublicIpUpdate);
       if (scopedUpdates.length === 0) continue;
 
-      const message = JSON.stringify({
+      const message = stringifyCFMetrics({
         type: 'batchUpdate',
         ts,
         updates: scopedUpdates
@@ -2623,7 +2639,11 @@ export class MetricsBroadcaster {
   }
 
   // WebSocket 关闭 — DO 自动清理，无需手动移除
-  webSocketClose(ws, code, reason) {this.monitorAgentSession.release(ws).catch(() => {});}
+  webSocketClose(ws, code, reason) {
+    try { ws.close(code === 1005 ? 1000 : code,reason); } catch (_) {}
+    this.state.waitUntil(this.monitorAgentSession.release(ws).catch(() => {}));
+    this.state.waitUntil(this.monitorAgentSession.refreshActivity().catch(() => {}));
+  }
 
   // WebSocket 错误 — DO 自动处理
   webSocketError(ws, error) {this.monitorAgentSession.release(ws).catch(() => {});}

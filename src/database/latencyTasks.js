@@ -55,6 +55,21 @@ export async function loadLatencyTasks(db) {
 }
 
 async function writeDocument(db, previous, document, purge = []) {
+  // Assignment periods belong to the catalog CAS, not to a reconnecting socket.
+  const now = Date.now();
+  const live = new Set(document.tasks.flatMap(task=>task.nodes.map(node=>JSON.stringify([node,task.metric_id || task.id]))));
+  document.monitorAssignments ||= [];
+  const open = new Set(document.monitorAssignments.filter(p=>p.retiredAt == null).map(p=>JSON.stringify([p.serverId,p.metricId])));
+  for (const period of document.monitorAssignments) {
+    if (period.retiredAt == null && !live.has(JSON.stringify([period.serverId,period.metricId]))) period.retiredAt = now;
+  }
+  for (const task of document.tasks) for (const serverId of task.nodes) {
+    const metricId = task.metric_id || task.id;
+    if (!open.has(JSON.stringify([serverId,metricId]))) {
+      document.monitorAssignments.push({serverId,metricId,assignedAt:now,retiredAt:null});
+      open.add(JSON.stringify([serverId,metricId]));
+    }
+  }
   // D1 strings/rows are limited to 2MB. Keep the complete recovery document in ordered chunks,
   // plus bounded active/seen fragments for atomic SQL report filtering without reconstructing a giant SQL string.
   const serialized = JSON.stringify(document), entries = [];
@@ -99,6 +114,10 @@ async function writeDocument(db, previous, document, purge = []) {
 
 export async function ensureLatencyTasks(db, settings) {
   const row = await readDocument(db) || await createLatencyDocument(db, settings);
+  if (!Array.isArray(row.document.monitorAssignments)) {
+    await writeDocument(db,row.raw,row.document);
+    return (await readDocument(db)).document;
+  }
   return row.document;
 }
 

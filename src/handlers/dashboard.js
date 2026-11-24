@@ -1,9 +1,9 @@
 import { checkAuth, simpleAuthResponse } from '../middleware/auth.js';
 import { getDashboardLatencyHistory, getLatestMetrics, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, getServerDetail } from '../utils/cache.js';
-import { mergeMetricsIntoServer, coerceNumericMetricFields } from '../utils/metrics.js';
+import { mergeMetricsIntoServer, coerceNumericMetricFields, createCFMetricsResponse, parseCFMetrics } from '../utils/metrics.js';
 import { normalizeLongHistoryPoints } from '../utils/settings.js';
-import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
+import { createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 import {
   cacheLatestReportUpdate,
   getLatestReportSampleTimestamp,
@@ -118,7 +118,7 @@ export async function getDurableRealtimeState(env, serverIds) {
         body: JSON.stringify({ serverIds: chunk })
       });
       if (!response.ok) continue;
-      const data = await response.json();
+      const data = parseCFMetrics(await response.text());
       if (Array.isArray(data?.updates)) updates.push(...data.updates);
     }
 
@@ -213,7 +213,7 @@ export async function handleServerAPI(request, env, sys) {
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
   };
   
-  return createSuccessResponse(omitNullLossProbeFields(withoutPrivateServerFields(server)));
+  return createCFMetricsResponse(omitNullLossProbeFields(withoutPrivateServerFields(server)));
 }
 
 export async function handleServersAPI(request, env, sys) {
@@ -307,5 +307,5 @@ export async function handleServersAPI(request, env, sys) {
     }
   };
 
-  return createSuccessResponse(data);
+  return createCFMetricsResponse(data);
 }

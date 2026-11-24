@@ -6,6 +6,9 @@ import { EXTRA_PING_ID_PATTERN, normalizeExtraProbes, publicExtraPingNodes } fro
 import { LEGACY_LATENCY_SLOTS, legacyMetricSuffix, publicLatencyNodes, withLegacyLatencyHistory } from '../shared/latencyTasks.js';
 import { getMetricsHistoryCache, setMetricsHistoryCache } from '../utils/cache.js';
 import { PROBE_METRIC_FIELDS } from '../utils/historyFields.js';
+import { readMonitorHistoryRows, readMonitorLatest } from '../database/monitorTelemetry.js';
+import { getMonitorProbeIds } from '../database/monitorProbeIds.js';
+import { getMetricsHistory } from '../database/schema.js';
 
 const HOUR_MS = 3_600_000;
 const MIB = 1024 ** 2;
@@ -29,6 +32,8 @@ function integerParam(query, key, fallback, min, max) {
 }
 
 async function sampleHistory(db, server, hours, step, columns) {
+  const native=await readMonitorHistoryRows(db,server.id,{from:Date.now()-hours*HOUR_MS,to:Date.now()+1});
+  if(native!==null)return getMetricsHistory(db,server.id,hours,columns,server);
   const { partitionId, startTimestamp } = await getServerHistoryInfo(db, server.id, server);
   if (!partitionId) throw new Error('Monitor history partition unavailable');
   const now = Date.now();
@@ -104,15 +109,15 @@ function projectResources(rows) {
     // These are persisted CF samples (rates may be aggregation maxima), not Monitor mean/peak pairs.
     return [{ ts: Math.floor(row.timestamp / 1000), cpu: row.cpu,
       mem_used: Math.round(row.ram_used * MIB), disk_used: Math.round(row.disk_used * MIB),
-      net_rx: Math.round(row.net_in_speed), net_tx: Math.round(row.net_out_speed) }];
+      net_rx: Math.round(row.net_in_speed), net_tx: Math.round(row.net_out_speed),...(row.monitor ? {monitor:row.monitor} : {}) }];
   });
 }
 
-function projectPings(rows, serverId, document, labels) {
+function projectPings(rows, serverId, document, labels, nativeIds=null) {
   const ids = new Set();
   const definitions = labels.map(def => {
     if (!def.slot && (typeof def.id !== 'string' || !EXTRA_PING_ID_PATTERN.test(def.id))) throw new Error('Monitor probe ID unavailable');
-    const taskId = def.taskId ?? numericTaskId(def.id);
+    const taskId = nativeIds?.get(def.id) ?? def.taskId ?? numericTaskId(def.id);
     if (ids.has(taskId)) throw new Error('Monitor probe ID collision');
     ids.add(taskId);
     return { ...def, taskId };
@@ -123,9 +128,10 @@ function projectPings(rows, serverId, document, labels) {
     for (const { id, name, slot, taskId } of definitions) {
       const point = slot ? { ping: row[`ping_${slot}`], loss: row[`loss_${slot}`] } : extra?.[id];
       if (!point || [false, 'false'].includes(point.ping) || [false, 'false'].includes(point.loss)) continue;
-      const latency = Number.isFinite(point.ping) && point.ping > 0 ? point.ping : null;
+      const latency = Number.isFinite(point.ping) && point.ping >= (nativeIds ? 0 : Number.MIN_VALUE) ? point.ping : null;
       if (latency === null && point.loss !== 100) continue;
       const sample = { task_id: taskId, ts: Math.floor(row.timestamp / 1000), latency };
+      if(row.monitor)sample.monitor=row.monitor;
       if (Number.isFinite(point.loss) && point.loss > 0 && point.loss <= 100) sample.loss = point.loss;
       ping.push(sample);
       probes[taskId] = typeof name === 'string' && name ? name : id;
@@ -160,7 +166,9 @@ export async function loadMonitorCompatHistory(db, id, query) {
       // Never cache the active catalog: removals and assignment changes apply even to cached samples.
       const document = await readLatencyTaskDocument(db);
       const labels = document ? publicLatencyNodes(document, server.id) : await readLegacyLabels(db);
-      Object.assign(result, projectPings(rows, server.id, document, labels));
+      const native=(await readMonitorLatest(db,[server.id])).has(server.id);
+      const ids=native ? await getMonitorProbeIds(db,labels.map(p=>p.id)) : null;
+      Object.assign(result, projectPings(rows, server.id, document, labels,ids));
     }
     return result;
   } finally {

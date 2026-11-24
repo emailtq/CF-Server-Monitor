@@ -58,15 +58,20 @@ export const send = (peer, method, params, id) => peer.ws.send(JSON.stringify({j
 const runtimeSource = `
 import worker, {MetricsBroadcaster} from './src/index.js';
 const runtimeNow=Date.now;let clockOffset=0;Date.now=()=>runtimeNow()+clockOffset;
+const runtimeTick=performance.now.bind(performance);let fixedTick=null;
+Object.defineProperty(performance,'now',{value:()=>fixedTick ?? runtimeTick()});
 
 export class TestMetricsBroadcaster extends MetricsBroadcaster {
   constructor(state,env) {
-    const fault = {}, counts = {puts:0,alarms:0};
+    const fault = {}, counts = {puts:0,alarms:0,dbRowsWritten:0,dbRowsRead:0,dbCalls:0,gets:0,lists:0,deletes:0,alarmReads:0};
     const context = new Proxy(state,{get(target,key) {
       if (key === 'storage') return new Proxy(target.storage,{get(storage,op) {
         if (op === 'setAlarm' && fault.missingAlarm) return undefined;
         if (op === 'put') return (...args) => {counts.puts++;return storage.put(...args);};
-        if (op === 'getAlarm') return async (...args)=>{const alarm=await storage.getAlarm(...args);if(fault.delayedAlarmRead){fault.delayedAlarmRead=false;clockOffset+=61000;}return alarm;};
+        if (op === 'get') return (...args) => {counts.gets++;return storage.get(...args);};
+        if (op === 'list') return (...args) => {counts.lists++;return storage.list(...args);};
+        if (op === 'delete') return (...args) => {counts.deletes++;return storage.delete(...args);};
+        if (op === 'getAlarm') return async (...args)=>{counts.alarmReads++;const alarm=await storage.getAlarm(...args);if(fault.delayedAlarmRead){fault.delayedAlarmRead=false;clockOffset+=61000;}return alarm;};
         if (op === 'setAlarm') return async (...args) => {
           counts.alarms++; if (fault.alarm) throw Error('test alarm outage');
           const result = await storage.setAlarm(...args);
@@ -78,11 +83,22 @@ export class TestMetricsBroadcaster extends MetricsBroadcaster {
       return typeof target[key]==='function'?target[key].bind(target):target[key];
     }});
     const db=new Proxy(env.DB,{get(target,key) {
+      if (key==='batch') return async statements=>{
+        const results=await target.batch(statements);
+        counts.dbRowsWritten+=results.reduce((n,r)=>n+(r.meta?.rows_written || 0),0);
+        counts.dbRowsRead+=results.reduce((n,r)=>n+(r.meta?.rows_read || 0),0);counts.dbCalls+=statements.length;
+        return results;
+      };
       if (key==='prepare') return sql => {
         if (fault.auth && /n.token_version/.test(sql)) throw Error('test auth outage');
         if (fault.tasks && /latency_tasks/.test(sql)) throw Error('test tasks outage');
         if (fault.policy && /site_options/.test(sql)) throw Error('test policy outage');
+        if (fault.telemetryRead && /monitor_telemetry_receipts/.test(sql)) throw Error('test D1 receipt unavailable');
         const statement=target.prepare(sql);
+        if(fault.pauseReset && sql.startsWith('SELECT reset_day FROM servers'))return new Proxy(statement,{get(s,operation){
+          if(operation==='bind')return (...args)=>{const b=s.bind(...args);return {async first(){const row=await b.first();fault.pauseReset=false;fault.paused=true;await new Promise(r=>fault.release=r);fault.paused=false;return row;}};};
+          return typeof s[operation]==='function'?s[operation].bind(s):s[operation];
+        }});
         if (fault.pauseAuthorityNode && /n.token_version/.test(sql)) return new Proxy(statement,{get(s,operation) {
           if (operation==='bind') return (...args)=>{
             const bound=s.bind(...args);
@@ -109,7 +125,13 @@ export class TestMetricsBroadcaster extends MetricsBroadcaster {
           if (operation==='all') return async (...args) => {const result=await s.all(...args);fault.pauseTasks=false;fault.paused=true;await new Promise(resolve=>fault.release=resolve);fault.paused=false;return result;};
           return typeof s[operation]==='function'?s[operation].bind(s):s[operation];
         }});
-        return statement;
+        const measured=s=>new Proxy(s,{get(s,op){
+          if(op==='bind')return (...args)=>measured(s.bind(...args));
+          if(['run','all'].includes(op))return async (...args)=>{const r=await s[op](...args);counts.dbCalls++;counts.dbRowsRead+=r.meta?.rows_read || 0;counts.dbRowsWritten+=r.meta?.rows_written || 0;return r;};
+          if(op==='first')return async (...args)=>{const r=await s.all();counts.dbCalls++;counts.dbRowsRead+=r.meta?.rows_read || 0;return args.length?r.results[0]?.[args[0]]:r.results[0] ?? null;};
+          return typeof s[op]==='function'?s[op].bind(s):s[op];
+        }});
+        return measured(statement);
       };
       return typeof target[key]==='function'?target[key].bind(target):target[key];
     }});
@@ -118,12 +140,18 @@ export class TestMetricsBroadcaster extends MetricsBroadcaster {
   async fetch(request) {
     if (new URL(request.url).pathname !== '/test/control') return super.fetch(request);
     const {op,...fields}=await request.json();
+    if (op==='tick') fixedTick=fields.value;
+    if (op==='advance') {clockOffset+=fields.ms;fixedTick=(fixedTick ?? runtimeTick())+fields.ms;}
+    if (op==='drain') await this.monitorAgentSession.run(fields.serverId || 'node-a',async()=>{});
     if (op==='fault') Object.assign(this.fault,fields);
     if (op==='release') this.fault.release?.();
     if (op==='config') await this._handleAgentConfigChanged(new Request('http://internal/agent-config-changed',{method:'POST',body:JSON.stringify({latencyTasksChanged:true})}));
     if (op==='rebuild') {this.monitorAgentSession=new this.monitorAgentSession.constructor(this);await this.monitorAgentSession.ready;}
     if (op==='alarm') {await this.state.storage.deleteAlarm();await this.alarm();}
     if (op==='removeAlarm') await this.state.storage.deleteAlarm();
+    if (op==='resource') return super.fetch(new Request('http://internal/evaluate-resource-alerts',{method:'POST',body:JSON.stringify(fields)}));
+    if (op==='latest') return super.fetch(new Request('http://internal/latest-report-updates',{method:'POST',body:JSON.stringify(fields)}));
+    if (op==='broadcastLatest') this._broadcastBatch(this._getLatestReportUpdates(fields.serverIds));
     if (op==='orphanOwner') for(const [id,owner] of this.monitorAgentSession.owners) await this.state.storage.put('monitor-owner:'+id,{...owner,active:true});
     if (op==='batch') await super.fetch(new Request('http://internal/batch-push',{method:'POST',body:JSON.stringify({updates:fields.updates,latestReportOnly:true})}));
     if (op==='invalidate') await super.fetch(new Request('https://metrics.internal/node-invalidated',{method:'POST',body:JSON.stringify(fields)}));

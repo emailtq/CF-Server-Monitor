@@ -200,3 +200,8 @@ export function clearAllCaches() {
   clearSiteSettingsCache();
   clearAppearanceSettingsCache();
 }
+
+export function clearTelemetryCaches() {
+  clearLatestMetricsCache();
+  metricsHistoryCache.clear();
+}

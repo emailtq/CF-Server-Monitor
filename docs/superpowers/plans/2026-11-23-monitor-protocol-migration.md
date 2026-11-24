@@ -170,6 +170,8 @@ func TestMonitorNotificationUsesStandardEnvelope(t *testing.T) {
 
 ### Task 4: 权威统计、durable接续及旧数据迁移
 
+**项目接受本地候选（2026-11-25），额度及运行差分门禁未关闭：** 项目亲验core/continuity64/64、receiver freshness/CF20/20、真实Go三入口aggregate1/1均0fail/skip；发现hourly指标维护异常阻断原terminal/login清理，回原S3修复后项目实际scheduled/D1故障及20chunk边界4/4通过。唯一D1原子receipt＋桶＋节点状态、重放原ACK不重复reduce、legacy接续及现消费者已本地验收。证据见stage4/PROJECT-ACCEPTANCE。20节点60秒批仅ingest86400写/天，cleanup后115680–118080另加其他业务；永久receipt模型day7为535796460B、day30为1539266220B，keys/pages/现库另加。100节点有维护backlog。当前免费预算不通过，不修改默认采样/retention/ACK来声称达标；资源合同选择和真实云计量由项目/Task7关闭。固定原hub运行差分及Task3多平台/race仍待运行资源。代码候选可提交并供Task5消费，不能据此发布。
+
 **Files:**
 - Create: `src/services/monitorStatistics.js`、`src/database/monitorTelemetry.js`、`src/shared/monitorTelemetry.js`。
 - Modify: `src/durable/MonitorAgentSession.js`、`src/durable/MetricsBroadcaster.js`、`src/handlers/update.js`、`src/handlers/dashboard.js`、`src/database/schema.js`、`src/utils/historyFields.js`、`src/services/notification.js`中消费权威流量/在线状态的边界；包括latest timestamps、历史查询和server-detail缓存消费者。
@@ -181,14 +183,16 @@ func TestMonitorNotificationUsesStandardEnvelope(t *testing.T) {
 - `recordMonitorBatch(env, principal, session, batch) -> Promise<{stream,sequence,persisted}>`：一个写入所有者，只有耐久保存后ACK。
 - `readMonitorTelemetry(db, serverId, window) -> Promise<coreWindow>`：公开API与CF后台读同一coreWindow，不内部HTTP调用。
 
-- [ ] 写RED：9007199254740993−9007199254740992=1；第一次/下降/epoch变化不虚增；跨日、月末29–31日、timezone、恢复和late样本按固定上游规则。
-- [ ] 写RED：一秒CPU100%和59秒0%分钟mean约1.67%、max100%；不同覆盖小时按权重合并；无数据不变成0。
-- [ ] 写RED：2次成功＋1次超时窗口loss=1/3×100；同摘要重复上报不增加分母；同CF客户端实时report和durable batch不重复计入mean/分母；重试同batch和双通道不增加流量/样本次数；原标准无seq按其session规则。
-- [ ] 用任务1选定的持久策略实现耐久输入/批checkpoint；从驱逐、数据库失败和ACK丢失恢复，不以Map作为已ACK高水位唯一存储。
-- [ ] 按节点添加migration state，保留UUID、公开ID、旧历史、已知月值和激活时刻；新核心接续时禁止Agent本地month再覆盖hub账本。rollback跨模式重新基线，不重复补差额。
-- [ ] 实现分钟/小时rollup、真实retention和覆盖信息，旧区间来源与精度可查；不去填造缺失old loss/day。
-- [ ] 原告警/自动续费、任务generation与备份调用统一边界；节点切原生后，旧后台latest timestamp、server detail、历史查询改读同一核心的兼容输出，不能继续只读旧metrics_history而误报离线。测试已有用户设置和节点权限未被新模型改变。
-- [ ] GREEN并运行隔离恢复测试，父比较固定原hub与新后端相同输入的完整数值系列，而非仅字段存在。
+- [x] 写RED：9007199254740993−9007199254740992=1；第一次/下降/epoch变化不虚增；跨日、月末29–31日、timezone、恢复和late样本按固定上游规则。
+- [x] 写RED：一秒CPU100%和59秒0%分钟mean约1.67%、max100%；不同覆盖小时按权重合并；无数据不变成0。
+- [x] 写RED：2次成功＋1次超时窗口loss=1/3×100；同摘要重复上报不增加分母；同CF客户端实时report和durable batch不重复计入mean/分母；重试同batch和双通道不增加流量/样本次数；原标准无seq按其session规则。
+- [x] 用任务1选定的持久策略实现耐久输入/批checkpoint；本地从重建、数据库失败和ACK丢失恢复，不以Map作为已ACK高水位唯一存储。真实云驱逐归Task7。
+- [x] 按节点添加migration state，保留UUID、公开ID、旧历史、已知月值和激活时刻；新核心接续时禁止Agent本地month再覆盖hub账本。rollback跨模式重新基线，不重复补差额。
+- [x] 实现分钟/小时rollup、真实retention和覆盖信息，旧区间来源与精度可查；不去填造缺失old loss/day。
+- [x] 原告警/自动续费、任务generation与备份调用统一边界；节点切原生后，旧后台latest timestamp、server detail、历史查询改读同一核心的兼容输出，不能继续只读旧metrics_history而误报离线。测试已有用户设置和节点权限未被新模型改变。
+- [x] GREEN并运行隔离恢复测试；父核完整数值系列及固定hub源码规则，不只字段存在。真实Go→当前Worker/D1丢ACK、同私有queue/同D1重启、原文重放无二次作用已通过。
+- [ ] 完成原验收要求的固定原hub binary与新后端同输入运行差分；项目与Task3运行资源门禁共同持有，不以源码规则对照替代运行。
+- [ ] 免费额度及真实云CPU/duration/billed capacity/headroom/完整访客组合通过；当前产品实测预算失败，由项目/Task7处理，不阻断独立Task5开发。
 
 ```js
 test('a counter reset establishes a new baseline without adding lifetime bytes', () => {

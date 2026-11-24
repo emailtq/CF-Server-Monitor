@@ -3,6 +3,7 @@ import { getMonitorCompatIds, MONITOR_COMPAT_VISIBLE } from '../database/monitor
 import { getDurableRealtimeState } from '../handlers/dashboard.js';
 import { getWorkerLatestReportUpdates } from '../utils/latestReportCache.js';
 import { normalizeBillingCycle } from '../utils/serverBilling.js';
+import { readMonitorLatest } from '../database/monitorTelemetry.js';
 
 const ONLINE_TIMEOUT_MS = 300_000;
 const MIB = 1024 ** 2;
@@ -134,6 +135,9 @@ function projectNode(server, id, persisted, latest, display, now) {
     month_rx: display.showTraffic ? total('net_rx_monthly') : 0,
     month_tx: display.showTraffic ? total('net_tx_monthly') : 0
   };
+  if(display.showTraffic && persisted?.monitor?.traffic)Object.assign(traffic,{total_rx:Number(persisted.monitor.traffic.totalRx),
+    total_tx:Number(persisted.monitor.traffic.totalTx),month_rx:persisted.net_rx_monthly==null ? null : Number(persisted.net_rx_monthly),
+    month_tx:persisted.net_tx_monthly==null ? null : Number(persisted.net_tx_monthly)});
   const mode = display.showTraffic ? server.traffic_calc_type : '';
   const trafficMode = mode === 'ul' ? 'up' : mode === 'dl' ? 'down' : mode === 'max' ? 'max' : 'sum';
   const { month_rx: rx, month_tx: tx } = traffic;
@@ -155,9 +159,10 @@ function projectNode(server, id, persisted, latest, display, now) {
     traffic_mode: trafficMode,
     traffic_reset_day: display.showTraffic && Number.isInteger(server.reset_day) && server.reset_day >= 1 && server.reset_day <= 31 ? server.reset_day : 1,
     ...traffic,
-    month_used: trafficMode === 'up' ? tx : trafficMode === 'down' ? rx : trafficMode === 'max' ? Math.max(rx, tx) : rx + tx,
-    // CF only stores total/month counters, not daily counters or the actual period start.
-    month_start: '', day_rx: null, day_tx: null
+    month_used: rx===null || tx===null ? null : trafficMode === 'up' ? tx : trafficMode === 'down' ? rx : trafficMode === 'max' ? Math.max(rx, tx) : rx + tx,
+    month_start: display.showTraffic ? persisted?.monitor?.traffic?.monthStart || '' : '',
+    day_rx:display.showTraffic && persisted?.monitor?.traffic ? Number(persisted.monitor.traffic.dayRx) : null,
+    day_tx:display.showTraffic && persisted?.monitor?.traffic ? Number(persisted.monitor.traffic.dayTx) : null
   };
 }
 
@@ -174,6 +179,7 @@ export async function loadMonitorCompatBaseline(db) {
     loadLatestPersisted(db, servers),
     getMonitorCompatIds(db, serverIds)
   ]);
+  for(const [id,row] of await readMonitorLatest(db,serverIds))if(row)persisted.set(id,row);
   return { servers, serverIds, persisted, ids };
 }
 

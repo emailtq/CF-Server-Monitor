@@ -1,4 +1,5 @@
 import { ensureLoginEventSchema } from './loginEvents.js';
+import { ensureMonitorTelemetrySchema, readMonitorLatest, readMonitorHistoryRows } from './monitorTelemetry.js';
 import { getAllServers, getLatestMetricsCache, setLatestMetricsCache, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration, clearAllCaches } from '../utils/cache.js';
 import { saveSiteOptions, debug, normalizeLongHistoryPoints, DEFAULT_LONG_HISTORY_POINTS } from '../utils/settings.js';
 import { attachDiskMetricsObject, flattenDiskMetrics, isDisabledProbeMetric, normalizeProbeMetricRow } from '../utils/metrics.js';
@@ -135,6 +136,7 @@ export async function initDatabase(db) {
     await ensureNodeCredentialSchema(db);
     await ensureTerminalSchema(db);
     await ensureLoginEventSchema(db);
+    await ensureMonitorTelemetrySchema(db);
 
     debug('✅ 数据库初始化完成');
     dbInitialized = true;
@@ -184,14 +186,25 @@ function buildHistorySourceQuery(tableName, columns) {
   `;
 }
 
-export async function getMetricsHistory(
+export async function getMetricsHistory(db,serverId,hours,columns,server=null,longHistoryPoints=DEFAULT_LONG_HISTORY_POINTS,latencyDocument=null) {
+  const now=Date.now(),nativeRows=await readMonitorHistoryRows(db,serverId,{from:now-Math.min(hours,168)*3600000,to:now+1,step:hours>24 ? 3600 : 60});
+  if(nativeRows===null)return getLegacyMetricsHistory(db,serverId,hours,columns,server,longHistoryPoints,latencyDocument);
+  // Exclude only native's actual materialized windows, not everything after the first migration.
+  const excludedRanges=nativeRows.flatMap(row=>(row.monitor?.resource?.coveredMinutes || [row.timestamp]).map(ts=>[ts,ts+60000]));
+  const legacy=await getLegacyMetricsHistory(db,serverId,hours,columns,server,longHistoryPoints,latencyDocument,{excludedRanges,includeSource:true});
+  return [...legacy.map(({history_source,...row})=>({...row,
+    monitor:{source:history_source,precision:'legacy-MiB/summary',rawProbeAvailable:false}})),...nativeRows].sort((a,b)=>a.timestamp-b.timestamp);
+}
+
+async function getLegacyMetricsHistory(
   db,
   serverId,
   hours,
   columns,
   server = null,
   longHistoryPoints = DEFAULT_LONG_HISTORY_POINTS,
-  latencyDocument = null
+  latencyDocument = null,
+  { excludedRanges = [], includeSource = false } = {}
 ) {
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
@@ -200,7 +213,8 @@ export async function getMetricsHistory(
     ? Number(normalizeLongHistoryPoints(longHistoryPoints))
     : null;
   
-  const cached = getMetricsHistoryCache(serverId, hours, columns, configuredLongHistoryPoints);
+  const mixed = includeSource || excludedRanges.length > 0;
+  const cached = !mixed && getMetricsHistoryCache(serverId, hours, columns, configuredLongHistoryPoints);
   if (cached && now - cached.timestamp < cacheDuration) {
     debug(`[History] CACHE HIT: ${serverId}, hours: ${hours}`);
     return cached.data;
@@ -279,7 +293,8 @@ export async function getMetricsHistory(
       intervalMs,
       idPrefix,
       oldTableExists,
-      tableBoundary: thisSunday.getTime()
+      tableBoundary: thisSunday.getTime(),
+      ...(mixed ? {serverId,excludedRanges,includeSource} : {})
     });
 
     debug('[History] SPARSE ID SAMPLING:', sparseQuery.bindValues.length, 'bind values');
@@ -294,13 +309,19 @@ export async function getMetricsHistory(
     const sourceQueries = [];
     const bindValues = [];
 
-    sourceQueries.push(buildHistorySourceQuery('metrics_history', sourceColumns));
+    const sourceQuery = table => mixed
+      ? `SELECT timestamp, ${sourceColumns}, '${table}' AS history_source FROM ${table} WHERE id >= ? AND id <= ? AND server_id=?
+          AND NOT EXISTS(SELECT 1 FROM json_each(?) AS blocked WHERE timestamp >= blocked.value->>0 AND timestamp < blocked.value->>1)`
+      : buildHistorySourceQuery(table,sourceColumns);
+    sourceQueries.push(sourceQuery('metrics_history'));
     bindValues.push(idRange.startId, idRange.endId);
+    if(mixed)bindValues.push(serverId,JSON.stringify(excludedRanges));
 
     if (oldTableExists) {
       debug('[History] 跨周查询，合并 metrics_history 和 metrics_history_old');
-      sourceQueries.push(buildHistorySourceQuery('metrics_history_old', sourceColumns));
+      sourceQueries.push(sourceQuery('metrics_history_old'));
       bindValues.push(idRange.startId, idRange.endId);
+      if(mixed)bindValues.push(serverId,JSON.stringify(excludedRanges));
     }
 
     bindValues.push(intervalMs);
@@ -313,6 +334,7 @@ export async function getMetricsHistory(
         SELECT
           timestamp,
           ${sourceColumns},
+          ${mixed ? 'history_source,' : ''}
           CAST(timestamp / ? AS INTEGER) AS bucket
         FROM history_rows
       ),
@@ -320,6 +342,7 @@ export async function getMetricsHistory(
         SELECT
           timestamp,
           ${sourceColumns},
+          ${mixed ? 'history_source,' : ''}
           ROW_NUMBER() OVER (
             PARTITION BY bucket
             ORDER BY timestamp
@@ -327,7 +350,7 @@ export async function getMetricsHistory(
           ${lossWindowExpressions.length ? `,\n          ${lossWindowExpressions.join(',\n          ')}` : ''}
         FROM bucketed
       )
-      SELECT timestamp, ${selectColumns.join(', ')}
+      SELECT timestamp, ${selectColumns.join(', ')}${mixed ? ', history_source' : ''}
       FROM sampled
       WHERE rn = 1
     `).bind(...bindValues).all();
@@ -340,7 +363,7 @@ export async function getMetricsHistory(
 
   result.sort((a, b) => a.timestamp - b.timestamp);
 
-  setMetricsHistoryCache(serverId, hours, columns, result, configuredLongHistoryPoints);
+  if(!mixed)setMetricsHistoryCache(serverId, hours, columns, result, configuredLongHistoryPoints);
 
   debug(`[History] FINAL: ${result.length}, interval: ${intervalMs}ms`);
 
@@ -365,6 +388,7 @@ function buildLatencyHistoryPoint(row, metricType, { includeEmpty = false } = {}
   if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
 
   const point = { ts: timestamp };
+  if(row.monitor)point.monitor=row.monitor;
   for (const field of LATENCY_NODE_FIELDS) {
     const column = `${metricType}_${field}`;
     if (!Object.prototype.hasOwnProperty.call(row, column)) continue;
@@ -424,13 +448,26 @@ function normalizeDashboardLatencyWindow(sampleRows, { queryStart, intervalMs, p
 }
 
 export async function getDashboardLatencyHistory(db, servers, options = {}) {
-  const serverList = Array.isArray(servers) ? servers : [];
+  const allServers = Array.isArray(servers) ? servers : [];
+  const native = await readMonitorLatest(db,allServers.map(s=>s.id));
+  const serverList = allServers.filter(s=>!native.has(s.id));
+  const nativeResults = new Map();
+  for(const server of allServers.filter(s=>native.has(s.id))) {
+    const now=options.now ?? Date.now();
+    const rows=await getMetricsHistory(db,server.id,DASHBOARD_LATENCY_WINDOW_HOURS,DASHBOARD_LATENCY_COLUMNS.join(', '),server,DEFAULT_LONG_HISTORY_POINTS,options.latencyDocument);
+    const points=options.points || DASHBOARD_LATENCY_WINDOW_POINTS,queryStart=now-DASHBOARD_LATENCY_WINDOW_HOURS*3600000;
+    const intervalMs=Math.max(10000,Math.ceil((now+1-queryStart)/points)),samples=new Map();
+    for(const row of rows)if(row.timestamp>=queryStart && row.timestamp<=now)samples.set(Math.min(points-1,Math.floor((row.timestamp-queryStart)/intervalMs)),row);
+    nativeResults.set(server.id,normalizeDashboardLatencyRows(Array.from({length:points},(_,i)=>{
+      const row=samples.get(i);return row ? {...row,sample_timestamp:row.timestamp,timestamp:queryStart+i*intervalMs} : {timestamp:queryStart+i*intervalMs};
+    }),{includeEmpty:true}));
+  }
   const serverIds = serverList.map(server => String(server?.id || '').trim()).filter(Boolean);
-  if (serverIds.length === 0) return new Map();
+  if (serverIds.length === 0) return nativeResults;
 
   const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
   const useCache = options.cache !== false;
-  const result = new Map();
+  const result = nativeResults;
   const serversToFetch = [];
 
   if (useCache) {
@@ -714,6 +751,8 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
 
 export async function getLatestMetrics(db, serverId, server = null) {
   try {
+    const native=await readMonitorLatest(db,[serverId]);
+    if(native.has(serverId))return native.get(serverId);
     const historyInfo = await getServerHistoryInfo(db, serverId, server);
     if (!historyInfo.partitionId) {
       throw new Error('Invalid history partition id');
@@ -756,6 +795,7 @@ export async function getLatestMetricsForAllServers(db) {
   const result = new Map();
   try {
     const servers = await getAllServers(db);
+    const native = await readMonitorLatest(db,servers.map(s=>s.id));
     if (servers.length === 0) {
       setLatestMetricsCache(result);
       return result;
@@ -764,6 +804,7 @@ export async function getLatestMetricsForAllServers(db) {
     // 先逐台计算 history rowid 范围：单台异常只跳过该台（与 getLatestMetrics 逐台失败一致）
     const items = [];
     for (const server of servers) {
+      if(native.has(server.id)) {const row=native.get(server.id);if(row)result.set(server.id,row);continue;}
       try {
         // 传入 server 对象时 getServerHistoryInfo 不会触发额外查询
         const historyInfo = await getServerHistoryInfo(db, server.id, server);
@@ -843,16 +884,18 @@ export async function getLatestTimestampsForAllServers(db, { servers = null } = 
   const now = Date.now();
   const cacheInfo = getLatestMetricsCache();
   if (cacheInfo.cache && now - cacheInfo.time < cacheInfo.ttl) {
-    return extractTimestampsFromMetricsCache(cacheInfo.cache, servers);
+    return extractTimestampsFromMetricsCache(cacheInfo.cache,servers);
   }
 
   const collected = new Map();
   try {
     const targetServers = servers ?? await getAllServers(db);
     if (targetServers.length === 0) return collected;
+    const native=await readMonitorLatest(db,targetServers.map(s=>s.id));
 
     const items = [];
     for (const server of targetServers) {
+      if(native.has(server.id)){const row=native.get(server.id);if(row)collected.set(server.id,row.timestamp);continue;}
       try {
         // 传入 server 对象时 getServerHistoryInfo 不会触发额外查询
         const historyInfo = await getServerHistoryInfo(db, server.id, server);

@@ -7,6 +7,8 @@ import { parseServerBackup } from '../src/frontend/utils/backup.js';
 import { generateToken } from '../src/middleware/auth.js';
 import { ensureTerminalSchema } from '../src/database/terminal.js';
 import { ensureNodeCredentialSchema } from '../src/database/nodeCredentials.js';
+import { ensureMonitorTelemetrySchema,recordMonitorBatch } from '../src/database/monitorTelemetry.js';
+import { frame,session } from './helpers/monitorTelemetry.js';
 import {
   clearSiteSettingsCache,
   clearAppearanceSettingsCache,
@@ -104,6 +106,26 @@ async function adminCall(body) {
   const response = await handleAdminAPI(createRequest(token, body), env, SYS, null, { waitUntil() {} });
   return { status: response.status, data: await response.json() };
 }
+
+test('actual admin export/frontend parse/import preserves monitor identities and ledger without restoring old token',async()=> {
+  const isolated=new Miniflare({modules:true,script:'export default {fetch(){return new Response()}}',d1Databases:{DB:'native-backup'}});
+  try {
+  const target=await isolated.getD1Database('DB');await createSchema(target);await ensureMonitorTelemetrySchema(db);
+  const id='9abc1234-1234-4234-8234-abcdef123456';
+  await db.prepare('INSERT OR IGNORE INTO servers(id,name,history_partition_id) VALUES(?,?,?)').bind(id,'native',83).run();
+  await db.prepare('INSERT OR IGNORE INTO terminal_nodes(server_id,token_hash,token_version,credential_version,updated_at) VALUES(?,?,?,?,?)').bind(id,'synthetic-hash',1,1,Date.now()).run();
+  await recordMonitorBatch({DB:db},{serverId:id,tokenVersion:1},session(),frame(1,{probes:[]}));
+  const exported=await adminCall({action:'export_servers'}),parsed=parseServerBackup(JSON.stringify(exported.data));
+  assert.ok(parsed.settings.monitor_metadata.nodes.some(n=>n.server_id===id));
+  const env={DB:target,API_SECRET:'secret'},token=await generateToken(env,SYS);
+  const response=await handleAdminAPI(createRequest(token,{action:'import_servers',...parsed}),env,SYS,null,{waitUntil(){}});
+  assert.equal(response.status,200);
+  const node=await target.prepare('SELECT * FROM monitor_telemetry_nodes WHERE server_id=?').bind(id).first();
+  assert.equal(JSON.parse(node.state).traffic.totalRx,'1');assert.equal(node.active_stream,'');
+  assert.notEqual((await target.prepare('SELECT token_hash FROM terminal_nodes WHERE server_id=?').bind(id).first()).token_hash,'synthetic-hash');
+  assert.equal((await target.prepare('SELECT history_partition_id FROM servers WHERE id=?').bind(id).first()).history_partition_id,83);
+  }finally{await isolated.dispose();await db.prepare("DELETE FROM servers WHERE id='9abc1234-1234-4234-8234-abcdef123456'").run();}
+});
 
 async function seedSettings(siteOptions, appearanceOptions) {
   await db.prepare('DELETE FROM settings').run();

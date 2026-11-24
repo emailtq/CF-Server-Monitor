@@ -36,9 +36,9 @@ test('real Worker native upgrade authenticates TLS/header/origin before global D
     report:rawExample('report'),rx:input(snapshot).latest.trafficReading.rx,ack:false,attachment:snapshot.attachments.find(a=>a.kind==='monitor-agent')}));
 });
 
-test('capabilities advertise no unimplemented batch/SSH/terminal and unknown requests never echo payload', async t => {
+test('explicit standard-only capability intersection stays empty and SSH/terminal/unknown requests never echo payload', async t => {
   const h=await createMonitorRuntimeFixture(t),peer=await h.socket();assert.equal(peer.status,101);
-  send(peer,'cf.capabilities',{version:1,supports:[{method:'cf.report.batch',version:1},{method:'cf.ssh.events',version:1},{method:'cf.terminal.open',version:1}]},'caps');
+  send(peer,'cf.capabilities',{version:1,supports:[{method:'cf.ssh.events',version:1},{method:'cf.terminal.open',version:1}]},'caps');
   await until(()=>frames(peer).some(frame=>frame.id==='caps'));
   assert.deepEqual(frames(peer).find(frame=>frame.id==='caps').result.accepted,[]);
   assert.equal(frames(peer).find(frame=>frame.id==='caps').result.fallbackPath,null);
@@ -129,7 +129,7 @@ test('same durable state reconstruction restores principal/generation but never 
   assert.deepEqual(after.durable,before.durable);
   assert.equal(after.inputs.length,0);
   send(peer,'report',{cpu:9});await until(async()=>input(await h.snapshot())?.latest?.report?.cpu===9);
-  const steady=await h.snapshot();send(peer,'report',{cpu:10});
+  const steady=await h.snapshot();await new Promise(resolve=>setTimeout(resolve,550));send(peer,'report',{cpu:10});
   await until(async()=>input(await h.snapshot())?.latest?.report?.cpu===10);
   assert.equal((await h.snapshot()).counts.puts,steady.counts.puts);
 });
@@ -146,7 +146,7 @@ test('queued unowned Worker batch cannot overwrite current native latest cache',
   const h=await createMonitorRuntimeFixture(t),peer=await h.socket();assert.equal(peer.status,101);
   send(peer,'report',{cpu:51});await until(async()=>!!input(await h.snapshot())?.latest);
   await h.control('batch',{updates:[{serverId:'node-a',samples:[{ts:Date.now()+1000,payload:{cpu:99}}]}]});
-  assert.equal((await h.snapshot()).latest.some(([node])=>node==='node-a'),false);
+  assert.equal((await h.snapshot()).latest.find(([node])=>node==='node-a')?.[1].samples.at(-1).data.cpu,51);
   assert.equal(input(await h.snapshot()).latest.report.cpu,51);
 });
 
@@ -172,7 +172,16 @@ test('native tasks read failures, ICMP and 65 tasks are accurate errors, never f
   send(tooMany,'report',{cpu:42});await until(async()=>input(await h.snapshot())?.latest?.report?.cpu===42);
   assert.equal(input(await h.snapshot()).probeAvailability.count,65);
   assert.equal(frames(tooMany).some(frame=>frame.method==='ping.tasks'),false);
+  send(tooMany,'cf.capabilities',{version:1,supports:[{method:'cf.report.batch',version:1},{method:'cf.ping.tasks',version:1}]},'cf65');
+  await until(()=>frames(tooMany).some(frame=>frame.method==='cf.ping.tasks'));
+  const cf65=frames(tooMany).find(frame=>frame.method==='cf.ping.tasks');
+  assert.equal(cf65.params.tasks.length,65);assert.ok(cf65.params.tasks.every(task=>task.mode==='tcp'));
+  await h.db.prepare("UPDATE servers SET ping_mode='icmp' WHERE id='node-a'").run();await h.control('config');
+  await until(()=>frames(tooMany).some(frame=>frame.method==='cf.ping.tasks'&&frame.params.tasks[0].mode==='icmp'));
+  const icmp65=frames(tooMany).find(frame=>frame.method==='cf.ping.tasks'&&frame.params.tasks[0].mode==='icmp');
+  assert.equal(icmp65.params.tasks.length,65);assert.ok(icmp65.params.revision>cf65.params.revision);
   tooMany.ws.close();
+  await h.db.prepare("UPDATE servers SET ping_mode='tcp' WHERE id='node-a'").run();
   const read=await import('../src/database/latencyTasks.js');assert.equal((await read.readLatencyTaskDocument(h.db)).tasks.length,65);
   assert.ok(document);
   const catalog=await read.readLatencyTaskDocument(h.db);
@@ -260,7 +269,7 @@ test('actual POST history/cache effects stay inside the owner queue across an aw
   await h.control('release');assert.equal((await pendingPost).status,200);
   const peer=await takeover;assert.equal(peer.status,101);
   send(peer,'report',{cpu:62});await until(async()=>input(await h.snapshot())?.latest?.report?.cpu===62);
-  assert.equal((await h.snapshot()).latest.some(([node])=>node==='node-a'),false);
+  assert.equal((await h.snapshot()).latest.find(([node])=>node==='node-a')?.[1].samples.at(-1).data.cpu,62);
   assert.equal((await h.db.prepare('SELECT COUNT(*) AS count FROM metrics_history').first()).count,1);
   assert.equal((await h.post(legacy(63))).status,409);
 });
