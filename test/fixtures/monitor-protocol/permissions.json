@@ -1,0 +1,601 @@
+{
+  "contract": "CF-proposed-explicit-permissions",
+  "schemaVersion": 1,
+  "capabilityIsPermission": false,
+  "roles": {
+    "agent": {
+      "methods": [
+        "hello",
+        "report",
+        "ping.result",
+        "cf.capabilities",
+        "cf.report.batch",
+        "cf.ssh.events",
+        "cf.terminal.ready",
+        "cf.terminal.credit",
+        "cf.terminal.exit",
+        "cf.terminal.error",
+        "cf.terminal.ping",
+        "cf.terminal.pong"
+      ],
+      "channel": "monitoring or private session (route-bound separately)"
+    },
+    "hub": {
+      "methods": [
+        "ping.tasks",
+        "cf.reporting.configure",
+        "cf.ping.tasks"
+      ],
+      "channel": "node-bound service dispatch; admin setters remain authenticated REST"
+    },
+    "public": {
+      "methods": [],
+      "channel": "public REST/metrics WS only; masked fields"
+    },
+    "preview": {
+      "methods": [],
+      "channel": "theme resource/REST preview; no administrative authority"
+    },
+    "admin": {
+      "methods": [],
+      "channel": "existing authenticated REST actions, not Agent RPC"
+    },
+    "agent-control": {
+      "methods": [
+        "cf.terminal.hello",
+        "cf.terminal.disabled",
+        "cf.terminal.ping",
+        "cf.terminal.pong"
+      ],
+      "channel": "private terminal control"
+    },
+    "broker-control": {
+      "methods": [
+        "cf.terminal.open",
+        "cf.terminal.close",
+        "cf.terminal.bound",
+        "cf.terminal.disable",
+        "cf.terminal.ping",
+        "cf.terminal.pong"
+      ],
+      "channel": "private terminal control"
+    },
+    "browser": {
+      "methods": [
+        "cf.terminal.resize",
+        "cf.terminal.credit",
+        "cf.terminal.ping",
+        "cf.terminal.pong"
+      ],
+      "channel": "private terminal session with cookie/Origin/owner lease"
+    },
+    "broker": {
+      "methods": [
+        "cf.terminal.start",
+        "cf.terminal.ready",
+        "cf.terminal.resize",
+        "cf.terminal.credit",
+        "cf.terminal.exit",
+        "cf.terminal.error",
+        "cf.terminal.ping",
+        "cf.terminal.pong"
+      ],
+      "channel": "private terminal session"
+    }
+  },
+  "methods": [
+    {
+      "name": "hello",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "exact_sender_role",
+        "standard_schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "report",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "exact_sender_role",
+        "standard_schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "ping.result",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "exact_sender_role",
+        "standard_schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "ping.tasks",
+      "senderRoles": [
+        "hub"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "exact_sender_role",
+        "standard_schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "cf.capabilities",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "current_node_token_version",
+        "exact_sender_role",
+        "schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "cf.report.batch",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "current_node_token_version",
+        "exact_sender_role",
+        "negotiated_exact_method_version",
+        "schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "cf.reporting.configure",
+      "senderRoles": [
+        "hub"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "current_node_token_version",
+        "exact_sender_role",
+        "negotiated_exact_method_version",
+        "schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "cf.ping.tasks",
+      "senderRoles": [
+        "hub"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "current_node_token_version",
+        "exact_sender_role",
+        "negotiated_exact_method_version",
+        "schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "cf.ssh.events",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "guards": [
+        "authenticated_node_session",
+        "current_node_token_version",
+        "exact_sender_role",
+        "negotiated_exact_method_version",
+        "schema_and_byte_bounds"
+      ]
+    },
+    {
+      "name": "cf.terminal.hello",
+      "senderRoles": [
+        "agent-control"
+      ],
+      "receiverRoles": [
+        "broker-control"
+      ],
+      "guards": [
+        "private_terminal_v1_bootstrap",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.bound",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "guards": [
+        "private_terminal_v1_bootstrap",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.open",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.close",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.disable",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.disabled",
+      "senderRoles": [
+        "agent-control"
+      ],
+      "receiverRoles": [
+        "broker-control"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.start",
+      "senderRoles": [
+        "broker"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.ready",
+      "senderRoles": [
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.resize",
+      "senderRoles": [
+        "browser",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "agent"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.credit",
+      "senderRoles": [
+        "browser",
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser",
+        "agent"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.exit",
+      "senderRoles": [
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.error",
+      "senderRoles": [
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.ping",
+      "senderRoles": [
+        "agent-control",
+        "broker-control",
+        "browser",
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker-control",
+        "agent-control",
+        "broker",
+        "browser",
+        "agent"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    },
+    {
+      "name": "cf.terminal.pong",
+      "senderRoles": [
+        "agent-control",
+        "broker-control",
+        "browser",
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker-control",
+        "agent-control",
+        "broker",
+        "browser",
+        "agent"
+      ],
+      "guards": [
+        "negotiated_private_terminal_hello_bound",
+        "private_role_and_route",
+        "node_token_version",
+        "credential_version",
+        "current_connection_generation",
+        "local_consent",
+        "site_and_node_terminal_enabled",
+        "admin_cookie_origin_owner_lease",
+        "single_use_agent_ticket",
+        "session_state_bounds"
+      ],
+      "guardScope": "check each guard at its applicable transition: admin open/renew, Agent admission, bound control, or data session; disabled accepts only captured pending disable identity after revoke"
+    }
+  ],
+  "administrativeREST": {
+    "source": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/handlers/terminal.js",
+      "lines": [
+        70,
+        188
+      ]
+    },
+    "actions": [
+      "terminal_read_install",
+      "terminal_enable_install",
+      "terminal_prepare_install",
+      "terminal_revoke_node",
+      "terminal_status",
+      "terminal_open",
+      "terminal_renew",
+      "terminal_close"
+    ],
+    "guards": [
+      "HTTPS same Origin",
+      "admin Cookie required; Authorization Bearer forbidden",
+      "fresh authenticated owner jti/expiry and terminal authority key",
+      "node exists and matching enabled credential_version",
+      "site/local consent and broker capability",
+      "lease capped60s and JWT expiry"
+    ],
+    "mapping": {
+      "terminal_open": "broker-control cf.terminal.open after REST admission; no direct agent open call",
+      "terminal_revoke_node": "broker-control cf.terminal.disable plus durable server revocation",
+      "terminal_close": "broker closeSession -> broker-control cf.terminal.close",
+      "terminal_renew": "same owner/authorization/expiry; no Agent-supplied lease"
+    }
+  },
+  "security": {
+    "capability": "intersection of exact offered/implemented versions; cf.capabilities itself requires auth but no prior negotiation",
+    "route": "monitoring Agent cannot impersonate browser/broker/admin, including terminal methods that share agent name; role is trusted socket context",
+    "revocation": "monitoring uses token_version; PTY adds credential_version, local consent, control generation, administrator owner lease/ticket; capability never substitutes",
+    "credentials": "Bearer only in headers; no query/userinfo/report/config/public WS/logs. Terminal open ticket only private control plus session header, stored hashed/single-use.",
+    "validation": "No arbitrary command, shell, code or executable URL field. Exact CF properties and sizes. Monitoring unknown request gets safe method error; monitoring unknown notification ignored. Invalid private terminal control closes its affected connection/session without RPC response to notification. Source/schema reference does not grant authority."
+  }
+}

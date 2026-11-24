@@ -1,0 +1,2471 @@
+{
+  "contract": "proposed-versioned-CF-contract",
+  "schemaVersion": 1,
+  "status": "frozen Task1 input; no product method implemented by S1",
+  "sources": {
+    "design": {
+      "repository": "CF-Server-Monitor",
+      "path": "docs/superpowers/specs/2026-11-23-monitor-protocol-migration-design.md",
+      "section": "5-7 (approved target)"
+    },
+    "collector": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/types.go",
+      "lines": [
+        133,
+        214
+      ]
+    },
+    "batch": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/agent.go",
+      "lines": [
+        678,
+        704
+      ]
+    },
+    "config": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/agent.go",
+      "lines": [
+        1198,
+        1400
+      ]
+    },
+    "configBounds": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/extra_ping.go",
+      "lines": [
+        16,
+        17
+      ]
+    },
+    "tasks": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/latency_tasks.go",
+      "lines": [
+        12,
+        79
+      ]
+    },
+    "taskGeneration": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/database/latencyTasks.js",
+      "lines": [
+        112,
+        189
+      ]
+    },
+    "clock": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/clock.go",
+      "lines": [
+        11,
+        140
+      ]
+    },
+    "ssh": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/services/loginEvents.js",
+      "lines": [
+        9,
+        32
+      ]
+    },
+    "sshAck": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/services/loginEvents.js",
+      "lines": [
+        114,
+        139
+      ]
+    },
+    "sshQueue": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/ssh_events.go",
+      "lines": [
+        23,
+        279
+      ]
+    },
+    "terminal": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/shared/terminalProtocol.js",
+      "lines": [
+        1,
+        105
+      ]
+    },
+    "terminalGo": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/terminal_protocol.go",
+      "lines": [
+        13,
+        163
+      ]
+    },
+    "broker": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/durable/TerminalBroker.js",
+      "lines": [
+        231,
+        613
+      ]
+    },
+    "localDisable": {
+      "repository": "cfsm-agent",
+      "revision": "374c8c28a67094c9afaa217fd2e5d235e5f20e01",
+      "path": "internal/cfprobe/terminal_control.go",
+      "lines": [
+        247,
+        286
+      ]
+    },
+    "credentials": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/database/nodeCredentials.js",
+      "lines": [
+        98,
+        116
+      ]
+    },
+    "nodeAuth": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/middleware/nodeAuth.js",
+      "lines": [
+        1,
+        26
+      ]
+    },
+    "admin": {
+      "repository": "CF-Server-Monitor",
+      "revision": "c8afbdece469c4f09e35d8692b1d3b275d7eca49",
+      "path": "src/handlers/terminal.js",
+      "lines": [
+        70,
+        188
+      ]
+    }
+  },
+  "negotiation": {
+    "timeoutMs": 3000,
+    "capabilityIsPermission": false,
+    "versions": [
+      1
+    ],
+    "unknownVersion": "JSON-RPC error; remain standard-only for that capability",
+    "peerWithoutExtensions": "standard hello/report/ping.result/ping.tasks only; no fallback/SSH/PTY/config requirement; local configuration retained",
+    "capabilityNames": [
+      "cf.report.batch",
+      "cf.reporting.configure",
+      "cf.ping.tasks",
+      "cf.ssh.events",
+      "cf.terminal.hello",
+      "cf.terminal.bound",
+      "cf.terminal.open",
+      "cf.terminal.close",
+      "cf.terminal.disable",
+      "cf.terminal.disabled",
+      "cf.terminal.start",
+      "cf.terminal.ready",
+      "cf.terminal.resize",
+      "cf.terminal.credit",
+      "cf.terminal.exit",
+      "cf.terminal.error",
+      "cf.terminal.ping",
+      "cf.terminal.pong"
+    ],
+    "maxStandardBytes": 65536
+  },
+  "definitions": {
+    "clock": {
+      "type": "object",
+      "properties": {
+        "local_ts": {
+          "type": "integer",
+          "minimum": 1,
+          "unit": "Unix ms",
+          "maximum": 8640000000000000
+        },
+        "accurate_ts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "unit": "Unix ms",
+          "maximum": 8640000000000000
+        },
+        "offset_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "unit": "milliseconds"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "date",
+            null
+          ]
+        },
+        "round_trip_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "unit": "milliseconds"
+        },
+        "sample_age_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "unit": "milliseconds"
+        }
+      },
+      "required": [
+        "local_ts",
+        "accurate_ts",
+        "offset_ms",
+        "source",
+        "round_trip_ms",
+        "sample_age_ms"
+      ],
+      "additionalProperties": false
+    },
+    "report": {
+      "type": "object",
+      "properties": {
+        "boot_id": {
+          "type": "string",
+          "minLength": 1,
+          "meaning": "opaque kernel boot + counted interface-set epoch; equality, not a timestamp"
+        },
+        "iface": {
+          "type": "string",
+          "meaning": "filter actually in force, empty = default; exact --iface grammar belongs to upstream collector"
+        },
+        "uptime": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "seconds"
+        },
+        "cpu": {
+          "type": "number",
+          "minimum": 0,
+          "unit": "percent"
+        },
+        "load": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "load"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "mem_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "mem_used": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "swap_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "swap_used": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "disk_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "disk_used": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "net_rx_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes",
+          "maximum": 9223372036854775807,
+          "maximumDecimal": "9223372036854775807",
+          "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+        },
+        "net_tx_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes",
+          "maximum": 9223372036854775807,
+          "maximumDecimal": "9223372036854775807",
+          "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+        },
+        "net_rx": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes/second"
+        },
+        "net_tx": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes/second"
+        },
+        "tcp": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "connections"
+        },
+        "udp": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "sockets"
+        },
+        "procs": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "processes"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "diskIO": {
+      "type": "object",
+      "properties": {
+        "read_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes/second"
+        },
+        "write_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes/second"
+        },
+        "read_iops": {
+          "type": "number",
+          "minimum": 0,
+          "unit": "operations/second"
+        },
+        "write_iops": {
+          "type": "number",
+          "minimum": 0,
+          "unit": "operations/second"
+        },
+        "await_ms": {
+          "type": "number",
+          "minimum": 0,
+          "unit": "milliseconds"
+        },
+        "util": {
+          "type": "number",
+          "minimum": 0,
+          "unit": "percent",
+          "maximum": 100
+        }
+      },
+      "required": [
+        "read_bps",
+        "write_bps",
+        "read_iops",
+        "write_iops",
+        "await_ms",
+        "util"
+      ],
+      "additionalProperties": false
+    },
+    "gpu": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "info": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "unit": "percent"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mem_used": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "unit": "MiB"
+        },
+        "mem_total": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "unit": "MiB"
+        },
+        "sm_clock": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "unit": "MHz"
+        },
+        "power": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "unit": "W"
+        }
+      },
+      "required": [
+        "name",
+        "info",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "batch": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "unit": "count",
+          "maximum": 9007199254740991
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sampledAt": {
+                "type": "integer",
+                "minimum": 1,
+                "unit": "Unix ms",
+                "maximum": 8640000000000000
+              },
+              "elapsedMs": {
+                "type": "integer",
+                "minimum": 1,
+                "unit": "monotonic milliseconds"
+              },
+              "report": {
+                "$ref": "#/definitions/report"
+              },
+              "extra": {
+                "type": "object",
+                "properties": {
+                  "diskIO": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/definitions/diskIO"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "gpu": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "$ref": "#/definitions/gpu"
+                    }
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "sampledAt",
+              "elapsedMs",
+              "report",
+              "extra"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 300
+        },
+        "probes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "taskId": {
+                "type": "integer",
+                "minimum": 1,
+                "unit": "count",
+                "maximum": 9007199254740991
+              },
+              "metricId": {
+                "type": "string",
+                "pattern": "^p_[a-zA-Z0-9_-]{1,64}$"
+              },
+              "sampledAt": {
+                "type": "integer",
+                "minimum": 1,
+                "unit": "Unix ms",
+                "maximum": 8640000000000000
+              },
+              "latencyMs": {
+                "type": "integer",
+                "minimum": -1,
+                "unit": "milliseconds"
+              }
+            },
+            "required": [
+              "taskId",
+              "metricId",
+              "sampledAt",
+              "latencyMs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "clock": {
+          "$ref": "#/definitions/clock"
+        }
+      },
+      "required": [
+        "version",
+        "stream",
+        "sequence",
+        "samples",
+        "probes",
+        "clock"
+      ],
+      "additionalProperties": false
+    },
+    "batchAck": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "accepted": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "integer",
+              "minimum": 1,
+              "unit": "count",
+              "maximum": 9007199254740991
+            },
+            "to": {
+              "type": "integer",
+              "minimum": 1,
+              "unit": "count",
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "additionalProperties": false
+        },
+        "durableThrough": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "count",
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "version",
+        "stream",
+        "accepted",
+        "durableThrough"
+      ],
+      "additionalProperties": false
+    },
+    "sshEvent": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "unit": "count",
+          "maximum": 9007199254740991
+        },
+        "occurredAt": {
+          "type": "integer",
+          "minimum": 1,
+          "unit": "Unix ms",
+          "maximum": 8640000000000000
+        },
+        "user": {
+          "type": "string",
+          "pattern": "^[^\\x00-\\x20\\x7f]{1,64}$"
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 97,
+          "meaning": "valid IPv4/IPv6 plus optional IPv6 zone; existing validSshAddress remains authoritative"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "password",
+            "publickey",
+            "keyboard-interactive/pam",
+            "hostbased",
+            "gssapi-with-mic"
+          ]
+        }
+      },
+      "required": [
+        "sequence",
+        "occurredAt",
+        "user",
+        "address",
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "ssh": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,64}$"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/sshEvent"
+          },
+          "maxItems": 32
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "watching",
+            "unsupported",
+            "unavailable",
+            "permission_denied",
+            "state_error",
+            "queue_full",
+            "rotation_gap"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "",
+            "auth.log",
+            "secure",
+            "journal"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "stream",
+        "events",
+        "state",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "cfTask": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "integer",
+          "minimum": 1,
+          "unit": "count",
+          "maximum": 9007199254740991
+        },
+        "metricId": {
+          "type": "string",
+          "pattern": "^p_[a-zA-Z0-9_-]{1,64}$"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "meaning": "existing validatePingNode/validExtraPingTarget; TCP host[:port], default80; ICMP host/address, no URL/shell syntax"
+        },
+        "intervalSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "unit": "seconds",
+          "maximum": 3600
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "tcp",
+            "icmp"
+          ]
+        }
+      },
+      "required": [
+        "taskId",
+        "metricId",
+        "target",
+        "intervalSeconds",
+        "mode"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "methods": [
+    {
+      "name": "cf.capabilities",
+      "version": 1,
+      "kind": "request",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "supports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "cf.report.batch",
+                    "cf.reporting.configure",
+                    "cf.ping.tasks",
+                    "cf.ssh.events",
+                    "cf.terminal.hello",
+                    "cf.terminal.bound",
+                    "cf.terminal.open",
+                    "cf.terminal.close",
+                    "cf.terminal.disable",
+                    "cf.terminal.disabled",
+                    "cf.terminal.start",
+                    "cf.terminal.ready",
+                    "cf.terminal.resize",
+                    "cf.terminal.credit",
+                    "cf.terminal.exit",
+                    "cf.terminal.error",
+                    "cf.terminal.ping",
+                    "cf.terminal.pong"
+                  ]
+                },
+                "version": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                }
+              },
+              "required": [
+                "method",
+                "version"
+              ],
+              "additionalProperties": false
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "version",
+          "supports"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "accepted": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "cf.report.batch",
+                    "cf.reporting.configure",
+                    "cf.ping.tasks",
+                    "cf.ssh.events",
+                    "cf.terminal.hello",
+                    "cf.terminal.bound",
+                    "cf.terminal.open",
+                    "cf.terminal.close",
+                    "cf.terminal.disable",
+                    "cf.terminal.disabled",
+                    "cf.terminal.start",
+                    "cf.terminal.ready",
+                    "cf.terminal.resize",
+                    "cf.terminal.credit",
+                    "cf.terminal.exit",
+                    "cf.terminal.error",
+                    "cf.terminal.ping",
+                    "cf.terminal.pong"
+                  ]
+                },
+                "version": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                }
+              },
+              "required": [
+                "method",
+                "version"
+              ],
+              "additionalProperties": false
+            },
+            "uniqueItems": true
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "reportBatchBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "bytes",
+                "enum": [
+                  524288
+                ]
+              },
+              "reportSamples": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "samples",
+                "enum": [
+                  300
+                ]
+              },
+              "sshEvents": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "events",
+                "enum": [
+                  32
+                ]
+              },
+              "configBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "bytes",
+                "enum": [
+                  65536
+                ]
+              },
+              "terminalControlBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "bytes",
+                "enum": [
+                  4096
+                ]
+              },
+              "terminalDataBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "bytes",
+                "enum": [
+                  16384
+                ]
+              },
+              "terminalCreditBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "bytes",
+                "enum": [
+                  262144
+                ]
+              }
+            },
+            "required": [
+              "reportBatchBytes",
+              "reportSamples",
+              "sshEvents",
+              "configBytes",
+              "terminalControlBytes",
+              "terminalDataBytes",
+              "terminalCreditBytes"
+            ],
+            "additionalProperties": false
+          },
+          "fallbackPath": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "/api/agent/cf-report",
+              null
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "accepted",
+          "limits",
+          "fallbackPath"
+        ],
+        "additionalProperties": false
+      },
+      "sources": [
+        "design",
+        "nodeAuth"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.capabilities\",\"params\":{\"version\":1,\"supports\":[{\"method\":\"cf.report.batch\",\"version\":1}]},\"id\":\"s1-cf.capabilities\"}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.capabilities\",\"params\":{\"version\":2,\"supports\":[{\"method\":\"cf.report.batch\",\"version\":1}]},\"id\":\"s1-cf.capabilities\"}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.capabilities\",\"params\":{\"version\":1,\"supports\":[{\"method\":\"cf.report.batch\",\"version\":1}],\"command\":\"forbidden\"},\"id\":\"s1-cf.capabilities\"}"
+        }
+      ],
+      "resultExamples": [
+        "{\"jsonrpc\":\"2.0\",\"id\":\"s1-cf.capabilities\",\"result\":{\"version\":1,\"accepted\":[{\"method\":\"cf.report.batch\",\"version\":1}],\"limits\":{\"reportBatchBytes\":524288,\"reportSamples\":300,\"sshEvents\":32,\"configBytes\":65536,\"terminalControlBytes\":4096,\"terminalDataBytes\":16384,\"terminalCreditBytes\":262144},\"fallbackPath\":\"/api/agent/cf-report\"}}"
+      ]
+    },
+    {
+      "name": "cf.report.batch",
+      "version": 1,
+      "kind": "request",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "maxBytes": 524288,
+      "paramsSchema": {
+        "$ref": "#/definitions/batch"
+      },
+      "resultSchema": {
+        "$ref": "#/definitions/batchAck"
+      },
+      "sources": [
+        "design",
+        "batch",
+        "collector",
+        "clock"
+      ],
+      "semantics": "Only frozen batch contributes CF resource history, traffic commit and probe denominators. Standard realtime report is latest/projection only for negotiated batch nodes. Sequence is one whole atomic batch, not a sample number. Reject gap/conflicting replay; ACK after durable acceptance, never just memory/WS send.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.report.batch\",\"params\":{\"version\":1,\"stream\":\"resources-a\",\"sequence\":1,\"samples\":[{\"sampledAt\":1795449600000,\"elapsedMs\":2000,\"report\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":12.5,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":9007199254740993,\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30},\"extra\":{\"diskIO\":{\"read_bps\":100,\"write_bps\":200,\"read_iops\":1.5,\"write_iops\":2,\"await_ms\":0.5,\"util\":2},\"gpu\":null}}],\"probes\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"sampledAt\":1795449600000,\"latencyMs\":-1}],\"clock\":{\"local_ts\":1795449600000,\"accurate_ts\":null,\"offset_ms\":null,\"source\":null,\"round_trip_ms\":null,\"sample_age_ms\":null}},\"id\":\"s1-cf.report.batch\"}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.report.batch\",\"params\":{\"version\":2,\"stream\":\"resources-a\",\"sequence\":1,\"samples\":[{\"sampledAt\":1795449600000,\"elapsedMs\":2000,\"report\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":12.5,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":9007199254740992,\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30},\"extra\":{\"diskIO\":{\"read_bps\":100,\"write_bps\":200,\"read_iops\":1.5,\"write_iops\":2,\"await_ms\":0.5,\"util\":2},\"gpu\":null}}],\"probes\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"sampledAt\":1795449600000,\"latencyMs\":-1}],\"clock\":{\"local_ts\":1795449600000,\"accurate_ts\":null,\"offset_ms\":null,\"source\":null,\"round_trip_ms\":null,\"sample_age_ms\":null}},\"id\":\"s1-cf.report.batch\"}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.report.batch\",\"params\":{\"version\":1,\"stream\":\"resources-a\",\"sequence\":1,\"samples\":[{\"sampledAt\":1795449600000,\"elapsedMs\":2000,\"report\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":12.5,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":9007199254740992,\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30},\"extra\":{\"diskIO\":{\"read_bps\":100,\"write_bps\":200,\"read_iops\":1.5,\"write_iops\":2,\"await_ms\":0.5,\"util\":2},\"gpu\":null}}],\"probes\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"sampledAt\":1795449600000,\"latencyMs\":-1}],\"clock\":{\"local_ts\":1795449600000,\"accurate_ts\":null,\"offset_ms\":null,\"source\":null,\"round_trip_ms\":null,\"sample_age_ms\":null},\"command\":\"forbidden\"},\"id\":\"s1-cf.report.batch\"}"
+        }
+      ],
+      "resultExamples": [
+        "{\"jsonrpc\":\"2.0\",\"id\":\"s1-cf.report.batch\",\"result\":{\"version\":1,\"stream\":\"resources-a\",\"accepted\":{\"from\":1,\"to\":1},\"durableThrough\":1}}"
+      ]
+    },
+    {
+      "name": "cf.reporting.configure",
+      "version": 1,
+      "kind": "request",
+      "senderRoles": [
+        "hub"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "meaning": "existing config MD5 identity, not authentication"
+          },
+          "persistent": {
+            "type": "object",
+            "properties": {
+              "collectIntervalSeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "seconds",
+                "enum": [
+                  0,
+                  1,
+                  2,
+                  5,
+                  10
+                ]
+              },
+              "batchIntervalSeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "seconds",
+                "enum": [
+                  30,
+                  60,
+                  120,
+                  180
+                ]
+              },
+              "activeReportIntervalSeconds": {
+                "type": "integer",
+                "minimum": 1,
+                "unit": "seconds",
+                "maximum": 5
+              },
+              "resetDay": {
+                "type": "integer",
+                "minimum": 0,
+                "unit": "day of month",
+                "maximum": 31
+              },
+              "interface": {
+                "type": "string",
+                "maxLength": 255,
+                "pattern": "^[A-Za-z0-9_.:,\\-*?\\[\\]]*$",
+                "meaning": "retain existing CF comma list/glob; each entry<=64; no shell/control characters"
+              },
+              "connectionMode": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "http"
+                ]
+              },
+              "sshLoginEnabled": {
+                "type": "boolean"
+              },
+              "userAgent": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "^[A-Za-z0-9 _.\\-/,:;()+=@#*?~]+$"
+              }
+            },
+            "required": [
+              "collectIntervalSeconds",
+              "batchIntervalSeconds",
+              "activeReportIntervalSeconds",
+              "resetDay",
+              "interface",
+              "connectionMode",
+              "sshLoginEnabled",
+              "userAgent"
+            ],
+            "additionalProperties": false
+          },
+          "transient": {
+            "type": "object",
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "reportAfterMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "unit": "milliseconds"
+              },
+              "idleBatchIntervalSeconds": {
+                "type": "integer",
+                "minimum": 60,
+                "unit": "seconds"
+              },
+              "expiresAt": {
+                "type": "integer",
+                "minimum": 1,
+                "unit": "Unix ms",
+                "maximum": 8640000000000000
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "trafficCorrection": {
+            "type": "object",
+            "properties": {
+              "rxGB": {
+                "type": "string",
+                "pattern": "^\\d+(?:\\.\\d+)?$",
+                "meaning": "existing bounded GB conversion max1000000"
+              },
+              "txGB": {
+                "type": "string",
+                "pattern": "^\\d+(?:\\.\\d+)?$"
+              }
+            },
+            "required": [
+              "rxGB",
+              "txGB"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "version",
+          "revision",
+          "persistent"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "persisted": {
+            "type": "boolean"
+          },
+          "correctionApplied": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "revision",
+          "persisted",
+          "correctionApplied"
+        ],
+        "additionalProperties": false
+      },
+      "sources": [
+        "design",
+        "config",
+        "configBounds"
+      ],
+      "semantics": "Persist validated full persistent settings before result.persisted=true; temporary hint does not overwrite persistent config. No TerminalEnabled, AutoUpdate or credential field permitted. collect=0 remains explicit legacy-compatible sample-off setting, never used as idle default. CF default collect2/batch60; sampling continues while sending is idle. Traffic correction confirmation only after actual bounded correction. Local automatic update remains local policy, not a remote executable command.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.reporting.configure\",\"params\":{\"version\":1,\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"persistent\":{\"collectIntervalSeconds\":2,\"batchIntervalSeconds\":60,\"activeReportIntervalSeconds\":2,\"resetDay\":1,\"interface\":\"\",\"connectionMode\":\"auto\",\"sshLoginEnabled\":false,\"userAgent\":\"cfsm\"},\"transient\":{\"active\":false,\"reportAfterMs\":60000,\"idleBatchIntervalSeconds\":60,\"expiresAt\":1795450000000}},\"id\":\"s1-cf.reporting.configure\"}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.reporting.configure\",\"params\":{\"version\":2,\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"persistent\":{\"collectIntervalSeconds\":2,\"batchIntervalSeconds\":60,\"activeReportIntervalSeconds\":2,\"resetDay\":1,\"interface\":\"\",\"connectionMode\":\"auto\",\"sshLoginEnabled\":false,\"userAgent\":\"cfsm\"},\"transient\":{\"active\":false,\"reportAfterMs\":60000,\"idleBatchIntervalSeconds\":60,\"expiresAt\":1795450000000}},\"id\":\"s1-cf.reporting.configure\"}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.reporting.configure\",\"params\":{\"version\":1,\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"persistent\":{\"collectIntervalSeconds\":2,\"batchIntervalSeconds\":60,\"activeReportIntervalSeconds\":2,\"resetDay\":1,\"interface\":\"\",\"connectionMode\":\"auto\",\"sshLoginEnabled\":false,\"userAgent\":\"cfsm\"},\"transient\":{\"active\":false,\"reportAfterMs\":60000,\"idleBatchIntervalSeconds\":60,\"expiresAt\":1795450000000},\"command\":\"forbidden\"},\"id\":\"s1-cf.reporting.configure\"}"
+        }
+      ],
+      "resultExamples": [
+        "{\"jsonrpc\":\"2.0\",\"id\":\"s1-cf.reporting.configure\",\"result\":{\"version\":1,\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"persisted\":true,\"correctionApplied\":false}}"
+      ]
+    },
+    {
+      "name": "cf.ping.tasks",
+      "version": 1,
+      "kind": "request",
+      "senderRoles": [
+        "hub"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/cfTask"
+            }
+          }
+        },
+        "required": [
+          "version",
+          "revision",
+          "tasks"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          },
+          "persisted": {
+            "type": "boolean"
+          },
+          "taskCount": {
+            "type": "integer",
+            "minimum": 0,
+            "unit": "count",
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "version",
+          "revision",
+          "persisted",
+          "taskCount"
+        ],
+        "additionalProperties": false
+      },
+      "sources": [
+        "design",
+        "tasks",
+        "taskGeneration"
+      ],
+      "semantics": "Full per-node assigned list, numeric taskId maps persistently to immutable metricId generation. Byte-bounded without a64-task count cap. TCP and ICMP explicit. No same task in standard+CF schedules; negotiated CF task list owns schedule. Too-large config fails visibly, never truncates; accepted revision persisted before response.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.ping.tasks\",\"params\":{\"version\":1,\"revision\":1,\"tasks\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"target\":\"example.com\",\"intervalSeconds\":60,\"mode\":\"icmp\"}]},\"id\":\"s1-cf.ping.tasks\"}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.ping.tasks\",\"params\":{\"version\":2,\"revision\":1,\"tasks\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"target\":\"example.com\",\"intervalSeconds\":60,\"mode\":\"icmp\"}]},\"id\":\"s1-cf.ping.tasks\"}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.ping.tasks\",\"params\":{\"version\":1,\"revision\":1,\"tasks\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"target\":\"example.com\",\"intervalSeconds\":60,\"mode\":\"icmp\"}],\"command\":\"forbidden\"},\"id\":\"s1-cf.ping.tasks\"}"
+        }
+      ],
+      "resultExamples": [
+        "{\"jsonrpc\":\"2.0\",\"id\":\"s1-cf.ping.tasks\",\"result\":{\"version\":1,\"revision\":1,\"persisted\":true,\"taskCount\":1}}"
+      ]
+    },
+    {
+      "name": "cf.ssh.events",
+      "version": 1,
+      "kind": "request",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "$ref": "#/definitions/ssh"
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "stream": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,64}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "unit": "count",
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "version",
+          "stream",
+          "sequence"
+        ],
+        "additionalProperties": false
+      },
+      "sources": [
+        "ssh",
+        "sshAck",
+        "sshQueue"
+      ],
+      "semantics": "Preserve existing independent SSH stream/strictly increasing event sequence (gaps allowed due explicit queue/source gaps). Durable cursor+event policy capture/outbox only; does not assert external notification delivered. Returned high watermark scoped by server/tokenVersion/stream; <=max offered event. Empty status may ACK0. Payload excluded from public metrics/config/WS. Not resource batch ACK.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.ssh.events\",\"params\":{\"version\":1,\"stream\":\"demo\",\"events\":[{\"sequence\":1,\"occurredAt\":1795449600000,\"user\":\"demo\",\"address\":\"192.0.2.1\",\"method\":\"publickey\"}],\"state\":\"watching\",\"source\":\"journal\"},\"id\":\"s1-cf.ssh.events\"}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.ssh.events\",\"params\":{\"version\":2,\"stream\":\"demo\",\"events\":[{\"sequence\":1,\"occurredAt\":1795449600000,\"user\":\"demo\",\"address\":\"192.0.2.1\",\"method\":\"publickey\"}],\"state\":\"watching\",\"source\":\"journal\"},\"id\":\"s1-cf.ssh.events\"}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.ssh.events\",\"params\":{\"version\":1,\"stream\":\"demo\",\"events\":[{\"sequence\":1,\"occurredAt\":1795449600000,\"user\":\"demo\",\"address\":\"192.0.2.1\",\"method\":\"publickey\"}],\"state\":\"watching\",\"source\":\"journal\",\"command\":\"forbidden\"},\"id\":\"s1-cf.ssh.events\"}"
+        }
+      ],
+      "resultExamples": [
+        "{\"jsonrpc\":\"2.0\",\"id\":\"s1-cf.ssh.events\",\"result\":{\"version\":1,\"stream\":\"demo\",\"sequence\":1}}"
+      ]
+    },
+    {
+      "name": "cf.terminal.hello",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "agent-control"
+      ],
+      "receiverRoles": [
+        "broker-control"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "protocol": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "linux"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "terminal.pty.v1",
+                "terminal.disable.v1"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "prefixItems": [
+              {
+                "type": "string",
+                "enum": [
+                  "terminal.pty.v1"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "terminal.disable.v1"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "protocol",
+          "platform",
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "hello",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.hello\",\"params\":{\"version\":1,\"protocol\":1,\"platform\":\"linux\",\"capabilities\":[\"terminal.pty.v1\",\"terminal.disable.v1\"]}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.hello\",\"params\":{\"version\":2,\"protocol\":1,\"platform\":\"linux\",\"capabilities\":[\"terminal.pty.v1\",\"terminal.disable.v1\"]}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.hello\",\"params\":{\"version\":1,\"protocol\":1,\"platform\":\"linux\",\"capabilities\":[\"terminal.pty.v1\",\"terminal.disable.v1\"],\"command\":\"forbidden\"}}"
+        },
+        {
+          "valid": false,
+          "note": "capability order",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.hello\",\"params\":{\"version\":1,\"protocol\":1,\"platform\":\"linux\",\"capabilities\":[\"terminal.disable.v1\",\"terminal.pty.v1\"]}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.bound",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "serverId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "connectionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          },
+          "credentialVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "version",
+          "serverId",
+          "connectionId",
+          "generation",
+          "credentialVersion"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "bound",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.bound\",\"params\":{\"version\":1,\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.bound\",\"params\":{\"version\":2,\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.bound\",\"params\":{\"version\":1,\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.open",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "protocol": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "ticket": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "cols": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "columns",
+            "maximum": 500
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "rows",
+            "maximum": 500
+          }
+        },
+        "required": [
+          "version",
+          "protocol",
+          "sessionId",
+          "ticket",
+          "cols",
+          "rows"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "open",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.open\",\"params\":{\"version\":1,\"protocol\":1,\"sessionId\":\"session-a\",\"ticket\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"cols\":80,\"rows\":24}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.open\",\"params\":{\"version\":2,\"protocol\":1,\"sessionId\":\"session-a\",\"ticket\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"cols\":80,\"rows\":24}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.open\",\"params\":{\"version\":1,\"protocol\":1,\"sessionId\":\"session-a\",\"ticket\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"cols\":80,\"rows\":24,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.close",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "reason": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        },
+        "required": [
+          "version",
+          "sessionId",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "close",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.close\",\"params\":{\"version\":1,\"sessionId\":\"session-a\",\"reason\":\"user_closed\"}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.close\",\"params\":{\"version\":2,\"sessionId\":\"session-a\",\"reason\":\"user_closed\"}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.close\",\"params\":{\"version\":1,\"sessionId\":\"session-a\",\"reason\":\"user_closed\",\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.disable",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "broker-control"
+      ],
+      "receiverRoles": [
+        "agent-control"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "serverId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "connectionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          },
+          "credentialVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "version",
+          "operationId",
+          "serverId",
+          "connectionId",
+          "generation",
+          "credentialVersion"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "disable",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.disable\",\"params\":{\"version\":1,\"operationId\":\"disable-a\",\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.disable\",\"params\":{\"version\":2,\"operationId\":\"disable-a\",\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.disable\",\"params\":{\"version\":1,\"operationId\":\"disable-a\",\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.disabled",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "agent-control"
+      ],
+      "receiverRoles": [
+        "broker-control"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "serverId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "connectionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          },
+          "credentialVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "count",
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "version",
+          "operationId",
+          "serverId",
+          "connectionId",
+          "generation",
+          "credentialVersion"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "disabled",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker",
+        "localDisable"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.disabled\",\"params\":{\"version\":1,\"operationId\":\"disable-a\",\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.disabled\",\"params\":{\"version\":2,\"operationId\":\"disable-a\",\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.disabled\",\"params\":{\"version\":1,\"operationId\":\"disable-a\",\"serverId\":\"node-a\",\"connectionId\":\"connection-a\",\"generation\":1,\"credentialVersion\":1,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.start",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "broker"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "cols": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "columns",
+            "maximum": 500
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "rows",
+            "maximum": 500
+          }
+        },
+        "required": [
+          "version",
+          "cols",
+          "rows"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "start",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.start\",\"params\":{\"version\":1,\"cols\":80,\"rows\":24}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.start\",\"params\":{\"version\":2,\"cols\":80,\"rows\":24}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.start\",\"params\":{\"version\":1,\"cols\":80,\"rows\":24,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.ready",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "ready",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.ready\",\"params\":{\"version\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.ready\",\"params\":{\"version\":2}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.ready\",\"params\":{\"version\":1,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.resize",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "browser",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "agent"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "cols": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "columns",
+            "maximum": 500
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "rows",
+            "maximum": 500
+          }
+        },
+        "required": [
+          "version",
+          "cols",
+          "rows"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "resize",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.resize\",\"params\":{\"version\":1,\"cols\":120,\"rows\":30}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.resize\",\"params\":{\"version\":2,\"cols\":120,\"rows\":30}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.resize\",\"params\":{\"version\":1,\"cols\":120,\"rows\":30,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.credit",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "browser",
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser",
+        "agent"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "unit": "count",
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "version",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "ack",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.credit\",\"params\":{\"version\":1,\"bytes\":16384}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.credit\",\"params\":{\"version\":2,\"bytes\":16384}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.credit\",\"params\":{\"version\":1,\"bytes\":16384,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.exit",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "code": {
+            "type": "integer",
+            "minimum": -1,
+            "unit": "exit code",
+            "maximum": 255
+          }
+        },
+        "required": [
+          "version",
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "exit",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.exit\",\"params\":{\"version\":1,\"code\":0}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.exit\",\"params\":{\"version\":2,\"code\":0}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.exit\",\"params\":{\"version\":1,\"code\":0,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.error",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker",
+        "browser"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        },
+        "required": [
+          "version",
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "error",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.error\",\"params\":{\"version\":1,\"code\":\"terminal_unavailable\"}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.error\",\"params\":{\"version\":2,\"code\":\"terminal_unavailable\"}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.error\",\"params\":{\"version\":1,\"code\":\"terminal_unavailable\",\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.ping",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "agent-control",
+        "broker-control",
+        "browser",
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker-control",
+        "agent-control",
+        "broker",
+        "browser",
+        "agent"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "ping",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.ping\",\"params\":{\"version\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.ping\",\"params\":{\"version\":2}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.ping\",\"params\":{\"version\":1,\"command\":\"forbidden\"}}"
+        }
+      ]
+    },
+    {
+      "name": "cf.terminal.pong",
+      "version": 1,
+      "kind": "notification",
+      "senderRoles": [
+        "agent-control",
+        "broker-control",
+        "browser",
+        "agent",
+        "broker"
+      ],
+      "receiverRoles": [
+        "broker-control",
+        "agent-control",
+        "broker",
+        "browser",
+        "agent"
+      ],
+      "maxBytes": 4096,
+      "paramsSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "legacyTerminalType": "pong",
+      "sources": [
+        "terminal",
+        "terminalGo",
+        "broker"
+      ],
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.pong\",\"params\":{\"version\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "unsupported version",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.pong\",\"params\":{\"version\":2}}"
+        },
+        {
+          "valid": false,
+          "note": "unknown command property",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"cf.terminal.pong\",\"params\":{\"version\":1,\"command\":\"forbidden\"}}"
+        }
+      ]
+    }
+  ],
+  "durableBatch": {
+    "initialSequence": 1,
+    "scope": [
+      "serverId",
+      "tokenVersion",
+      "stream"
+    ],
+    "immutable": "Freeze all params including clock/timestamps before first attempt; retry byte-identical params. Only RPC id may change to match new transport request. Same scope/sequence with different params is conflict, never last-write-wins.",
+    "ordering": "Only next contiguous sequence or byte-identical durable replay accepted; gaps error with expectedSequence. Stream switch is explicit new-generation admission, not inferred from reconnect. Keep old receipts for admitted pending replay; token rotate invalidates old authority.",
+    "ackRange": "accepted.from=accepted.to=request sequence; durableThrough is contiguous durable high watermark1..N (0 before any batch). Discard only frozen batches in this authenticated scope <=durableThrough and never beyond locally offered sequence. Success proves receipt plus recoverable facts/statistics effect survived eviction. S2 selects storage/atomic recovery; it must not change this meaning.",
+    "latest": "Realtime report does not create duplicate history/probe/traffic entries; committed traffic baseline plus live projection shares one ledger.",
+    "fallback": {
+      "method": "POST",
+      "path": "/api/agent/cf-report",
+      "authentication": "same Bearer token and node ownership as WSS",
+      "eligibility": "explicit CF origin and negotiated/configured fallback; same HTTPS origin, no cross-origin redirects, credentials/query or weaker legacy fallback",
+      "payload": "same JSON-RPC cf.report.batch request; no legacy type/metrics body"
+    },
+    "streamAdmission": "A first sequence1 batch for a new stream by the current authenticated node write lease explicitly admits it durably. Agent persists stream and frozen pending queue across restart; cannot switch while old batches lack durable ACK. Retain admitted old receipts; exact durable old replay may ACK its own scope but cannot retake new session ownership."
+  },
+  "terminal": {
+    "privateControlPaths": [
+      "/api/agent/terminal/control",
+      "/api/agent/terminal/session/{sessionId}",
+      "/admin/api/terminal/{serverId}/{sessionId}/ws"
+    ],
+    "owner": "TerminalBroker",
+    "binary": "private binary frames unchanged; max16384 bytes",
+    "limits": {
+      "maxSessions": 4,
+      "controlBytes": 4096,
+      "creditBytes": 262144,
+      "dimension": 500,
+      "startTimeoutMs": 30000,
+      "ackTimeoutMs": 30000,
+      "userIdleMs": 1800000,
+      "authLeaseMs": 60000,
+      "disableTimeoutMs": 5000
+    },
+    "routes": [
+      [
+        "agent-control",
+        "broker-control"
+      ],
+      [
+        "browser",
+        "broker"
+      ],
+      [
+        "agent",
+        "broker"
+      ]
+    ],
+    "credit": "cf.terminal.credit maps legacy ack: cumulative bytes consumed, monotonic <=forwarded; forwarded-acked<=262144 per direction. Session/role comes from private socket attachment, not user-provided session routing. Not durable telemetry ACK.",
+    "disable": "disabled retains operation/connection/generation/credentialVersion; send only after local config saved false and all PTYs/admission factories cleaned up. Broker checks exact pending disable binding even after server revoke; timeout remains localConfirmed=false.",
+    "privacy": "No PTY bytes/ticket/token/SSH metadata in public snapshot, history, theme config, backup or logs.",
+    "negotiation": "Private cf.terminal.hello(version1,protocol1,local capabilities) -> cf.terminal.bound(version1,current binding) bootstraps its own fixed v1 method set. No prior monitoring WSS/cf.capabilities required: HTTP reporting/schedule-inactive nodes retain independent terminal control. PTY group gates open/close/start/ready/resize/credit/exit/error/ping/pong; optional terminal.disable.v1 gates disable/disabled. Metadata capabilities do not grant permission."
+  },
+  "errors": {
+    "invalidRequest": -32600,
+    "methodNotFound": -32601,
+    "invalidParams": -32602,
+    "unauthorized": -32001,
+    "unsupportedVersion": -32002,
+    "sequenceGap": -32003,
+    "replayConflict": -32004,
+    "persistenceUnavailable": -32005,
+    "message": "safe code only; request id paired; no response to notification; no credentials/raw payload echo",
+    "privateTerminalInvalid": "Unknown/wrong-role/malformed private terminal control closes its affected control/session as existing validator/broker does, with no JSON-RPC error response to a notification. Monitoring unknown notifications alone are ignored."
+  },
+  "replayExamples": {
+    "ws": {
+      "paramsRaw": "{\"version\":1,\"stream\":\"resources-a\",\"sequence\":1,\"samples\":[{\"sampledAt\":1795449600000,\"elapsedMs\":2000,\"report\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":12.5,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":9007199254740993,\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30},\"extra\":{\"diskIO\":{\"read_bps\":100,\"write_bps\":200,\"read_iops\":1.5,\"write_iops\":2,\"await_ms\":0.5,\"util\":2},\"gpu\":null}}],\"probes\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"sampledAt\":1795449600000,\"latencyMs\":-1}],\"clock\":{\"local_ts\":1795449600000,\"accurate_ts\":null,\"offset_ms\":null,\"source\":null,\"round_trip_ms\":null,\"sample_age_ms\":null}}"
+    },
+    "http": {
+      "paramsRaw": "{\"version\":1,\"stream\":\"resources-a\",\"sequence\":1,\"samples\":[{\"sampledAt\":1795449600000,\"elapsedMs\":2000,\"report\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":12.5,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":9007199254740993,\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30},\"extra\":{\"diskIO\":{\"read_bps\":100,\"write_bps\":200,\"read_iops\":1.5,\"write_iops\":2,\"await_ms\":0.5,\"util\":2},\"gpu\":null}}],\"probes\":[{\"taskId\":1,\"metricId\":\"p_demo\",\"sampledAt\":1795449600000,\"latencyMs\":-1}],\"clock\":{\"local_ts\":1795449600000,\"accurate_ts\":null,\"offset_ms\":null,\"source\":null,\"round_trip_ms\":null,\"sample_age_ms\":null}}"
+    },
+    "ack": {
+      "version": 1,
+      "stream": "resources-a",
+      "accepted": {
+        "from": 1,
+        "to": 1
+      },
+      "durableThrough": 1
+    }
+  }
+}

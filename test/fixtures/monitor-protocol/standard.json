@@ -1,0 +1,842 @@
+{
+  "contract": "actual-upstream-monitor-agent",
+  "schemaVersion": 1,
+  "pinned": {
+    "hub": {
+      "version": "1.5.2",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095"
+    },
+    "agent": {
+      "version": "1.2.3",
+      "revision": "81c63b9730143080cea9ef465a1f46a4a1aeedb8"
+    }
+  },
+  "sources": {
+    "facts": {
+      "repository": "https://github.com/monitor-probe/agent",
+      "revision": "81c63b9730143080cea9ef465a1f46a4a1aeedb8",
+      "path": "src/collect.rs",
+      "lines": [
+        101,
+        149
+      ]
+    },
+    "hello": {
+      "repository": "https://github.com/monitor-probe/agent",
+      "revision": "81c63b9730143080cea9ef465a1f46a4a1aeedb8",
+      "path": "src/main.rs",
+      "lines": [
+        337,
+        375
+      ]
+    },
+    "envelope": {
+      "repository": "https://github.com/monitor-probe/agent",
+      "revision": "81c63b9730143080cea9ef465a1f46a4a1aeedb8",
+      "path": "src/main.rs",
+      "lines": [
+        127,
+        145
+      ]
+    },
+    "dispatch": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/agent_ws.rs",
+      "lines": [
+        324,
+        353
+      ]
+    },
+    "receive": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/agent_ws.rs",
+      "lines": [
+        568,
+        620
+      ]
+    },
+    "report": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/agent_ws.rs",
+      "lines": [
+        740,
+        958
+      ]
+    },
+    "tasks": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/agent_ws.rs",
+      "lines": [
+        961,
+        999
+      ]
+    },
+    "taskBounds": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/db.rs",
+      "lines": [
+        2091,
+        2096
+      ]
+    },
+    "agentTasks": {
+      "repository": "https://github.com/monitor-probe/agent",
+      "revision": "81c63b9730143080cea9ef465a1f46a4a1aeedb8",
+      "path": "src/main.rs",
+      "lines": [
+        551,
+        610
+      ]
+    },
+    "frame": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/api.rs",
+      "lines": [
+        540,
+        546
+      ]
+    },
+    "traffic": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/db.rs",
+      "lines": [
+        1548,
+        1691
+      ]
+    },
+    "pings": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/db.rs",
+      "lines": [
+        2312,
+        2325
+      ]
+    },
+    "routes": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/main.rs",
+      "lines": [
+        714,
+        716
+      ]
+    },
+    "factsStore": {
+      "repository": "https://github.com/monitor-probe/monitor",
+      "revision": "04a6fa1ef77e4d2208b4543018c2073d9bcc8095",
+      "path": "src/db.rs",
+      "lines": [
+        1377,
+        1414
+      ]
+    },
+    "agentCLI": {
+      "repository": "https://github.com/monitor-probe/agent",
+      "revision": "81c63b9730143080cea9ef465a1f46a4a1aeedb8",
+      "path": "src/main.rs",
+      "lines": [
+        34,
+        127
+      ]
+    },
+    "agentTCP": {
+      "repository": "https://github.com/monitor-probe/agent",
+      "revision": "81c63b9730143080cea9ef465a1f46a4a1aeedb8",
+      "path": "src/main.rs",
+      "lines": [
+        622,
+        686
+      ]
+    }
+  },
+  "transport": {
+    "path": "/api/agent/ws",
+    "scheme": "wss",
+    "authentication": "Authorization: Bearer <node token>",
+    "bearerLocation": "header only",
+    "maxBytes": 65536,
+    "heartbeatSeconds": 30,
+    "silenceSeconds": 120,
+    "handshake": "agent sends hello immediately; hub may send ping.tasks first; neither waits for legacy type:hello",
+    "echoPath": "/api/agent/echo",
+    "echoMeaning": "optional authenticated other-address-family observation; no second monitoring session or ledger",
+    "upstreamSchemes": [
+      "wss",
+      "ws"
+    ],
+    "cfRequiresTLS": true,
+    "upstreamCLI": {
+      "intervalDefaultSeconds": 1,
+      "intervalClampSeconds": [
+        1,
+        3600
+      ],
+      "insecure": "upstream --insecure permits remote plain ws; CF target keeps HTTPS/WSS security, never implicitly downgrades",
+      "iface": "full names and -name exclusions; not CF glob syntax"
+    }
+  },
+  "envelope": {
+    "jsonrpc": "2.0",
+    "params": "method-specific object or array",
+    "id": "absent on all four emitted standard notifications",
+    "result": "not emitted for notifications",
+    "actualReceiver": "Rust Rpc deserializes method:String and params:Value(default null); it does not enforce jsonrpc/id or reject unknown envelope fields. CF codec will enforce JSON-RPC 2.0 without adding mandatory CF params.",
+    "unknownNotification": "ignore; no response"
+  },
+  "definitions": {
+    "facts": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        },
+        "kernel": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "virt": {
+          "type": "string"
+        },
+        "cpu_name": {
+          "type": "string"
+        },
+        "cpu_cores": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "cores"
+        },
+        "agent_version": {
+          "type": "string"
+        },
+        "ipv4": {
+          "type": "string",
+          "meaning": "own IPv4, empty when none"
+        },
+        "ipv6": {
+          "type": "string",
+          "meaning": "own IPv6, empty when none"
+        },
+        "mem_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "swap_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "disk_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "report": {
+      "type": "object",
+      "properties": {
+        "boot_id": {
+          "type": "string",
+          "minLength": 1,
+          "meaning": "opaque kernel boot + counted interface-set epoch; equality, not a timestamp"
+        },
+        "iface": {
+          "type": "string",
+          "meaning": "filter actually in force, empty = default; exact --iface grammar belongs to upstream collector"
+        },
+        "uptime": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "seconds"
+        },
+        "cpu": {
+          "type": "number",
+          "minimum": 0,
+          "unit": "percent"
+        },
+        "load": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "load"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "mem_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "mem_used": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "swap_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "swap_used": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "disk_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "disk_used": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes"
+        },
+        "net_rx_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes",
+          "maximum": 9223372036854775807,
+          "maximumDecimal": "9223372036854775807",
+          "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+        },
+        "net_tx_total": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes",
+          "maximum": 9223372036854775807,
+          "maximumDecimal": "9223372036854775807",
+          "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+        },
+        "net_rx": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes/second"
+        },
+        "net_tx": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes/second"
+        },
+        "tcp": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "connections"
+        },
+        "udp": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "sockets"
+        },
+        "procs": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "processes"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "unit": "identifier",
+          "maximum": 9223372036854775807,
+          "maximumDecimal": "9223372036854775807",
+          "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "meaning": "TCP host:port (IPv6 bracketed); upstream admin validates target separately"
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 5,
+          "unit": "seconds",
+          "maximum": 3600
+        }
+      },
+      "required": [
+        "id",
+        "target",
+        "interval"
+      ],
+      "additionalProperties": false
+    },
+    "pingResult": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "integer",
+          "minimum": 1,
+          "unit": "identifier",
+          "maximum": 9223372036854775807,
+          "maximumDecimal": "9223372036854775807",
+          "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": -1,
+          "unit": "milliseconds",
+          "meaning": "-1 = attempted probe unreachable; absence is not timeout"
+        }
+      },
+      "required": [
+        "task_id",
+        "latency_ms"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "methods": [
+    {
+      "name": "hello",
+      "kind": "notification",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "$ref": "#/definitions/facts"
+      },
+      "emitterRequired": [
+        "hostname",
+        "os",
+        "kernel",
+        "arch",
+        "virt",
+        "cpu_name",
+        "cpu_cores",
+        "agent_version",
+        "ipv4",
+        "ipv6"
+      ],
+      "emitterOptional": [
+        "mem_total",
+        "swap_total",
+        "disk_total"
+      ],
+      "sources": [
+        "facts",
+        "hello",
+        "receive",
+        "factsStore"
+      ],
+      "upstreamReceive": "No fact is required by save_facts; missing/non-string text becomes empty, cpu_cores uses i64 fallback0. Current hub ignores hello capacities and records capacities from reports. Empty strings describe unknown facts. First hello includes three capacities for old hubs; fact-change hello omits them. Null is not emitted.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"hello\",\"params\":{\"hostname\":\"demo\",\"os\":\"Debian GNU/Linux 12\",\"kernel\":\"6.1\",\"arch\":\"x86_64\",\"virt\":\"kvm\",\"cpu_name\":\"demo CPU\",\"cpu_cores\":2,\"agent_version\":\"1.2.3\",\"ipv4\":\"\",\"ipv6\":\"\",\"mem_total\":1073741824,\"swap_total\":0,\"disk_total\":2147483648}}"
+        }
+      ],
+      "schemaScope": "paramsSchema = normal portable emitted shape; receiverParamsSchema = actual parser shape; upstreamReceive = admission/ingestion effects",
+      "receiverParamsSchema": {}
+    },
+    {
+      "name": "report",
+      "kind": "notification",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "$ref": "#/definitions/report"
+      },
+      "emitterRequired": [
+        "boot_id",
+        "iface",
+        "uptime",
+        "cpu",
+        "load",
+        "mem_total",
+        "mem_used",
+        "swap_total",
+        "swap_used",
+        "disk_total",
+        "disk_used",
+        "net_rx_total",
+        "net_tx_total",
+        "net_rx",
+        "net_tx",
+        "tcp",
+        "udp",
+        "procs"
+      ],
+      "sources": [
+        "facts",
+        "report",
+        "traffic"
+      ],
+      "upstreamReceive": "Object required; all known fields may be missing (warn once). Present numeric public fields and counters must be finite nonnegative numbers: null/string/negative rejected. load must have 3 nonnegative numbers. boot_id/iface are not type-rejected; missing/empty/non-string boot_id disables traffic. Counters accepted as a usable pair only when nonnegative signed i64; floats or >i64 carry no traffic reading. Other numeric fields can be fractional at receive even when emitter is integer. No ACK; reception-time/session aggregation, report spacing 500ms. Unknown fields are not needed for standard use.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "raw i64 counter",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"report\",\"params\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":12.5,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":9007199254740993,\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30}}"
+        },
+        {
+          "valid": true,
+          "note": "partial older report",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"report\",\"params\":{\"cpu\":1}}"
+        },
+        {
+          "valid": false,
+          "note": "counter string",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"report\",\"params\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":12.5,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":\"9007199254740993\",\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30}}"
+        },
+        {
+          "valid": false,
+          "note": "null numeric",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"report\",\"params\":{\"boot_id\":\"boot-a/iface-a\",\"iface\":\"\",\"uptime\":3600,\"cpu\":null,\"load\":[0.1,0.2,0.3],\"mem_total\":1073741824,\"mem_used\":268435456,\"swap_total\":0,\"swap_used\":0,\"disk_total\":2147483648,\"disk_used\":1073741824,\"net_rx_total\":9007199254740993,\"net_tx_total\":7,\"net_rx\":100,\"net_tx\":200,\"tcp\":5,\"udp\":2,\"procs\":30}}"
+        }
+      ],
+      "schemaScope": "paramsSchema = normal portable emitted shape; receiverParamsSchema = actual parser shape; upstreamReceive = admission/ingestion effects",
+      "receiverParamsSchema": {
+        "type": "object",
+        "properties": {
+          "boot_id": {},
+          "iface": {},
+          "uptime": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "seconds"
+          },
+          "cpu": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "percent"
+          },
+          "load": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "unit": "load"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "mem_total": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "mem_used": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "swap_total": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "swap_used": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "disk_total": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "disk_used": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "net_rx_total": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "net_tx_total": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes"
+          },
+          "net_rx": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes/second"
+          },
+          "net_tx": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "bytes/second"
+          },
+          "tcp": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "connections"
+          },
+          "udp": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "sockets"
+          },
+          "procs": {
+            "type": "number",
+            "minimum": 0,
+            "unit": "processes"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "trafficReading": {
+        "required": [
+          "boot_id",
+          "net_rx_total",
+          "net_tx_total"
+        ],
+        "counterSchema": {
+          "type": "integer",
+          "minimum": 0,
+          "unit": "bytes",
+          "maximum": 9223372036854775807,
+          "maximumDecimal": "9223372036854775807",
+          "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+        },
+        "epoch": "nonempty string",
+        "onUnusableReading": "no traffic baseline change; null numeric still rejects whole report before this check"
+      }
+    },
+    {
+      "name": "ping.result",
+      "kind": "notification",
+      "senderRoles": [
+        "agent"
+      ],
+      "receiverRoles": [
+        "hub"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "$ref": "#/definitions/pingResult"
+      },
+      "sources": [
+        "agentTasks",
+        "receive",
+        "pings",
+        "agentTCP"
+      ],
+      "upstreamReceive": "Positive i64 task_id plus i64 latency_ms yields one reception-stamped result; any negative latency counts as lost upstream, emitter uses -1. Missing/null/noninteger latency yields no sample. DB verifies assignment. Results window max128/5s. Buffered same-task arrivals at one second are backdated >=1s apart to avoid replacing each other. No sender timestamp or ACK.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"ping.result\",\"params\":{\"task_id\":1,\"latency_ms\":42}}"
+        },
+        {
+          "valid": true,
+          "note": "timeout",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"ping.result\",\"params\":{\"task_id\":1,\"latency_ms\":-1}}"
+        },
+        {
+          "valid": false,
+          "note": "missing is not loss",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"ping.result\",\"params\":{\"task_id\":1,\"latency_ms\":null}}"
+        }
+      ],
+      "schemaScope": "paramsSchema = normal portable emitted shape; receiverParamsSchema = actual parser shape; upstreamReceive = admission/ingestion effects",
+      "receiverParamsSchema": {},
+      "ingestionSchema": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "minimum": 1,
+            "unit": "identifier",
+            "maximum": 9223372036854775807,
+            "maximumDecimal": "9223372036854775807",
+            "parsing": "raw decimal token -> BigInt/i64; public JSON remains numeric"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "minimum": -9223372036854775808,
+            "maximum": 9223372036854775807,
+            "unit": "milliseconds",
+            "meaning": "all negative latencies count as lost in hub"
+          }
+        },
+        "required": [
+          "task_id",
+          "latency_ms"
+        ],
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "ping.tasks",
+      "kind": "notification",
+      "senderRoles": [
+        "hub"
+      ],
+      "receiverRoles": [
+        "agent"
+      ],
+      "maxBytes": 65536,
+      "paramsSchema": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/task"
+        },
+        "maxItems": 64
+      },
+      "sources": [
+        "tasks",
+        "taskBounds",
+        "agentTasks"
+      ],
+      "upstreamReceive": "params is the whole array, not {tasks:[]}. Agent keeps first64 (upstream explicitly truncates), clamps interval to5..3600; changed tasks restart, unchanged keep timers. Hub checks assignment count64 and admin interval5..3600. Failed DB read emits no empty list in1.5.2 and retries at heartbeat.",
+      "examples": [
+        {
+          "valid": true,
+          "note": "valid",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"ping.tasks\",\"params\":[{\"id\":1,\"target\":\"example.com:443\",\"interval\":60}]}"
+        },
+        {
+          "valid": true,
+          "note": "remove all assigned tasks",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"ping.tasks\",\"params\":[]}"
+        },
+        {
+          "valid": false,
+          "note": "wrong shape",
+          "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"ping.tasks\",\"params\":{\"tasks\":[]}}"
+        }
+      ],
+      "schemaScope": "paramsSchema = normal portable emitted shape; receiverParamsSchema = actual parser shape; upstreamReceive = admission/ingestion effects",
+      "receiverParamsSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "target": {
+              "type": "string"
+            },
+            "interval": {
+              "type": "integer",
+              "minimum": 0,
+              "unit": "seconds",
+              "maximum": 18446744073709551615
+            }
+          },
+          "required": [
+            "id",
+            "target",
+            "interval"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "afterParse": {
+        "maximumExecuted": 64,
+        "intervalClamp": [
+          5,
+          3600
+        ],
+        "malformedArray": "ignore and keep previous list; no ACK",
+        "targetAdminMaximumBytes": 260
+      }
+    }
+  ],
+  "emitterTypes": {
+    "facts": {
+      "hostname": "String",
+      "os": "String",
+      "kernel": "String",
+      "arch": "String",
+      "virt": "String",
+      "cpu_name": "String",
+      "cpu_cores": "u32",
+      "agent_version": "String",
+      "ipv4": "String",
+      "ipv6": "String"
+    },
+    "report": {
+      "boot_id": "String",
+      "iface": "String",
+      "uptime": "u64",
+      "cpu": "f32",
+      "load": "[f32;3]",
+      "mem_total": "u64",
+      "mem_used": "u64",
+      "swap_total": "u64",
+      "swap_used": "u64",
+      "disk_total": "u64",
+      "disk_used": "u64",
+      "net_rx_total": "u64",
+      "net_tx_total": "u64",
+      "net_rx": "u64",
+      "net_tx": "u64",
+      "tcp": "u32",
+      "udp": "u32",
+      "procs": "u32"
+    },
+    "pingResult": {
+      "task_id": "i64",
+      "latency_ms": "i32"
+    },
+    "pingTask": {
+      "id": "i64",
+      "target": "String",
+      "interval": "u64"
+    },
+    "boundsDecimal": {
+      "u32": [
+        "0",
+        "4294967295"
+      ],
+      "u64": [
+        "0",
+        "18446744073709551615"
+      ],
+      "i64": [
+        "-9223372036854775808",
+        "9223372036854775807"
+      ],
+      "i32": [
+        "-2147483648",
+        "2147483647"
+      ]
+    },
+    "note": "Actual Rust emitter types; portable paramsSchema restricts usable counters to nonnegative hub i64. Finite nonnegative emitted CPU/load; receiver numeric checks documented separately."
+  }
+}
