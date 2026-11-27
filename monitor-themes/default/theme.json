@@ -2,7 +2,7 @@
   "name": "默认主题",
   "short": "default",
   "description": "内置状态面板，黑白配色",
-  "version": "1.4.3",
+  "version": "1.4.3-cf.1",
   "author": "stqfdyr",
   "url": "https://github.com/monitor-probe/monitor-theme-default",
   "config": [
@@ -13,5 +13,11 @@
       "default": true,
       "help": "节点列表上方的节点数、最忙节点、流量和网速四格"
     }
-  ]
+  ],
+  "cf_revision": "nullable.1",
+  "upstream": {
+    "version": "1.4.3",
+    "commit": "545d1279161a80b6cca515adc911f26447219717",
+    "url": "https://github.com/monitor-probe/monitor-theme-default"
+  }
 }

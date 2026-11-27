@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+    # Prose changes nothing a compiler or linter can check.
+    paths-ignore: ["**.md", "LICENSE"]
+  # Every PR runs, even a prose-only one: `build` is a required status check on
+  # master, and a workflow skipped by paths-ignore reports no status at all —
+  # the PR would then sit at "Expected — Waiting for status to be reported".
+  pull_request:
+
+# A new push supersedes any run still in progress for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # A hub installs `theme.tar.gz` from a release, never this repository's source:
+  # release.yml builds a tag here and publishes it. The hub's own `web-theme.pin`
+  # concerns only the default theme it embeds at build time, not this one — a
+  # third-party theme arrives by upload or by 从 GitHub 安装, and the hub checks
+  # the asset name, size and gzip magic rather than a sha256. A break on main
+  # therefore cannot break a hub build, but this is the only gate a tag receives;
+  # release.yml now runs the same checks before packaging.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      # ★同一套单测再用 UTC 跑一遍（2026-11-21 加）：`daysUntil` 按北京日历日算，而夹具若
+      #   按本地日历日拼日期，在 UTC+8 的开发机上恰好一致、在 CI 的 UTC 上就整体差一天。
+      #   这条就是为那一类回归单列的 —— 它比「本机能过」多一层保障。
+      - run: npm run test:utc
+      - run: npm run check
+      - run: npm run build

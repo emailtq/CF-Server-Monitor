@@ -1,0 +1,273 @@
+/* Scan this app's own source and nothing else. Tailwind's automatic detection
+   walks the whole repository, turning a word in a Rust file or a document into a
+   utility class in the shipped stylesheet: `.filter` and `.transform` were
+   here because api.rs calls `.filter(...)`. Worse than the wasted bytes, it
+   made the build depend on files that have nothing to do with it -- adding an
+   unrelated workflow changed the CSS, and with it the content hash of every
+   asset. */
+@import "tailwindcss" source(none);
+@source "../index.html";
+@source "../src";
+
+@custom-variant dark (&:is(.dark *));
+
+/* 随包字体：Inter（latin 可变字重 400–700，48 KB）。参考站那种「小清新」有一半来自这一档
+   几何感更强的无衬线 —— 数字与拉丁字母走 Inter，汉字仍回落到系统 CJK 字体（Inter 不含 CJK）。
+   子集由 Google Fonts 的 latin 档取得（universe: 拉丁基本区 + ↑↓ 箭头 U+2191/2193 + € U+20AC
+   等），随包自带、不引第三方 CDN。许可见 public/fonts/INTER-LICENSE.txt（OFL 1.1）。 */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/inter-latin-var.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* 原生控件 / 滚动条 / UA 默认底色的明暗口径。**首帧**那份由 index.html 的内联脚本写
+     style.colorScheme、运行时的同一件事在 App 的 useTheme 里；这里给 CSS 侧一份兜底。 */
+  color-scheme: light;
+  --radius: 0.625rem;
+  /* 页面底色：2026-10-15 起整套中性色换成**暖石（stone）系** —— 参考站的「小清新」大半来自
+     这一档温灰：冷灰（纯中性）在同样亮度下显得「工业」，暖灰才显得轻、显得软。
+     页面 stone-50 / 卡片纯白 / 描边 stone-200 / 次级文字 stone-500（4.8:1）。 */
+  --background: oklch(0.985 0.001 106);
+  --foreground: oklch(0.216 0.006 56);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.216 0.006 56);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.216 0.006 56);
+  --primary: oklch(0.216 0.006 56);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.970 0.001 106);
+  --secondary-foreground: oklch(0.216 0.006 56);
+  --muted: oklch(0.970 0.001 106);
+  --muted-foreground: oklch(0.553 0.012 58);
+  --accent: oklch(0.970 0.001 106);
+  --accent-foreground: oklch(0.216 0.006 56);
+  /* 「出错了」那支红：与状态红（--down）同族同档，但语义不同 —— 它管**文字**（读失败 / 网络错误）。
+     改前是 oklch(0.3 0.008 56)≈正文色，暗色那份更是与 --foreground 逐字相同：报错那行看起来
+     跟普通文字没两样（2026-10-15 审出来）。 */
+  --destructive: oklch(0.54 0.19 25);
+  --border: oklch(0.923 0.003 49);
+  --input: oklch(0.923 0.003 49);
+  --ring: oklch(0.716 0.009 56);
+  /* 九色调色板：曲线要用几组同时可分辨的线，单色阶在三组以上就只剩深浅，
+     于是给延迟曲线一份真正的色相环（1-9 依次是蓝 / 橙 / 青 / 紫 / 红 / 绿 /
+     蓝青 / 黄 / 品红）。亮色下压亮度保证白底可读，深色下抬亮度，色相不变，
+     所以同一台机器在两种主题下是同一种颜色。 */
+  --chart-1: oklch(0.58 0.17 250);
+  --chart-2: oklch(0.66 0.16 45);
+  --chart-3: oklch(0.6 0.13 190);
+  --chart-4: oklch(0.55 0.18 295);
+  --chart-5: oklch(0.58 0.19 20);
+  --chart-6: oklch(0.58 0.15 150);
+  --chart-7: oklch(0.6 0.12 220);
+  --chart-8: oklch(0.66 0.14 70);
+  --chart-9: oklch(0.58 0.18 335);
+  /* 绿分两支（2026-10-15，照参考站的分工）：
+     · `--ok` 是**图形**用的清新绿（进度条、状态点）—— 亮、透气，白卡上 2.3:1：条只有 3px、
+       读数就在它正上方，值不靠它读，所以不套正文那套 4.5:1（点缀型图形的底线在
+       verify_appearance 里单列成 ≥2）。
+     · `--ok-ink` 是**绿色文字**用的那支（↑ 上传 / ↓ 下载 标签，12px 正文）—— 它得过**正文**那道线：
+       白卡上 4.57:1（WCAG AA 小字 4.5:1）。原先那档 0.596 只有 3.76:1，2026-10-15 审下来不达标，
+       压到 0.54 才过（视觉上仍是同一支 emerald，只是深了一档）。 */
+  --ok: oklch(0.723 0.192 150);
+  --ok-ink: oklch(0.54 0.14 163);
+  /* 离线那一枚状态点与徽章用的红（2026-10-15 卡片改版时加的第三枚语义色）：
+     ★徽章是「红字压在 12% 红底上」，所以这支红要按**它自己那层底**校验 —— 原来那档 0.58 在白卡上
+     有 4.73:1、看着达标，压到那层底上只剩 3.98:1（12px 小字 AA 要 4.5）。压到 0.54 之后
+     白卡 5.58:1 / 12% 底上 4.69:1，红点与徽章仍共用同一支红，颜色不散。 */
+  --down: oklch(0.54 0.19 25);
+}
+
+.dark {
+  color-scheme: dark;
+  /* ── 暗色的文字与底色：对着上游实测过的那一套调过 ─────────────────────────────
+     站长 2026-10-06 反馈「全暗模式下字的颜色有些刺眼」。把原站 :root 里那几档取出来算成
+     OKLCH，问题就很清楚 —— 它不是"亮一点/暗一点"，而是**对比度差了一档，而且它是暖的**：
+
+       原站  void #15130f = oklch(0.188 0.0085 84.6)   ← 暖的近黑（比本站更亮一点）
+             ink  #ddd6c8 = oklch(0.878 0.020 84.6)   ← 暖的米白，不是纯白
+             ink-dim       = oklch(0.752 0.027 87)    ← 次级文字比本站的还亮
+             正文/底 = 12.83:1，主次两级亮度差 0.125
+       本站（改前）正文 oklch(0.98 0 0) / 底 0.145 → **18.6:1**，主次亮度差 0.28
+
+     纯白 0.98 配近黑底是"能看清"但"盯着累"：对比度 18.6:1 远超需要的量，且中性白在暖色
+     的机器读数里显得生硬。改法是两条：**把正文压到原站那一档（≈12.5:1）**、**整体偏暖一档
+     （H≈85°、C≈0.012~0.018）**，同时把次级文字提亮，让主次两级收拢到原站那种 0.12 左右。
+     底色跟着暖一点点、亮一点点（0.145 → 0.155），免得"暖字配冷底"看着脏。
+
+     改完的实测（卡片底 vs 文字）：正文 **12.72:1**、弱化文字 **8.21:1**、主次亮度差 0.130
+     （原站 12.83:1 / 8.41:1 / 0.125，基本重合）—— 仍远高于 WCAG AA 的 4.5:1，只是不再刺眼。
+     2026-10-17 卡片抬到 0.23 后复测：正文 **11.96:1**、弱化 **7.72:1** —— 掉的是余量不是档位。
+     亮色一套**没动**（站长只提了全暗模式；亮色那套是 0.18/0.985）。 */
+  --background: oklch(0.155 0.004 85);
+  --foreground: oklch(0.885 0.012 85);
+  /* 卡片面：0.21 → **0.23**（2026-10-17 反馈「暗色下卡片与页面底区分不明显」）。
+     卡/底间距 0.055 → **0.075**（0.07 正是老口径里「抬升面」那一档）；合成对比
+     卡/底 1.10 → **1.16**；配合同轮描边 13% → 15%，描边线/底 1.49 → **1.67**。
+     正文/卡片 12.60 → 11.96（复测见上），仍稳；再上探 0.24 会让卡片"浮灰"、正文跌破
+     12 —— 停在 0.23。 */
+  --card: oklch(0.23 0.004 85);
+  --card-foreground: oklch(0.885 0.012 85);
+  --popover: oklch(0.23 0.004 85);
+  --popover-foreground: oklch(0.885 0.012 85);
+  --primary: oklch(0.885 0.012 85);
+  --primary-foreground: oklch(0.23 0.004 85);
+  --secondary: oklch(0.28 0.005 85);
+  --secondary-foreground: oklch(0.885 0.012 85);
+  --muted: oklch(0.28 0.005 85);
+  --muted-foreground: oklch(0.755 0.018 85);
+  --accent: oklch(0.28 0.005 85);
+  --accent-foreground: oklch(0.885 0.012 85);
+  /* 「出错了」的红：暗底上抬亮度（与暗色 --down 同档）。改前与 --foreground 逐字相同。 */
+  --destructive: oklch(0.7 0.17 25);
+  /* 描边也跟着换成那支暖墨：纯白 12% 在暖色文字旁边会显出一道冷边。
+     2026-10-17 13% → **15%**：卡片抬高那轮把卡缘线一并提一档（合成后线/底 1.49 → 1.67），
+     暗底上卡片的轮廓才立得住；同一支暖墨，只动透明度。 */
+  --border: oklch(0.885 0.012 85 / 15%);
+  --input: oklch(0.885 0.012 85 / 16%);
+  --ring: oklch(0.6 0.008 85);
+  /* 与亮色同一份色相，只抬亮度：深色底上压暗的线会糊在一起。 */
+  --chart-1: oklch(0.72 0.15 250);
+  --chart-2: oklch(0.78 0.14 55);
+  --chart-3: oklch(0.74 0.12 190);
+  --chart-4: oklch(0.7 0.16 295);
+  --chart-5: oklch(0.7 0.17 20);
+  --chart-6: oklch(0.74 0.14 150);
+  --chart-7: oklch(0.74 0.11 220);
+  --chart-8: oklch(0.8 0.13 75);
+  --chart-9: oklch(0.72 0.16 335);
+  --ok: oklch(0.72 0.17 150);
+  --ok-ink: oklch(0.78 0.13 160);
+  /* 与亮色同一份色相，只抬亮度。 */
+  --down: oklch(0.7 0.17 25);
+}
+
+@theme inline {
+  /* 字体栈：Inter 领衔（随包那份，见上面的 @font-face），其余回落系统 —— 汉字由系统 CJK 出，
+     数字与拉丁走 Inter。`ui-sans-serif`/`system-ui` 在前还是后差别不大，但别把 Inter 放到
+     系统字后面：那样装了 Inter 的访客也看不到它。 */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* 只留实际用到的那两档（md / lg）：sm 与 xl 全仓没有引用，Tailwind 也不会为它们生成类。 */
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
+  --color-ok: var(--ok);
+  --color-ok-ink: var(--ok-ink);
+  --color-down: var(--down);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  /* Reserve the scrollbar's width on every page: without it, leaving a route
+     whose content exceeds the fold widens the page. */
+  html { scrollbar-gutter: stable; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* Tabular figures keep live numbers from shifting as they update. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* 卡片网格：**电脑上卡片尺寸恒定、变的是列数；手机上照旧铺满**（2026-10-25 站长口径）。
+   卡片按 336 宽设计（1440 上三列），窗口变窄时不该把卡片拉胖，而是少摆一列；
+   装不下 336 时（比手机 368 还窄的屏幕）才让步 —— 用 `min(336px, 100%)` 兜住，免得溢出。
+   ★手机档（<480）单独回到「铺满可用宽度」：手机上再在两侧各留二十几像素，三格读数会被压窄、
+   白占地方，与 1.8.2 及以前的手感也不一致 —— 站长要的就是「电脑固定、手机照旧」。
+   列数由 auto-fit 依容器**可用宽度**算，与视口断点无关。
+   ★为什么不再用「md 两列 / xl 三列」：那样列数看视口、而容器封顶 1080（可用 1032），
+     两边对不上 —— 1100–1279 视口上容器已满宽却仍只摊两列，两张卡各被拉到 510 宽
+     （三格读数从 61 涨到 101，读数与右端速率之间空成一片），700 左右更是单张 637 宽。
+     量法见 tools/probe_grid_band.mjs。 */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(336px, 100%), 336px));
+  justify-content: center;
+  align-items: start;
+  gap: 0.75rem;
+}
+@media (max-width: 479px) {
+  .card-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 页脚署名（右下角那行）：比正文的弱化色再淡一档，只作署名，不跟页面里的读数抢注意力；
+   「Kanso」那截是本主题的源码仓库链接（地址见 App.tsx 的 REPO_URL），悬停才出下划线。 */
+/* 顶栏那条图标带（.header-tools）：装不下时横向滑动（这套做法与 1.0.0 起已删的分组标签行同源）。
+   滑动条藏起来 —— 它长在 sticky 顶栏里、又只在窄窗口才出现，露出来就是一条横杠；
+   「还能滑」的提示由露一半的那枚图标给。 */
+.header-tools { scrollbar-width: none; }
+.header-tools::-webkit-scrollbar { display: none; }
+
+.theme-credit {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+  /* ★不要再叠 opacity（2026-10-18 审出）：12px 文字叠 0.62 之后，亮色下有效对比只剩 2.34:1、
+     暗色 4.02:1 —— 都过不了小字的 4.5:1。`--muted-foreground` 本身就是「比正文弱一档」的那支灰
+     （亮 4.6:1 / 暗 8.9:1），署名要弱就弱在它，别再压一层透明度。 */
+}
+.theme-credit a { color: inherit; text-decoration: none; }
+.theme-credit a:hover { text-decoration: underline; }
+
+/* 触屏命中区：**外观一点不动，只把可点范围往外撑**。
+   手指比鼠标粗 —— Apple 的通行线是 44×44，WCAG 2.2 的硬线（2.5.8）是 24×24。
+   撑出来的那圈是 ::before，透明、不参与布局，所以排版、间距、视觉都不受影响；
+   命中测试时它算作所属元素（`document.elementFromPoint` 返回的是宿主元素）。
+   类名跟着控件自己的高度走（size-9 = 36px 等），一眼看得出撑完是多少：
+     tap-9   36×36 → 44×44（顶栏那几枚图标）
+     tap-8   32 高  → 44    （站名）
+     tap-y-6 24 高  → 44 高，横向不动 —— 密排的分段按钮之间别互相盖住。 */
+/* `.tap` 与 Tailwind 的 `.absolute` 都是单类选择器（0,1,0），而 `.tap` 写在 Tailwind 层之后，
+   靠顺序裁决必输 —— 延迟图右上角那枚「重置」因此掉回文档流、落在图下方左缘（2026-10-15
+   护栏里量到它的 y 比图表容器顶低 700+px）。双类选择器（0,2,0）与顺序无关，一次钉死。 */
+/* ↑ `.tap` 的 position: relative 是下面 `.tap::before`（那圈撑到 44px 的隐形命中区）的
+   定位基准 —— 补 `.tap.absolute` 时若把它整行替换掉，12 条命中区断言会当场掉到 1×1
+   （2026-10-15 踩过）。两条规则各司其职，都别动。 */
+.tap { position: relative; }
+.tap.absolute { position: absolute; }
+.tap::before { content: ""; position: absolute; border-radius: inherit; }
+.tap-9::before { inset: -4px; }
+.tap-8::before { inset: -6px; }
+.tap-y-6::before { inset: -10px 0; }
+
+/* 系统设了「减少动态效果」时，骨架屏的 pulse 与流量条的宽度过渡都停下来。
+   纯 CSS，跟随系统设置；前庭敏感用户不被动效打扰（2026-10-20 审出）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

@@ -36,7 +36,7 @@ const createHeaders = (includeAuth = true, includeTurnstile = true, baseUrl = nu
     includeTurnstileVerified = true
   } = options
   const headers = {
-    'Content-Type': options.rawBody ? 'application/gzip' : 'application/json'
+    'Content-Type': options.contentType || (options.rawBody ? 'application/gzip' : 'application/json')
   }
   
   if (includeAuth) {
@@ -72,7 +72,7 @@ const handleResponse = async (res, options = {}) => {
     if (autoRedirect) {
       redirectToAdminLogin()
     }
-    return { error: DEFAULT_ERROR_MESSAGES[401], status: 401 }
+    if (responsePolicy !== 'monitor') return { error: DEFAULT_ERROR_MESSAGES[401], status: 401 }
   }
   
   if (res.status === 403 && responsePolicy !== 'terminal') {
@@ -81,10 +81,15 @@ const handleResponse = async (res, options = {}) => {
     if (autoRedirect) {
       window.location.reload()
     }
-    return { error: DEFAULT_ERROR_MESSAGES[403], status: 403 }
+    if (responsePolicy !== 'monitor') return { error: DEFAULT_ERROR_MESSAGES[403], status: 403 }
   }
   
   if (!res.ok) {
+    if (responsePolicy === 'monitor') {
+      const text = res.headers.get('Content-Type')?.startsWith('text/plain') ? (await res.text()).trim() : ''
+      if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
+      return { error: text || `HTTP ${res.status}`, status: res.status, code: res.status }
+    }
     let terminalDisableResult = null
     let errorMessage = DEFAULT_ERROR_MESSAGES[res.status] || 'Request failed'
     let errorCode = res.status
@@ -114,6 +119,10 @@ const handleResponse = async (res, options = {}) => {
   }
   
   try {
+    if (res.status === 204) return { data: null, status: 204 }
+    if (responsePolicy === 'monitor' && options.responseType !== 'blob' && !/^application\/json(?:;|$)/i.test(res.headers.get('Content-Type') || '')) {
+      return { error: 'monitorThemeInvalidResponse', status: res.status }
+    }
     const data = options.responseType === 'blob' ? await res.blob() : await res.json()
     if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
     if (data && data.turnstile_verified) {
@@ -123,7 +132,7 @@ const handleResponse = async (res, options = {}) => {
     return { data, status: res.status }
   } catch (e) {
     if (options.requestOwner && !options.requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
-    return { data: null, status: res.status }
+    return responsePolicy === 'monitor' ? { error: 'monitorThemeInvalidResponse', status: res.status } : { data: null, status: res.status }
   }
 }
 

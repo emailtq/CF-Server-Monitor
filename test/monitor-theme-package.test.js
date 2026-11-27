@@ -15,7 +15,10 @@ test('bundled Monitor packages keep their audited metadata and isolated dist roo
     const packageRoot = path.join(root, 'monitor-themes', short);
     const metadata = JSON.parse(fs.readFileSync(path.join(packageRoot, 'theme.json'), 'utf8'));
     assert.equal(metadata.short, short);
-    assert.equal(metadata.version, version);
+    assert.equal(metadata.version, `${version}-cf.1`);
+    assert.equal(metadata.upstream.version, version);
+    assert.equal(metadata.cf_revision, "nullable.1");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(packageRoot, "source/theme.json"), "utf8")).version, version);
 
     const distRoot = path.join(packageRoot, 'dist');
     for (const file of ['index.html', 'favicon.svg', 'apple-touch-icon.png']) {

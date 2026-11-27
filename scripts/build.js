@@ -28,11 +28,15 @@ if (fs.existsSync(monitorThemesDir)) {
   const themes = fs.readdirSync(monitorThemesDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && fs.existsSync(path.join(monitorThemesDir, entry.name, 'dist')));
   for (const theme of themes) {
+    const metadata = fs.readJsonSync(path.join(monitorThemesDir, theme.name, 'theme.json'));
+    const source = metadata.cf_revision ? path.join(monitorThemesDir, theme.name, 'source', 'dist') : path.join(monitorThemesDir, theme.name, 'dist');
+    if (!fs.existsSync(path.join(source, 'index.html'))) throw new Error(`Build the ${theme.name} consumer first: npm run build:monitor-consumers`);
     fs.copySync(
-      path.join(monitorThemesDir, theme.name, 'dist'),
+      source,
       path.join(distDir, '_monitor_theme', theme.name),
       { overwrite: false }
     );
+    if (metadata.cf_revision) fs.copySync(path.join(monitorThemesDir, theme.name, 'dist'), path.join(distDir, '_monitor_theme', theme.name, 'upstream'));
     const preview = path.join(monitorThemesDir, theme.name, 'preview.png');
     if (fs.existsSync(preview)) fs.copySync(preview, path.join(distDir, '_monitor_theme_metadata', theme.name, 'preview.png'));
   }

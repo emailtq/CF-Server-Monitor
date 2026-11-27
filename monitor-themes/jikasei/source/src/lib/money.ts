@@ -1,0 +1,256 @@
+import type { Node } from "@/lib/api"
+// 相对路径（而不是 `@/lib/format`）：这个文件要能被 `node src/lib/money.test.ts`
+// 直接跑（见 money.test.ts），而 Node 不认 tsconfig 里的 `@` 别名。
+import { daysUntil } from "./format.ts"
+
+/**
+ * 概览卡片「预算版」那两块读数：月度预算、剩余价值。
+ *
+ * 两个数都来自 `/api/nodes` 里本来就有的 `price` / `currency` / `billing_cycle` /
+ * `expires_in`，所以切成预算版不会多发任何请求。
+ *
+ * 口径：
+ *   月度预算 = Σ 价格 × 汇率 ÷ 周期月数——把每个节点的账摊到一个月上再加起来
+ *     （年付 $120 就是每月 $10；一个月按 30 天、一年按 365 天，两把尺子都写在 CYCLE 里）。
+ *     一次性买断（`once`）没有「每月」可言，不计入；价格没填（0/空）的不计。
+ *   剩余价值 = Σ 价格 × 汇率 × (剩余天数 ÷ 周期天数)——已经付掉、还没用掉的那一段。
+ *     剩余天数取 hub 算好的 `expires_in`（它按 hub 的日历算，在线节点还会顺延到期日），
+ *     旧 hub 没有这个字段时才退回按 `expires_at` 自己数。
+ *     无到期日（`expires_in` 与 `expires_at` 都没有）的机器没有「剩多少价值」可说，
+ *     不计入；已经过期的按 0 计（不会出现负数）。
+ *   没写周期（空串 / 不认识的取值，老数据或手填）按最常见的**月付**算——它读起来
+ *   最接近「这台机器一个月花多少」，也不会让那个节点整台从合计里消失。
+ */
+const CYCLE: Record<string, { months: number; days: number }> = {
+  monthly: { months: 1, days: 30 },
+  quarterly: { months: 3, days: 90 },
+  semiannual: { months: 6, days: 180 },
+  yearly: { months: 12, days: 365 },
+  biennial: { months: 24, days: 730 },
+  triennial: { months: 36, days: 1095 },
+  // 一次性买断：没有「每月」也没有「剩多少天」，两块都不计入。
+  once: { months: 0, days: 0 },
+}
+
+/** 实际周期是几「月份」。没写周期（老数据 / 手填）按月付——最常见的记法。 */
+export function cycleMonthsOf(cycle: string): number {
+  const named = CYCLE[cycle]
+  if (named) return named.months
+  // hub 只把「具名的六个」写成名字，其余整月数一律存成 `<n>m`（monitor 的 cycle_name：
+  // 12m 折成 yearly，5m / 18m / 60m 原样存下来；范围 1–1200 个月）。不认这一种，
+  // 一台 5m 的机器月摊会按「月付」算成 5 倍 —— 金额本身错，不是显示问题（2026-11-06）。
+  const custom = CUSTOM_MONTHS.exec(cycle)
+  const months = custom ? Number(custom[1]) : 0
+  return months >= 1 ? months : 1
+}
+
+/** 实际周期是几天。用户的「剩余天数」按这把尺子折。 */
+export function cycleDaysOf(cycle: string): number {
+  const named = CYCLE[cycle]
+  if (named) return named.days
+  const custom = CUSTOM_MONTHS.exec(cycle)
+  const months = custom ? Number(custom[1]) : 0
+  if (!(months >= 1)) return 30
+  // 与表内同一把尺子：半年以内按月（30 天），一年以上按年（365 天）折 ——
+  // 12m → 365、24m → 730、36m → 1095，与具名的 yearly / biennial / triennial 逐字相同。
+  return months >= 12 ? Math.round((months * 365) / 12) : months * 30
+}
+
+/** hub 存「非具名整月周期」的写法：`5m` / `18m` / `60m`。 */
+const CUSTOM_MONTHS = /^(\d+)m$/
+
+/**
+ * 内置汇率（兜底表）：1 单位该币种 = N 人民币。
+ *
+ * 把站长填的各币种账折成同一把尺子求合计——卡片上的数字因此是「≈」。平时这份表只在
+ * 两种情况下上场：①页面刚打开、每日汇率（见 lib/fx.ts）还在路上；②拉不到每日汇率
+ * （访客网络够不着、源挂了）时的兜底。fxNote 会自报用的是「每日更新的汇率」还是
+ * 「固定汇率」，两种口径在悬停提示里都能看见。
+ *
+ * 取值：2026-09-30 的公开汇率参考价，四舍五入到四位小数。
+ */
+export const FX_DATE = "2026-09-30"
+
+/** 币种 → 人民币的映射（折算是逐币种乘，不是矩阵）。 */
+export type FxRates = Record<string, number>
+
+/** 一份汇率快照：币种→人民币 + 取价日期 + 来源（每日拉的 / 内置表）。 */
+export type FxSnapshot = {
+  /** 币种 → 人民币（1 单位该币种 = N 人民币；CNY 恒为 1）。 */
+  rates: FxRates
+  /** 取价日期 YYYY-MM-DD（口径文案里自报）。 */
+  date: string
+  /** true = 每日汇率（lib/fx.ts 拉的）；false = 内置表。 */
+  live: boolean
+  /**
+   * live 快照里**哪些币种其实来自内置兜底表**：上游那一天没给这一种（ECB 体系缺 TWD 之类），
+   * fetchRates 用内置值补上。不记下来的话，提示会拿「每日汇率」的口气报一个 2026-09-30 的
+   * 固定值 —— 文案与数字说岔（2026-11-06 审出来的）。
+   */
+  builtin?: string[]
+}
+
+export const FX_CNY: Record<string, number> = {
+  CNY: 1,
+  USD: 6.7179,
+  EUR: 7.6172,
+  GBP: 8.883,
+  JPY: 0.0427,
+  HKD: 0.8562,
+  TWD: 0.211,
+  SGD: 5.2585,
+  AUD: 4.6909,
+  CAD: 4.7351,
+  RUB: 0.0795,
+}
+
+/** 内置表打好的快照（budgetOf / fxNote 的默认参数；每日汇率拉不到时的兜底）。 */
+export const FX_BUILTIN: FxSnapshot = { rates: FX_CNY, date: FX_DATE, live: false }
+
+export type Budget = {
+  /** 折成人民币的每月合计；一台可计的都没有时 null（卡片显示「—」而不是 ¥0.00）。 */
+  monthly: number | null
+  /** 折成人民币的剩余价值合计；同上。 */
+  remaining: number | null
+  /** 计入月度预算的机器数。 */
+  monthlyCount: number
+  /** 计入剩余价值的机器数（剩余天数 > 0 的）。 */
+  remainingCount: number
+  /** 真的折进去过的币种，按字母序（用来在提示里只列该报的那几条汇率）。 */
+  used: string[]
+  /** 填了价格、但汇率表里没有的那种币种（那台机器因此没计入，提示里会说明）。 */
+  skipped: string[]
+  /**
+   * 逐台的**月摊**明细（金额降序、同额保持原顺序）—— 「月度预算」那块读数悬停时弹出的浮层
+   * 用它回答「合起来这些钱，是哪几台摊出来的」。口径与 `monthly` 完全同一份：一次性买断、
+   * 没填价格、汇率表里没有的机器都不在这里出现（所以 `monthlyItems.length === monthlyCount`）。
+   */
+  monthlyItems: BudgetItem[]
+  /**
+   * 逐台的**剩余价值**明细（金额降序、同额保持原顺序）—— 「剩余价值」那块的浮层用它。
+   * 口径与 `remaining` 同一份：无到期日、一次性买断、已经过期的机器都不在这里出现
+   * （所以 `remainingItems.length === remainingCount`）。
+   */
+  remainingItems: BudgetItem[]
+}
+
+/**
+ * 浮层里最多逐台列多少条（2026-10-31：站长提「机器特别多的时候」）。
+ *
+ * 48 与「今日流量」那张取峰值的上限同值，但不是同一件事：那边是**请求预算**（每台一个历史
+ * 请求、hub 的并发闸门只有 4），这边只是别让 800 台机器撑出 800 行 DOM。两条都按「超过就
+ * 收口、并在末尾用一行说明收掉了多少」处理，数字不丢：预算那张多一行「其余 N 台 ≈¥X」，
+ * 加起来仍等于卡片面那个合计；流量那张在尾巴里写「只列今日流量最大的 48 台」。
+ */
+export const BUDGET_ROWS = 48
+
+/** 逐台明细里的一条（月摊与剩余价值共用；`amount` 都是折算后的人民币金额）。 */
+export type BudgetItem = {
+  /** 机器名（原样显示；浮层里过长由 CSS 截断）。 */
+  name: string
+  /** 折成人民币的金额：月摊版是「每月多少」，剩余价值版是「还剩多少」。 */
+  amount: number
+}
+
+export function budgetOf(nodes: Node[], fx: FxSnapshot = FX_BUILTIN): Budget {
+  let monthly = 0
+  let remaining = 0
+  let monthlyCount = 0
+  let remainingCount = 0
+  const used = new Set<string>()
+  const skipped = new Set<string>()
+  const monthlyItems: BudgetItem[] = []
+  const remainingItems: BudgetItem[] = []
+
+  for (const node of nodes) {
+    // 没填价格（0 / 空）＝这台不计账，不是「花 0 元」。
+    if (!(node.price > 0)) continue
+    const currency = (node.currency || "").toUpperCase()
+    const rate = fx.rates[currency]
+    if (rate === undefined) {
+      skipped.add(currency || "（空）")
+      continue
+    }
+    used.add(currency)
+    const months = cycleMonthsOf(node.billing_cycle)
+    const days = cycleDaysOf(node.billing_cycle)
+    if (months > 0) {
+      const per = (node.price * rate) / months
+      monthly += per
+      monthlyCount++
+      monthlyItems.push({ name: node.name, amount: per })
+    }
+    if (days <= 0) continue
+    // `expires_in` 是数字（含 0、负数）就用它；null / 缺字段才按 `expires_at` 自己数。
+    const left = typeof node.expires_in === "number" ? node.expires_in : daysUntil(node.expires_at)
+    if (typeof left === "number" && left > 0) {
+      // 剩余天数超过一个周期（顺延、或站长填了个很远的日期）时按整期封顶：
+      // 剩余价值不可能比这台机器买价还贵。
+      const worth = node.price * rate * (Math.min(left, days) / days)
+      remaining += worth
+      remainingCount++
+      remainingItems.push({ name: node.name, amount: worth })
+    }
+  }
+
+  return {
+    monthly: monthlyCount ? monthly : null,
+    remaining: remainingCount ? remaining : null,
+    monthlyCount,
+    remainingCount,
+    used: [...used].sort(),
+    skipped: [...skipped].sort(),
+    // 降序（贵的在前）——「钱花在哪台上了」是这枚浮层要回答的第一个问题；
+    // 同金额的保持节点原顺序（sort 在 ES2019+ 是稳定的）。
+    monthlyItems: monthlyItems.sort((a, b) => b.amount - a.amount),
+    remainingItems: remainingItems.sort((a, b) => b.amount - a.amount),
+  }
+}
+
+/**
+ * 人民币金额。三位一节的逗号是必要的：这是合计，几千块的时候没有分隔符要一位位去数。
+ * 两位小数与卡片上单机的「价格」一致（`money()`）。
+ */
+export function cny(amount: number): string {
+  return `¥${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+/**
+ * 提示里那句汇率说明。只列真的用到的币种（人民币自身不必写「1 CNY = ¥1」）。
+ * `fx` 决定前缀措辞：每日汇率（lib/fx.ts 拉的）只写「每日汇率」（日期就是今天，写出来只是
+ * 多占一行）；内置兜底表写「固定汇率 + 日期」（那个日期是「这份表多久没换过」的信号，得留）。
+ * ——文案与数字同源，不许说岔。
+ *
+ * ★2026-10-31 精简：这一段在浮层尾巴上（15rem 宽 12px 字），原来那版
+ * 「按每日更新的汇率折算（1 EUR = ¥7.4487，1 USD = ¥6.6768，2026-10-30）」要占五行；
+ * 现在把动词砍掉、汇率写成 `EUR ¥7.4487 · USD ¥6.6768`，同一份信息两行收得下。
+ */
+export function fxNote(used: string[], skipped: string[] = [], fx: FxSnapshot = FX_BUILTIN): string {
+  const codes = used.filter((code) => code !== "CNY")
+  const price = (code: string) => `${code} ¥${trimRate(fx.rates[code])}`
+  // 每日汇率整轮没拿到时（fx.live=false）整张表都是内置值；拿到了但有几种上游没给，
+  // 那几种单独按「固定汇率 + 取价日期」写 —— 与数字同源，不拿每日汇率的口气说固定值。
+  const fixed = new Set(fx.live ? fx.builtin ?? [] : codes)
+  const liveCodes = codes.filter((code) => !fixed.has(code))
+  const fixedCodes = codes.filter((code) => fixed.has(code))
+  const liveNote = `每日汇率：${liveCodes.map(price).join("，")}`
+  const fixedNote = `固定汇率 ${fx.date}：${fixedCodes.map(price).join("，")}`
+  // ★「一个币种都没用上」有两种情形（2026-11-21 三审）：真·全是人民币记账，与
+  //   **所有外币都因缺汇率被跳过**。后者原先也写「人民币记账，无需折算」—— 那台机器明明
+  //   记的是外币（只是算不进合计），文案与数字（monthly=null）当场说岔。本函数的注释要求
+  //   「文案与数字同源，不许说岔」，这里正是那条要求落地的地方。
+  //   判据是 `used` 本身空不空，不是 `codes`：`codes` 是**去掉 CNY 之后**的列表，
+  //   `["CNY"] + skipped:["XYZ"]` 时它也是空，但人民币确实用上了，那种要说「人民币记账」。
+  const head = codes.length === 0
+    ? (used.length === 0 && skipped.length ? "所用币种均无汇率，未计入合计" : "人民币记账，无需折算")
+    : !fx.live || liveCodes.length === 0
+      ? fixedNote
+      : fixedCodes.length === 0 ? liveNote : `${liveNote}；${fixedNote}`
+  const miss = skipped.length ? `；${skipped.join("、")} 无汇率未计入` : ""
+  return head + miss
+}
+
+/** 6.7179 → 6.7179、1 → 1、0.2110 → 0.211：去掉没意义的尾零，别写成「1.0000」。 */
+function trimRate(rate: number): string {
+  return rate.toFixed(4).replace(/\.?0+$/, "")
+}

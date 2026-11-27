@@ -1,0 +1,1 @@
+function e(e){return e.reduce((e,t)=>e===null||t==null||!Number.isFinite(t)?null:e+t,0)}function t(t,n,r,i){return i===void 0?r===`up`?t??null:r===`down`?n??null:t==null||n==null?null:r===`max`?Math.max(t,n):r===`min`?Math.min(t,n):e([t,n]):i}function n(e,t){return e===null?null:t>0?Math.min(e/t*100,100):0}export{n,t as r,e as t};

@@ -228,7 +228,7 @@ test('pasted native GitHub links resolve only owner/repository, including bare h
   ]) assert.throws(() => parseMonitorRepository(address), /monitorThemeRepositoryInvalid/, String(address));
 });
 
-test('native update check skips same-version downloads and accepts builtin replacements without changing selection', async t => {
+test('native update check preserves raw updates and requires reviewed CF builtin replacements', async t => {
   const env = await fixture(t), origin = 'https://native.example.test';
   const sys = {is_public:'true',jwt_secret:'theme-update-fixture-authority-not-a-real-credential'};
   await env.DB.prepare('INSERT INTO settings VALUES (?,?)').bind('site_options', JSON.stringify(sys)).run();
@@ -244,7 +244,10 @@ test('native update check skips same-version downloads and accepts builtin repla
   assert.equal(response.status, 200); assert.equal((await response.json()).updated, false);
   assert.equal(downloads, 0); assert.equal((await loadMonitorThemes(env.DB)).themes.find(t=>t.short==='third').revision, initial.revision);
   tag='v2.0'; response=await update('third');assert.equal((await response.json()).updated,true);assert.equal(downloads,1);
-  short='default'; response=await update('default');assert.equal(response.status,200);assert.equal((await response.json()).themes.find(t=>t.short==='default').builtin,false);
+  short='default'; response=await update('default');assert.equal(response.status,409);assert.equal((await response.json()).error,'monitorThemeConsumerRevisionRequired');
+  assert.equal(downloads,1);
+  await installMonitorTheme(env,stream(packageBytes({...manifest,short:'default',version:'2.0'})));
+  assert.equal((await loadMonitorThemes(env.DB)).themes.find(t=>t.short==='default').builtin,false);
   assert.equal((await loadMonitorThemes(env.DB)).selected,null);
 });
 

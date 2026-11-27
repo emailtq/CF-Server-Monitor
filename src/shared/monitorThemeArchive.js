@@ -160,8 +160,8 @@ export async function parseMonitorThemeArchive(source, onChunk = async () => {})
     }
     if (!manifest || !validMonitorShort(manifest.short) || !files['index.html'] ||
         ['name', 'description', 'version', 'author', 'url'].some(key => typeof manifest[key] !== 'string')) throw invalid();
-    const clean = Object.fromEntries(['name', 'short', 'description', 'version', 'author', 'url', 'config'].filter(key =>
-      Object.hasOwn(manifest, key)).map(key => [key, manifest[key]]));
+    // Keep version-owned metadata; runtime state never comes from the package.
+    const clean = Object.fromEntries(Object.entries(manifest).filter(([key]) => !['builtin', 'preview', 'selected', 'revision', 'canUpdate'].includes(key)));
     return { manifest: clean, files, ...(preview ? { preview } : {}), size: reader.total, compressedSize: compressed };
   } catch (error) {
     if (error instanceof AppError) throw error;

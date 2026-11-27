@@ -1,0 +1,550 @@
+/* Scan this app's own source and nothing else. Tailwind's automatic detection
+   walks the whole repository, turning a word in a Rust file or a document into a
+   utility class in the shipped stylesheet: `.filter` and `.transform` were
+   here because api.rs calls `.filter(...)`. Worse than the wasted bytes, it
+   made the build depend on files that have nothing to do with it -- adding an
+   unrelated workflow changed the CSS, and with it the content hash of every
+   asset. */
+@import "tailwindcss" source(none);
+@source "../index.html";
+@source "../src";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* 原生控件（滚动条、下拉、日期选择器）跟着这一档走：不声明的话它们一直是亮色的 ——
+     .dark 下页面底色变暗、滚动条仍是浅灰。index.html 的首帧内联脚本也把同一档写进
+     documentElement.style.colorScheme（两处同源，改一处记得改另一处）。 */
+  color-scheme: light;
+  --radius: 0.625rem;
+  /* 页面底色：参考站是 oklch(0.985) 那一档浅灰，卡片才「浮」得出来。原来两面都是纯白，
+     卡片只能靠描边+阴影区分，整页看着发闷。 */
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.18 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0 0);
+  --primary: oklch(0.18 0 0);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.96 0 0);
+  --secondary-foreground: oklch(0.18 0 0);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.955 0 0);
+  --accent-foreground: oklch(0.18 0 0);
+  /* 「出错了」那支红：管**文字**（读失败 / 网络错误）——与 --ok / --warn 并列的第三枚语义色。
+     改前是 oklch(0.3 0 0)≈正文色、暗色那份更是与 --foreground 逐字相同 —— 报错那行
+     看起来跟普通文字没两样（2026-10-17 随暗面口径一并补上）。白卡上 5.58:1，过 12px 小字 AA 的 4.5。 */
+  --destructive: oklch(0.54 0.19 25);
+  /* 描边：参考站是这一档冷灰（带一点点蓝），比纯中性灰更像「卡片的一道线」。 */
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.62 0 0);
+  /* 九色调色板：曲线要用几组同时可分辨的线，单色阶在三组以上就只剩深浅，
+     于是给延迟曲线一份真正的色相环（1-9 依次是蓝 / 橙 / 青 / 紫 / 红 / 绿 /
+     蓝青 / 黄 / 品红）。亮色下压亮度保证白底可读，深色下抬亮度，色相不变，
+     所以同一台机器在两种主题下是同一种颜色。 */
+  /* 调色板按图表的取色顺序排（NodeDetail 里那张表逐档引用）。删档之前先 grep 一遍 ——
+     零引用的色档留着只会让「改调色板」看起来有并不存在的消费方。 */
+  --chart-1: oklch(0.58 0.17 250);
+  --chart-2: oklch(0.66 0.16 45);
+  --chart-3: oklch(0.6 0.13 190);
+  --chart-4: oklch(0.55 0.18 295);
+  --chart-5: oklch(0.58 0.19 20);
+  --chart-8: oklch(0.66 0.14 70);
+  --chart-9: oklch(0.58 0.18 335);
+  /* 进度条按"越满越危险"上色，所以这里有真正的绿与琥珀：单色阶表达不了严重度。 */
+  --ok: oklch(0.6 0.15 155);
+  --warn: oklch(0.62 0.15 70);
+  /* 节点地球那三块颜色（见 index.css 末尾的 .globe-*）：海面与陆地的淡染、圆盘边缘
+     的暗影。数值取自上游的亮色一套 —— 它是暖纸底，本站是近白底，所以
+     透明度各抬了一点，否则淡到看不见。
+     ★**陆地必须比海面明显暗**：0.16 / 0.18 这两档实测**亮度几乎相同**（228.5 对 228.8），
+     只靠冷暖分开 —— 于是哪一块看起来像「灰块」全看它周围有什么（挨着海岸线的那片海
+     会被深色描边衬成灰、大片陆地内部反倒显得白），站长看到的就是「灰白互换」。
+     现在陆地压到 0.30、海面提到 0.12：亮度差 32（205 对 237），远近都不会再认错。 */
+  --globe-ocean: rgba(72, 118, 136, 0.12);
+  --globe-land: rgba(118, 86, 40, 0.3);
+  --globe-rim: rgba(42, 33, 20, 0.2);
+  /* The status dot. Each clears 3:1 against the card (3.7 and 5.5), and 1.5:1
+     against the other, the separation red-green colour blindness still
+     perceives. */
+}
+
+.dark {
+  /* 原生控件在暗色下也走暗的那一套（见 :root 里的同一行）。 */
+  color-scheme: dark;
+  /* ── 暗色的文字与底色：对着上游实测过的那一套调过 ─────────────────────────────
+     站长 2026-10-06 反馈「全暗模式下字的颜色有些刺眼」。把原站 :root 里那几档取出来算成
+     OKLCH，问题就很清楚 —— 它不是"亮一点/暗一点"，而是**对比度差了一档，而且它是暖的**：
+
+       原站  void #15130f = oklch(0.188 0.0085 84.6)   ← 暖的近黑（比本站更亮一点）
+             ink  #ddd6c8 = oklch(0.878 0.020 84.6)   ← 暖的米白，不是纯白
+             ink-dim       = oklch(0.752 0.027 87)    ← 次级文字比本站的还亮
+             正文/底 = 12.83:1，主次两级亮度差 0.125
+       本站（改前）正文 oklch(0.98 0 0) / 底 0.145 → **18.6:1**，主次亮度差 0.28
+
+     纯白 0.98 配近黑底是"能看清"但"盯着累"：对比度 18.6:1 远超需要的量，且中性白在暖色
+     的机器读数里显得生硬。改法是两条：**把正文压到原站那一档（≈12.5:1）**、**整体偏暖一档
+     （H≈85°、C≈0.012~0.018）**，同时把次级文字提亮，让主次两级收拢到原站那种 0.12 左右。
+     底色跟着暖一点点、亮一点点（0.145 → 0.155），免得"暖字配冷底"看着脏。
+
+     改完的实测（卡片底 vs 文字）：正文 **12.72:1**、弱化文字 **8.21:1**、主次亮度差 0.130
+     （原站 12.83:1 / 8.41:1 / 0.125，基本重合）—— 仍远高于 WCAG AA 的 4.5:1，只是不再刺眼。
+     2026-10-17 卡片抬到 0.23 后复测：正文 **11.96:1**、弱化 **7.72:1** —— 掉的是余量不是档位。
+     亮色一套**没动**（站长只提了全暗模式；亮色那套是 0.18/0.985）。 */
+  --background: oklch(0.155 0.004 85);
+  --foreground: oklch(0.885 0.012 85);
+  /* 卡片面：0.21 → **0.23**（2026-10-17 反馈「暗色下卡片与页面底区分不明显」）。
+     卡/底间距 0.055 → **0.075**（0.07 正是老口径里「抬升面」那一档）；合成对比
+     卡/底 1.10 → **1.16**；配合同轮描边 13% → 15%，描边线/底 1.49 → **1.67**。
+     正文/卡片 12.60 → 11.96（复测见上），仍稳；再上探 0.24 会让卡片"浮灰"、正文跌破
+     12 —— 停在 0.23。 */
+  --card: oklch(0.23 0.004 85);
+  --card-foreground: oklch(0.885 0.012 85);
+  --popover: oklch(0.23 0.004 85);
+  --popover-foreground: oklch(0.885 0.012 85);
+  --primary: oklch(0.885 0.012 85);
+  --primary-foreground: oklch(0.23 0.004 85);
+  --secondary: oklch(0.28 0.005 85);
+  --secondary-foreground: oklch(0.885 0.012 85);
+  --muted: oklch(0.28 0.005 85);
+  --muted-foreground: oklch(0.755 0.018 85);
+  --accent: oklch(0.28 0.005 85);
+  --accent-foreground: oklch(0.885 0.012 85);
+  /* 「出错了」的红：暗底上抬亮度（与亮色同一支色相，亮 0.54 / 暗 0.7）。改前与 --foreground 逐字相同。 */
+  --destructive: oklch(0.7 0.17 25);
+  /* 描边也跟着换成那支暖墨：纯白 12% 在暖色文字旁边会显出一道冷边。
+     2026-10-17 13% → **15%**：卡片抬高那轮把卡缘线一并提一档（合成后线/底 1.49 → 1.67），
+     暗底上卡片的轮廓才立得住；同一支暖墨，只动透明度。 */
+  --border: oklch(0.885 0.012 85 / 15%);
+  /* ★表单边框单独一档（2026-11-21 三审）：16% alpha 合成到卡片上只有 1.51:1，而
+     WCAG 1.4.11 对「必要边界」（输入框）要求 3:1 —— 无焦点时输入框几乎看不见轮廓。
+     `--border` 仍是 15%（卡片描边属装饰，可豁免）。实测 16%→1.51:1、34%→2.56:1、
+     40%→3.03:1，取 40% 才真正过 3:1。 */
+  --input: oklch(0.885 0.012 85 / 40%);
+  --ring: oklch(0.6 0.008 85);
+  /* 与亮色同一份色相，只抬亮度：深色底上压暗的线会糊在一起。 */
+  --chart-1: oklch(0.72 0.15 250);
+  --chart-2: oklch(0.78 0.14 55);
+  --chart-3: oklch(0.74 0.12 190);
+  --chart-4: oklch(0.7 0.16 295);
+  --chart-5: oklch(0.7 0.17 20);
+  --chart-8: oklch(0.8 0.13 75);
+  --chart-9: oklch(0.72 0.16 335);
+  --ok: oklch(0.74 0.14 155);
+  --warn: oklch(0.8 0.13 75);
+  /* 深色这一套的底色与上游逐值相同（它的暗底就是 oklch(0.145) 那一档，跟本站几乎同色）。
+     ★透明度同亮色那套的理由调过：0.14 / 0.15 的亮度差只有 2.8（33.9 对 31.1），暗底上
+     更是分不出陆海；现在陆地 0.26、海面 0.12，亮度差 23.5（51.1 对 27.6）。
+     暗色里**陆地比海面亮**（亮色里相反）—— 暗底上的「实心」块本来就该更亮，与亮色同一套直觉。 */
+  --globe-ocean: rgba(86, 138, 160, 0.12);
+  --globe-land: rgba(186, 154, 102, 0.26);
+  --globe-rim: rgba(8, 8, 8, 0.36);
+  /* 7.8 and 3.7 against the card, 2.1 apart. The muted grey would sit 1.15 from
+     the green. */
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+}
+
+@layer base {
+  /* 全局焦点环用 **foreground**（2026-11-07 二审）。原来这里写 `outline-ring/50`：所有没
+     自己声明 focus-visible 样式的元素（卡片、原生按钮…）Tab 到哪里都只有 1.76:1（亮）/
+     2.05:1（暗）的一圈淡线 —— 门槛是 3:1。换成全值 `--ring` 也只到 3.49 / 4.95，刚过线；
+     `--ring/80` 在亮色反而更差（2.33，半透明=与底色混）。
+     焦点环要的是「一眼看见」，用正文色（18.0 / 13.8）最稳，也与本族主题一贯的口径一致
+     （monitor-theme-hardening：焦点环别用 --ring）。 */
+  * { @apply border-border outline-foreground; }
+  /* Reserve the scrollbar's width on every page: without it, leaving a route
+     whose content exceeds the fold widens the page. */
+  html { scrollbar-gutter: stable; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* 系统开了「减弱动态效果」：骨架脉冲、卡片过渡、地球自转全部停下（地球那条在 Globe.tsx
+   里按同一个 media query 关了自转）。原先只有地球看这个设置，页面里其余动画照跑 ——
+   对前庭功能敏感的人是实打实的困扰（WCAG 2.3.3）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    /* ★delay 也要清（2026-11-21 三审）：只压 duration 时，带 delay 的入场动画会先停
+       delay 那么久、再以 0.01ms 播完 —— 观感是「隔了一拍闪一下」，比不动更难受。 */
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Tabular figures keep live numbers from shifting as they update. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- 节点地球
+
+   复刻自上游的 `.home-globe` / `.atlas` / `.atlas-side` 三块（值都对着抄），
+   换成本站的设计 token。规则**故意不放进 `@layer`**：SVG 内部那些类（.globe-land 等）
+   上游是直接写的，不套层才能稳稳盖住 Tailwind 的工具类。
+
+   两列的比例 1.35fr / 0.65fr 与圆盘高度 280px 都照上游；窄到 900px 以下改成上下两段
+   （上游是干脆不画，本站留着，窄屏自动降到 low 档）。 */
+.globe-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+@media (min-width: 900px) {
+  .globe-panel { grid-template-columns: 1.35fr 0.65fr; }
+}
+
+.globe-atlas {
+  position: relative;
+  height: 280px;
+  overflow: hidden;
+  cursor: grab;
+  /* 只让出竖向：手机上在地球上竖着划是滚页面（见组件注释），横着划才是转地球。 */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.globe-atlas[data-drag="true"] { cursor: grabbing; }
+/* 手机上把圆盘压低一档：460×240 的画布在 390 宽的屏上，280 高会上下各空出 38px，
+   地球只占中间那条；压在 210 就基本贴合（见 tools/verify_globe.mjs 的窄屏那几条）。 */
+@media (max-width: 720px) {
+  .globe-atlas { height: 210px; }
+}
+.globe-atlas svg { display: block; width: 100%; height: 100%; color: var(--foreground); }
+/* 地球上的东西一律不吃指针事件，只有那几枚透明的命中圆吃 —— 于是"点地球"与
+   "点某台机器"是两件互不干扰的事（上游同此）。 */
+.globe-atlas svg text,
+.globe-atlas svg path,
+.globe-atlas svg line,
+.globe-atlas svg circle { pointer-events: none; }
+.globe-atlas svg .hit { pointer-events: auto; cursor: pointer; }
+/* 键盘轮到某枚针上时（Tab）：画一圈前景色描边当焦点环 —— 命中圆半径 9，这一圈正好落在
+   针的外面、不压旁边的标签；SVG 上各家对原生 outline 的处理不一，关掉换这个。
+   用 focus-visible（不是 focus）：鼠标点击过针之后不留环。 */
+.globe-atlas svg .hit:focus-visible { outline: none; stroke: var(--foreground); stroke-width: 1.5; }
+/* 标签那行名字也能点：点了打开它对应的机器（见 Globe.tsx 的 Pin）。命中区给足 ——
+   Chrome 里 text 的命中本来就近乎整行盒，`bounding-box` 让内容框整个可点；
+   `visiblePainted` 写在前面，给不认前者的浏览器兜底（回落到字形 + 描边）。 */
+.globe-atlas svg .globe-label { pointer-events: visiblePainted; pointer-events: bounding-box; cursor: pointer; }
+
+.globe-ocean { fill: var(--globe-ocean); }
+.globe-land { fill: var(--globe-land); stroke: none; stroke-linejoin: round; stroke-linecap: round; }
+.globe-coast { fill: none; stroke: var(--foreground); stroke-width: 0.55; stroke-opacity: 0.36; }
+/* ★渐变的 id 由 JSX 用 useId() 生成（同页两颗地球不撞），这里**不能**写死 url(#globe-shade)：
+   CSS 规则的优先级高于 SVG 的 fill 呈现属性，写死之后 JSX 上的 fill={url(#…)} 永远不生效、
+   而那个硬编码 id 又已经不存在 —— 圆盘渐变与 --globe-rim 那圈直接失效（2026-11-21 三审抓到：
+   是我把 id 改成 useId 时漏掉这一条 CSS）。
+   改成读变量：Globe 在 <svg> 的 style 上写 `--globe-shade: url(#<useId>)`。留一个兜底值
+   给「变量没设」（老浏览器 / 样式被单独抽出）的情形。 */
+.globe-disk { fill: var(--globe-shade, url(#globe-shade)); stroke: var(--foreground); stroke-width: 1.05; stroke-opacity: 0.42; }
+.globe-wire { fill: none; stroke: var(--foreground); stroke-opacity: 0.1; }
+.globe-sweep { fill: none; stroke: var(--foreground); }
+.globe-base { stroke: var(--foreground); stroke-opacity: 0.4; stroke-width: 1; }
+.globe-link { fill: none; stroke: var(--foreground); stroke-width: 0.55; opacity: 0.32; }
+.globe-stem { fill: none; stroke: var(--foreground); stroke-width: 0.75; }
+/* 针是空心的琥珀色圆环（上游那枚 #e2ad45 就是这一档）：只表示"这里有一台"，
+   不表示在线与否 —— 在线/离线在下面的卡片里有话说。 */
+.globe-pin { fill: none; stroke: var(--warn); stroke-width: 1.15; }
+.globe-selected-ring { fill: none; stroke: var(--foreground); stroke-width: 1.2; stroke-dasharray: 2 2; }
+.globe-selected-core { fill: var(--foreground); stroke: var(--card); stroke-width: 1.4; }
+/* 标签底下垫一道卡片底色的描边（paint-order: stroke）：引线从文字后面穿过去时
+   文字仍然读得出来。字体大小与字距照上游。 */
+.globe-label {
+  fill: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, "IBM Plex Mono", monospace;
+  font-size: 9.35px;
+  stroke: var(--card);
+  stroke-width: 3;
+  paint-order: stroke;
+  stroke-linejoin: round;
+}
+.globe-caption {
+  fill: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, "IBM Plex Mono", monospace;
+  font-size: 8.8px;
+  letter-spacing: 1.4px;
+}
+
+.globe-side {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px 18px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+@media (min-width: 900px) {
+  .globe-side { border-top: 0; border-left: 1px solid var(--border); }
+}
+.globe-side-title { grid-column: 1 / -1; color: var(--muted-foreground); }
+.globe-reg {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.globe-reg:hover { color: var(--foreground); }
+/* 「全部」独占一整行：它是一条汇总（本分组一共几台），跟具体地区并排会读成"第一个地区"；
+   而两列的地区列表本来就要从它下面开始排。 */
+/* ★ 地区行撑到 32（≈7mm）**只留给窄屏**：面板在那里是上下两段、手指操作，20px（4mm）
+   点不准（WCAG 2.2 的硬线是 24）。桌面用鼠标 —— 站长 2026-10-07 看过桌面之后说
+   「电脑端的地区显示改回原来那样」，于是这里按 900px 那道坎分开：桌面维持原来的行高
+   （面板也正好是 280 高的格子），窄屏才撑高。行与行之间留着 .globe-side 的 8px gap，
+   命中区不会叠到邻居身上（撑高后命中 40，正好等于行高 32 + 行距 8）。 */
+@media (max-width: 899px) {
+  .globe-reg { min-height: 32px; }
+}
+.globe-reg-all { grid-column: 1 / -1; }
+/* 大机群时地区列表可能几十行：单独收进一个滚动区，别把整块面板撑成一堵墙
+   （100 台实测 57 行 → 面板 845px 高）。上限对齐地球那一格：桌面 200、窄屏 232
+   （约 5 行半，露半行给「还能滚」的提示）。列表本来就短的小机群看不出区别。 */
+.globe-rows {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px 18px;
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  /* 底部渐隐 + 14px 垫片：滚到底时渐隐盖的是垫片、最后一行完整；没滚到底时
+     半截行是渐隐的（读起来像「下面还有」而不是「被切掉了」）。 */
+  padding-bottom: 14px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+}
+@media (max-width: 899px) {
+  .globe-rows { max-height: 232px; }
+}
+.globe-reg span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.globe-reg b { color: var(--foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
+/* 地区行上的「有机器离线」小点：这台地区里有离线时挂在台数后面（全在线不出现），
+   悬停的 title 里写着「N 台 · M 台离线」。颜色跟针同一族的琥珀色。 */
+.globe-reg-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--warn);
+}
+/* 选中的那一行加粗提亮（上游是加大字号；这里跟着本站的字重语言走，不为一行改字号，
+   否则整块的行高会跟着跳）。 */
+.globe-reg[aria-pressed="true"] { color: var(--foreground); font-weight: 600; }
+.globe-reg-flag {
+  display: inline-block;
+  height: 12px;
+  width: 16px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px var(--border);
+}
+/* 多台地区针边上的台数：与针同色、小一号加粗，衬一圈底色免得压在岸线上看不清。 */
+.globe-count {
+  fill: var(--warn);
+  font-size: 7px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--card);
+  stroke-width: 1.6px;
+}
+
+/* 顶栏那枚开关：关掉时压暗，一眼看得出地球是关着的。 */
+.globe-toggle[aria-pressed="false"] { color: var(--muted-foreground); opacity: 0.6; }
+
+/* 页脚署名（右下角那行）：比正文的弱化色再淡一档，只作署名，不跟页面里的读数抢注意力；
+   「jikasei」那截是本主题的源码仓库链接（地址见 App.tsx 的 REPO_URL），悬停才出下划线。 */
+/* 顶栏那条图标带（.header-tools）：装不下时横向滑动，与分组标签同一套做法。
+   滑动条藏起来 —— 它长在 sticky 顶栏里、又只在窄窗口才出现，露出来就是一条横杠；
+   「还能滑」的提示由露一半的那枚图标给（与分组标签行一致）。 */
+.header-tools { scrollbar-width: none; }
+.header-tools::-webkit-scrollbar { display: none; }
+
+.theme-credit {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+  /* 去掉 opacity（2026-11-07 二审）：0.62 把 5.26:1 压成 **2.51:1**，12px 小字的最低要求
+     是 4.5:1 —— 亮色下这行署名基本读不清。「低调」靠 muted-foreground 这一档本身就够了
+     （5.26 / 8.96），不需要再乘一次透明度。 */
+}
+.theme-credit a { color: inherit; text-decoration: none; }
+.theme-credit a:hover { text-decoration: underline; }
+
+/* 顶栏那个搜索框（src/components/SearchBox.tsx）：
+   ① `type="search"` 在 WebKit 里自带一枚小叉，关掉它 —— 框里已经有一枚自己的清空按钮，
+      两个长得差不多、做同一件事的按钮并排只会让人犹豫点哪个；
+   ② **清空那枚只在框长开着（有焦点）时出现**：收起时那一格只有 36px，放大镜已经占满，
+      再挤一枚叉就成了「两枚图标叠在一起」。展开／收起的动效由 `transition-all` 负责。 */
+.search-input::-webkit-search-cancel-button,
+.search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+/* ★ position: absolute 必须写在这里（而不是只写在组件的类名里）：组件类名里的 `absolute`
+   是 Tailwind 的分层工具类，而 `.tap` 的 `position: relative`（本文件、未分层）在级联顺序上
+   压过它 —— 按钮于是落回 flex 流、被满宽的 input 顶到容器右缘之外（2026-10-12 站长实拍：
+   清空按钮右沿超出输入框 16px，看起来贴在边框外/角上）。未分层对未分层按特异性裁决：
+   `.search-field .search-clear`（0,2,0）> `.tap`（0,1,0) ✓。垂直居中交给容器的
+   `align-items: center` 对绝对定位子元素的 static position（挺标准的做法，Chrome/Safari/FF 都按规范实现）。 */
+.search-field .search-clear { display: none; position: absolute; }
+.search-field:focus-within .search-clear { display: grid; }
+
+/* 预算卡那两枚明细浮层（「各节点月摊 / 各节点剩余价值」，src/components/Summary.tsx）。
+   服务器一多、可计的能到近百台 —— 不限高的话浮层会长出屏幕（demo 站 87 台实测）。
+   限高 min(24rem, 60vh)：桌面大约放十几行，手机跟随视口；超高就在浮层里滚，
+   overscroll-contain 防滚到头把页面也带着跑；细滚动条不抢视觉。
+   浮层紧贴块底（没有 margin gap）是配合悬停的：指针从块移进浮层的整条路上都还在 Block 里，
+   不会触发 pointerleave 把浮层关掉（原来的 6px mt 就会——桌面鼠标根本摸不进浮层）。 */
+/* 预算明细浮层的滚动条（2026-10-15，与 rakugaki 同步）：系统灰滚动条（厚拇指 + 上下箭头 +
+   浅灰轨道）贴在这张干净的小卡上很扎眼。改成——轨道全透（卡面直接露出来）、拇指是一小截
+   淡墨的圆头、去掉箭头按钮；悬停加深一档。Firefox 用 `scrollbar-color` 对齐（Chrome/Edge/
+   Safari 走 ::-webkit-*）。`scrollbar-gutter: stable` 让有/无滚动的两类浮层右缘一样宽、
+   金额列不跳。 */
+/* 概览卡片的悬停浮层：预算那两块（15rem）与「今日流量」的节点明细（22rem）共用这一套
+   滚动与纸面滚动条。 */
+/* 概览卡片的明细浮层（2026-10-12 加，2026-10-31 改成三段式）：
+   外层只管**高度上限**（机器多时最多这么高，再高就把视口顶穿）；
+   表头与尾巴是 flex 的固定项，只有中间那节 `.detail-scroll` 滚动 —— 一百多台机器滚到底，
+   仍然知道自己在看哪张卡的多少台、口径是什么。 */
+.budget-detail,
+.traffic-detail {
+  max-height: min(24rem, 60vh);
+}
+.detail-scroll {
+  min-height: 0;                    /* flex 子项的默认 min-height:auto 会撑破父级上限 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--foreground) 35%, transparent) transparent;
+  scrollbar-gutter: stable;
+}
+.detail-scroll::-webkit-scrollbar { width: 10px; }
+.detail-scroll::-webkit-scrollbar-track { background: transparent; }
+.detail-scroll::-webkit-scrollbar-button { display: none; }
+.detail-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 35%, transparent);
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+.detail-scroll::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--foreground) 55%, transparent); }
+.detail-scroll::-webkit-scrollbar-corner { background: transparent; }
+/* 「下面还有」的提示（见 components/DetailScroll.tsx）：滚动视口下沿一道渐隐遮罩 ——
+   露在边上的那一行淡出去，滚到底（data-detail-more 撤掉）就恢复干净。
+   之所以不用一条 sticky 的渐变条：它会压住最后一行、在 7 台那种「刚好装下」时还会多出
+   一条灰影（站长 2026-10-31 那轮就踩过「明明没有更多了还留着灰」）。 */
+.detail-scroll[data-detail-more] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+}
+
+/* 触屏命中区：**外观一点不动，只把可点范围往外撑**。
+   手指比鼠标粗 —— Apple 的通行线是 44×44，WCAG 2.2 的硬线（2.5.8）是 24×24。
+   撑出来的那圈是 ::before，透明、不参与布局，所以排版、间距、视觉都不受影响；
+   命中测试时它算作所属元素（`document.elementFromPoint` 返回的是宿主元素）。
+   类名跟着控件自己的高度走（size-9 = 36px 等），一眼看得出撑完是多少：
+     tap-9   36×36 → 44×44（顶栏那几枚图标、搜索方框）
+     tap-8   32 高  → 44    （站名）
+     tap-y-6 24 高  → 44 高，横向不动 —— 密排的分段按钮之间别互相盖住
+   地区列表（.globe-reg）行距只有 8px，上下各撑 4px 到 28px 就不重叠了，再大就得动视觉。 */
+.tap { position: relative; }
+.tap::before { content: ""; position: absolute; border-radius: inherit; }
+/* ★ 同一个元素同时戴 `tap` 和 `absolute` 时，`absolute` 必须赢 —— 与上面 search-clear 那条
+   是同一类问题（2026-10-12）的镜像：两个都是单类选择器、`.tap` 又在 Tailwind 层之后，靠顺序
+   裁决必输。本轮受害者是延迟图右上角那枚「重置」：它因此掉回文档流、落在图下方左缘
+   （2026-10-15 在护栏里量到 y 比图表容器顶低 700+px）。双类选择器（0,2,0）与顺序无关。 */
+.tap.absolute { position: absolute; }
+.tap-9::before { inset: -4px; }
+.tap-8::before { inset: -6px; }
+.tap-y-6::before { inset: -10px 0; }
+.globe-reg { position: relative; }
+.globe-reg::before { content: ""; position: absolute; inset: -4px 0; border-radius: 4px; }
+
+/* ---------------------------------------------------------------- 详细档三枚读数盒的让位规则
+
+   速率 / 总量 / 到期这三枚读数盒**永远同一行**（站长 2026-10-14 定的形态）；薄的地方
+   只动第三枚**内部**、按**卡片宽度**让位（容器查询，不是视口）——卡片长在 1/2/3 列的
+   网格里，同一档视口下卡片能差一倍：390 手机单列 326px、640 平板两列 ~226px、
+   1280 桌面三列 ~367px，任何视口断点都对不上这条线。
+
+   3 等分时第三枚内容宽只有 ~45-87px，而「剩余 280 天」「已过期 128 天」这类 3 位读数
+   在 12px 下要 62-81px —— 站长 2026-10-14 手机截图的问题就在这。修复不动外形：
+     · 窄卡（内容盒 < 350px）：三枚读数降一档到 11px（窄卡降字号是本主题的既定语法）、
+       盒内边距由 8px 收到 4px（再换出每枚 8px 可写宽）、第三枚的日历图标隐藏
+       （这是这一枚唯一能省出来的 18px）、日期行去掉按图标的缩进；读数实在超宽时在
+       「剩余｜280 天」的空格处折行（数字+单位用不断行空格连成整块，见 NodeCard 的
+       ExpiryReading）——最窄的 320 也能完整显示；
+     · 宽卡（≥ 350px）：图标、缩进、内边距、单行、12px —— 与从前逐像素相同。
+
+   350 这个门槛是量出来的（图标留着、12px 时）：第三枚要放得下「已过期 128 天」（74px）+
+   图标 18px + 内边距 16px，每枚内容宽 (C-16)/3 ≥ 108 ⇒ C ≥ 340，留 10px 余量取 350。
+   逐宽证据（320→1600 十档）与判据：tools/verify_card_expiry_fit.mjs。
+
+   ★为什么用容器查询改子元素而不是换模板：@container 只作用于容器的后代，**容器不能给
+   自己改样式** —— 3 等分的模板写在 [data-stats] 自己身上，让位规则放进查询、全部落到
+   后代（字号、图标、日期行）。 */
+[data-stats] {
+  container-type: inline-size;
+  container-name: stats;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@container stats (max-width: 349.99px) {
+  [data-stats] > [data-stat] { padding-left: 4px; padding-right: 4px; }
+  [data-stats] .tnum { font-size: 11px; }
+  [data-stats] [data-stat="expiry"] svg { display: none; }
+  /* 宽卡照旧单行截断（与线上逐像素相同）；窄卡把这两处放开折行，保证完整显示。 */
+  [data-stats] .stat-wrap { white-space: normal; }
+  [data-stats] [data-stat-date] { font-size: 11px; padding-left: 0; white-space: normal; }
+}

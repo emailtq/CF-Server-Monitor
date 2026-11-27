@@ -50,10 +50,15 @@ async function write(db, key, value) {
   }
 }
 
-export async function selectMonitorTheme(db, short) {
+export async function prepareMonitorThemeSelection(db, short) {
   const { themes } = await loadMonitorThemes(db);
   if (short !== null && !themes.some(theme => theme.short === short)) throw new AppError('monitorThemeInvalid', 400);
-  await write(db, SELECTION_KEY, short);
+  return db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(SELECTION_KEY,JSON.stringify(short));
+}
+
+export async function selectMonitorTheme(db, short) {
+  try {await (await prepareMonitorThemeSelection(db,short)).run();}
+  catch(error) {throw error instanceof AppError?error:new AppError('monitorThemeUnavailable',503);}
 }
 
 export async function saveMonitorThemeConfig(db, short, config) {

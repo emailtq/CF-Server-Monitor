@@ -442,6 +442,24 @@ export const uploadMonitorTheme = (file, apiIndex = 0, requestOwner) =>
 export const fetchMonitorThemeThumbnail = (theme, apiIndex = 0, requestOwner) =>
   http.postByIndex('/admin/api', {action:'get_monitor_theme_thumbnail',theme}, apiIndex, {responseType:'blob',requestOwner})
 
+export const monitorThemeApi = (method, path, body, apiIndex = 0, requestOwner, options = {}) =>
+  http[method.toLowerCase()](`/api${path}`, ...(['GET', 'DELETE'].includes(method) ? [] : [body]), {
+    ...options, baseUrl: getApiBases()[apiIndex], requestOwner, responsePolicy: 'monitor', autoRedirect: false
+  })
+
+export const uploadMonitorThemeRest = async (file, apiIndex = 0, requestOwner) => {
+  if (!file.size) return { error: 'monitorThemeArchiveInvalid', status: 400 }
+  let result
+  const chunk = 4 * 1024 * 1024
+  for (let offset = 0; offset < file.size; offset += chunk) {
+    result = await monitorThemeApi('POST', `/themes?offset=${offset}&total=${file.size}`, file.slice(offset, offset + chunk), apiIndex, requestOwner, {
+      rawBody: true, contentType: 'application/octet-stream'
+    })
+    if (result.error) return result
+  }
+  return result
+}
+
 export const login = async (username, password, turnstileToken = '', apiIndex = 0, requestOwner) => {
   if (requestOwner && !requestOwner()) return { error: 'stale_request', stale: true, status: 0 }
   if (turnstileToken) {

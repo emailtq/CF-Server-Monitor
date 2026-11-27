@@ -1,5 +1,5 @@
 import { loadMonitorCompatAccess } from './monitorCompatAccess.js';
-import { checkAuth } from '../middleware/auth.js';
+import { checkAuth, getTerminalJwtPrincipal } from '../middleware/auth.js';
 import { decryptTurnstileData } from '../middleware/turnstile.js';
 import { isValidJwtSecret } from '../utils/settings.js';
 
@@ -28,7 +28,16 @@ export async function authorizeMonitorViewer(request, env, policy) {
   const previewToken = monitorCookie(request, 'cfsm_theme_preview_auth');
   const headers = new Headers(request.headers);
   if (previewToken && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${previewToken}`);
-  const authed = await checkAuth({ headers }, env, policy);
+  let authed = await checkAuth({ headers }, env, policy);
+  if (authed) {
+    // Reuse CF logout tombstones without creating a terminal authorization or extending its lease.
+    const principal = await getTerminalJwtPrincipal({headers},env,policy);
+    try {
+      const table = await env.DB.prepare("SELECT name FROM sqlite_master WHERE name='terminal_auth_sessions'").first();
+      const session = table && principal ? await env.DB.prepare('SELECT expires_at,revoked_at FROM terminal_auth_sessions WHERE jti=?').bind(principal.jti).first() : null;
+      if (!principal || (session && (session.revoked_at !== null || session.expires_at !== principal.exp))) authed = false;
+    } catch { return {...policy,status:503,authed:false}; }
+  }
   if (!policy.publicSite && !authed) return { ...policy, status: 401, authed };
   if (policy.turnstileEnabled) {
     if (!isValidJwtSecret(policy.jwt_secret)) return { ...policy, status: 503, authed };

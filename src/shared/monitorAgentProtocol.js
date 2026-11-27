@@ -10,6 +10,12 @@ export const MONITOR_AGENT_LIMITS = Object.freeze({
 const I64_MAX = 9223372036854775807n;
 const I64_MIN = -9223372036854775808n;
 const COUNTERS = ['net_rx_total', 'net_tx_total'];
+export const MONITOR_BYTE_FIELDS = ['mem_total','mem_used','swap_total','swap_used','disk_total','disk_used'];
+function reportByteTokens(report, tokens) {
+  const preserved = Object.fromEntries(MONITOR_BYTE_FIELDS.filter(key => Number.isInteger(report?.[key]) && !Number.isSafeInteger(report[key]) && report[key] >= 0 && tokens.get(report)?.has(key))
+    .map(key => [key,tokens.get(report).get(key)]));
+  return Object.keys(preserved).length ? preserved : undefined;
+}
 const REPORT_NUMBERS = ['uptime', 'cpu', 'mem_total', 'mem_used', 'swap_total', 'swap_used', 'disk_total', 'disk_used', 'net_rx', 'net_tx', 'tcp', 'udp', 'procs'];
 const REPORT_INTEGERS = REPORT_NUMBERS.filter(key => key !== 'cpu');
 const TERMINAL_METHODS = ['hello', 'bound', 'open', 'close', 'disable', 'disabled', 'start', 'ready', 'resize', 'credit', 'exit', 'error', 'ping', 'pong'];
@@ -179,6 +185,7 @@ function batch(params, tokens) {
   for (const sample of params.samples) {
     check(exact(sample, ['sampledAt', 'elapsedMs', 'report', 'extra']) && time(sample.sampledAt) && wholeNumber(sample.elapsedMs, 1));
     validateReport(sample.report, tokens, true);
+    sample.byteTokens = reportByteTokens(sample.report,tokens);
     extraMetrics(sample.extra);
   }
   for (const probe of params.probes) check(exact(probe, ['taskId', 'metricId', 'sampledAt', 'latencyMs']) && integer(probe.taskId, 1) && text(probe.metricId, EXTRA_PING_ID_PATTERN) && time(probe.sampledAt) && wholeNumber(probe.latencyMs, -1));
@@ -350,7 +357,10 @@ export function parseAgentRpc(raw, context = {}) {
       case 'hello':
         rpc.factCores = object(rpc.params) ? i64Token(rpc.params.cpu_cores, tokens.get(rpc.params)?.get('cpu_cores')) : null;
         break;
-      case 'report': rpc.trafficReading = validateReport(rpc.params, tokens); break;
+      case 'report':
+        rpc.trafficReading = validateReport(rpc.params, tokens);
+        rpc.byteTokens = reportByteTokens(rpc.params,tokens);
+        break;
       case 'ping.result': rpc.probeResult = validatePingResult(rpc.params, tokens); break;
       case 'ping.tasks': standardTasks(rpc.params, context.sending === true, tokens); break;
       default:
@@ -385,7 +395,13 @@ export function serializeAgentRpc(rpc, context = {}) {
   }
   let raw;
   try {
+    const byteTokens = new WeakMap();
+    const samples = new WeakSet();
+    if (frame.method === 'report' && frame.params) byteTokens.set(frame.params,rpc.byteTokens || {});
+    if (frame.method === 'cf.report.batch') for (const sample of frame.params?.samples || []) {samples.add(sample);byteTokens.set(sample.report,sample.byteTokens || {});}
     raw = JSON.stringify(frame, function (key, value) {
+      if (key === 'byteTokens' && samples.has(this)) return undefined;
+      if (MONITOR_BYTE_FIELDS.includes(key) && byteTokens.get(this)?.[key] != null) return JSON.rawJSON(byteTokens.get(this)[key]);
       const numericToken = COUNTERS.includes(key) || ['task_id', 'latency_ms', 'interval'].includes(key) || key === 'id' && Object.hasOwn(this, 'target');
       if (numericToken && (typeof value === 'string' || typeof value === 'bigint')) return JSON.rawJSON(String(value));
       return value;

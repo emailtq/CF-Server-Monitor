@@ -1,0 +1,11 @@
+{
+  "revision": "nullable.1",
+  "themes": {
+    "default": { "version": "1.4.3", "commit": "545d1279161a80b6cca515adc911f26447219717", "repository": "monitor-probe/monitor-theme-default", "builtin": true },
+    "serverstatus": { "version": "1.5.1", "commit": "d5fa50fc175a34dc92d729e11e05a50e228c6f1e", "repository": "monitor-probe/monitor-theme-serverstatus", "builtin": true },
+    "jikasei": { "version": "1.37.1", "commit": "db4daa78b2ab64f4ebb4592d2fe1ed6b00eb718f", "repository": "akanotanin/monitor-theme-jikasei", "builtin": false },
+    "naive": { "version": "1.1.0", "commit": "0ea15d4ff427ce477f0cbbb6fb416c9fc2bbca16", "repository": "akanotanin/monitor-theme-naive", "builtin": false },
+    "glassmorphism": { "version": "1.4.8", "commit": "8f12342918b29ca863683c86896cb944a5c938d0", "repository": "Gongsc/Theme-Glassmorphism", "builtin": false },
+    "kanso": { "version": "1.9.2", "commit": "a17c6d31653ca5fb7aec2ddc8a925069e90b9d19", "repository": "akanotanin/monitor-theme-kanso", "builtin": false }
+  }
+}

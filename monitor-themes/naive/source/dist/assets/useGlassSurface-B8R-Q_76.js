@@ -1,0 +1,1 @@
+import{it as e}from"./naive-ui--FQbAWY7.js";import{i as t}from"./index-Cym6sD2f.js";function n(){let n=t();return{isGlassEnabled:e(()=>n.backgroundEnabled),glassSurfaceStyle:e(()=>({"--glass-blur-radius":`${n.cardBlurRadius}px`}))}}export{n as t};

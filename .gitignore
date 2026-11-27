@@ -43,3 +43,8 @@ dist/
 !monitor-themes/**/
 !monitor-themes/**/dist/
 !monitor-themes/**/dist/**
+
+# Pinned consumer dependencies are local; source locks and built bundles are product inputs.
+monitor-themes/**/node_modules/
+!monitor-themes/naive/source/pnpm-lock.yaml
+monitor-themes/**/source/release/

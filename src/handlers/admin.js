@@ -11,7 +11,7 @@ import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } f
 import { getNotificationMessages } from '../services/notificationMessages.js';
 import { queuePanelLoginEvent, scheduleLoginDelivery } from '../services/loginEvents.js';
 import { loginEventDiagnostics } from '../database/loginEvents.js';
-import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
+import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition, SERVER_INSERT_SQL } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { validateExtraPingNodes } from '../shared/extraPing.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged, scheduleLatencyTasksChanged } from '../utils/agentConfigNotify.js';
@@ -21,7 +21,7 @@ import { getTerminalJwtPrincipal, getTerminalAdminPrincipal } from '../middlewar
 import { revokeTerminalAdmin } from '../database/terminal.js';
 import { handleTerminalAdminAction, disableTerminalAccess } from './terminal.js';
 import { handlePrepareRegistration } from './agentRegistration.js';
-import { ensureNodeToken, issueNodeToken } from '../database/nodeCredentials.js';
+import { ensureNodeToken, issueNodeToken, prepareNodeCredential } from '../database/nodeCredentials.js';
 import { notifyNodeCredentialsInvalidated } from '../utils/nodeCredentialNotify.js';
 import { prepareMonitorReporting } from '../services/monitorReporting.js';
 import { clearNodeReportCache } from './update.js';
@@ -52,8 +52,8 @@ const IMPORT_SERVER_SQL = `
     currency, expire_date,
     traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
     auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction,
-    offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp, traffic_alert_percent)
-  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, pid, ?, ?
+    offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp, traffic_alert_percent, public_remark)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, pid, ?, ?, ?
   FROM next
   WHERE pid IS NOT NULL
 `;
@@ -569,7 +569,7 @@ async function handleLoginAction({ request, env, sys, data, ctx }) {
   }
 }
 
-async function handleLogoutAction({ request, env, sys }) {
+export async function handleLogoutAction({ request, env, sys }) {
   const owners = new Map();
   const owner = await getTerminalJwtPrincipal(request, env, sys);
   if (owner) owners.set(owner.jti, owner);
@@ -878,6 +878,13 @@ const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   send_test_notification: handleSendTestNotificationAction
 };
 
+export async function testNotificationChannel(db, input) {
+  const {channel,config}=await prepareNotificationChannel(db,input);
+  const settings=notificationChannelSettings(channel,config),messages=getNotificationMessages(settings);
+  const result=await sendNotification(settings,messages.testMessage,{event:messages.events.test,message:messages.testMessage,client:'CF Server Monitor'});
+  if(result)throw notificationConfigError('notification_test_failed',502);
+}
+
 async function handleNotificationConfigAction({ env, data, ctx }) {
   try {
     if (new TextEncoder().encode(JSON.stringify(data)).length > NOTIFICATION_CONFIG_MAX_BYTES) throw notificationConfigError();
@@ -897,11 +904,7 @@ async function handleNotificationConfigAction({ env, data, ctx }) {
       return createSuccessResponse(config);
     }
     assertNotificationObject(data, ['action', 'channel']);
-    const { channel, config } = await prepareNotificationChannel(env.DB, data.channel);
-    const settings = notificationChannelSettings(channel, config);
-    const messages = getNotificationMessages(settings);
-    const result = await sendNotification(settings, messages.testMessage, { event: messages.events.test, message: messages.testMessage, client: 'CF Server Monitor' });
-    if (result) throw notificationConfigError('notification_test_failed', 502);
+    await testNotificationChannel(env.DB,data.channel);
     return createSuccessResponse({ success: true });
   } catch (error) {
     // Never return/log transport, URL, parser or D1 exception text from the secret-bearing path.
@@ -1019,6 +1022,19 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       return simpleAuthResponse();
     }
 
+    return await executeAdminAction({request,env,sys,data,loadFullSettings,ctx});
+  } catch (e) {
+    if (nodeCredentialAction) return Response.json({error:'node_credential_unavailable'}, {status:503, headers:{'Cache-Control':'no-store'}});
+    if (e instanceof SyntaxError) return createBadRequestResponse('invalidRequest');
+    console.error('Admin API 错误:', e);
+    return createErrorResponse(e);
+  }
+}
+
+// Both HTTP contracts invoke the same authorized business dispatch, without self-fetching.
+export async function executeAdminAction({request,env,sys,data,loadFullSettings=null,ctx=null,nativePatch=null}) {
+  const nodeCredentialAction=['node_read_install','node_reset_token','node_prepare_registration'].includes(data.action);
+  try {
     if (data.action?.startsWith('latency_')) {
       const actions = { latency_list: 'reconcile', latency_save: 'save', latency_node: 'node', latency_order: 'order', latency_delete: 'delete' };
       if (!actions[data.action]) return createBadRequestResponse('invalidAction');
@@ -1285,19 +1301,30 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       const id = crypto.randomUUID();
-      const group = data.server_group || 'Default';
+      const group = nativePatch ? nativePatch.server_group : data.server_group || 'Default';
       const region = normalizeServerRegion(data.region);
 
       try {
         // 分区号与 sort_order 在同一条 INSERT 内分配，避免并发建号算出同一个分区号。
-        await insertServerWithPartition(env.DB, {
+        if(nativePatch) {
+          const credential=await prepareNodeCredential(id,sys.jwt_secret);
+          const entries=Object.entries(nativePatch).filter(([key])=>!['name','server_group','region'].includes(key));
+          const statements=[env.DB.prepare(SERVER_INSERT_SQL).bind(0,id,name,group,region,networkInterfaces.value,Date.now()),
+            env.DB.prepare(`INSERT INTO terminal_nodes(server_id,token_hash,token_ciphertext,token_version,credential_version,enabled,updated_at)
+              VALUES (?,CASE WHEN changes()=1 THEN ? ELSE NULL END,?,1,1,0,?)`).bind(id,credential.hash,credential.ciphertext,Date.now())];
+          if(entries.length)statements.push(env.DB.prepare(`UPDATE servers SET ${entries.map(([key])=>`"${key}" = ?`).join(', ')} WHERE id=?`).bind(...entries.map(([,value])=>value),id));
+          if(Object.hasOwn(nativePatch,'reset_day'))statements.push(prepareMonitorReporting(env.DB,id,{collect_interval:0,report_interval:60,wss_report_interval:2,reset_day:nativePatch.reset_day,connection_mode:'auto'},networkInterfaces.value));
+          await env.DB.batch(statements);
+        } else {
+          await insertServerWithPartition(env.DB, {
           id,
           name,
           group,
           region,
           iface: networkInterfaces.value
-        });
-        await issueNodeToken(env.DB, id, Date.now(), sys.jwt_secret);
+          });
+          await issueNodeToken(env.DB, id, Date.now(), sys.jwt_secret);
+        }
       } catch (e) {
         return handleServerMutationError(env.DB, e, 'serverAddFailed');
       }
@@ -1337,9 +1364,18 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         }
       }
 
-      await env.DB.batch(orders.map((id, i) =>
-        env.DB.prepare('UPDATE servers SET sort_order = ? WHERE id = ?').bind(i, id)
-      ));
+      const statements=orders.map((id,i)=>env.DB.prepare('UPDATE servers SET sort_order = ? WHERE id = ?').bind(i,id));
+      if(nativePatch) {
+        // A failing final assertion rolls back all renumbering, including a concurrent membership change.
+        statements.push(env.DB.prepare(`INSERT INTO monitor_compat_ids(id,server_id)
+          SELECT CASE WHEN (SELECT COUNT(*) FROM servers)=? AND (SELECT COUNT(*) FROM servers WHERE id IN(SELECT value FROM json_each(?)))=? THEN ? ELSE 0 END, ?
+          ON CONFLICT(server_id) DO NOTHING`).bind(orders.length,JSON.stringify(orders),orders.length,nativePatch.publicId,orders[0]));
+      }
+      try { await env.DB.batch(statements); }
+      catch(error) {
+        if(nativePatch&&/CHECK constraint failed: id BETWEEN/.test(error.message))return createBadRequestResponse('sortOrderConflict');
+        throw error;
+      }
       
       clearServersListCache();
       
@@ -1349,7 +1385,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       });
     }
     else if (data.action === 'edit') {
-      if (sys.latency_tasks && PING_NODE_FIELDS.some(field => Object.hasOwn(data, field))) throw new AppError('latency_tasks_authoritative', 409);
+      if (sys.latency_tasks && !nativePatch && PING_NODE_FIELDS.some(field => Object.hasOwn(data, field))) throw new AppError('latency_tasks_authoritative', 409);
       const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, traffic_alert_percent, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
@@ -1401,43 +1437,25 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         currency,
         expire_date
       });
-      const editedPingFields = PING_NODE_FIELDS.filter(field => Object.hasOwn(data, field));
-      const pingAssignments = editedPingFields.map(field => `${field} = ?, `).join('');
+      const editedPingFields = nativePatch ? [] : PING_NODE_FIELDS.filter(field => Object.hasOwn(data, field));
       
       try {
-        await env.DB.batch([env.DB.prepare(`
-          UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, ${pingAssignments}rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?
-          WHERE id = ?
-        `).bind(
-          name || '',
-          server_group || 'Default',
-          normalizeServerRegion(region),
-          safeTags,
-          safeNote,
-          billingData.price,
-          billingData.billing_cycle,
-          billingData.auto_renewal,
-          billingData.currency,
-          billingData.expire_date,
-          traffic_limit || '',
-          traffic_calc_type || 'total',
-          networkInterfaces.value,
-          normalizedAgentConfig.reset_day,
-          normalizedAgentConfig.collect_interval,
-          normalizedAgentConfig.report_interval,
-          normalizedAgentConfig.wss_report_interval,
-          normalizedAgentConfig.connection_mode,
-          normalizedAgentConfig.ping_mode,
-          normalizeBooleanFlag(auto_update),
-          ...editedPingFields.map(field => pingNodes.values[field] ?? null),
-          safeRx,
-          safeTx,
-          normalizeBooleanFlag(offline_notify_disabled),
-          normalizeBooleanFlag(is_hidden),
-          normalizePctOrNull(traffic_alert_percent),
-          id
-        ),prepareMonitorReporting(env.DB,id,normalizedAgentConfig,networkInterfaces.value)]);
+        const values={name:name||'',server_group:server_group||'Default',region:normalizeServerRegion(region),tags:safeTags,note:safeNote,
+          price:billingData.price,billing_cycle:billingData.billing_cycle,auto_renewal:billingData.auto_renewal,currency:billingData.currency,expire_date:billingData.expire_date,
+          traffic_limit:traffic_limit||'',traffic_calc_type:traffic_calc_type||'total',interface:networkInterfaces.value,
+          ...Object.fromEntries(['reset_day','collect_interval','report_interval','wss_report_interval','connection_mode','ping_mode'].map(key=>[key,normalizedAgentConfig[key]])),auto_update:normalizeBooleanFlag(auto_update),
+          ...Object.fromEntries(editedPingFields.map(field=>[field,pingNodes.values[field]??null])),
+          rx_correction:safeRx,tx_correction:safeTx,offline_notify_disabled:normalizeBooleanFlag(offline_notify_disabled),is_hidden:normalizeBooleanFlag(is_hidden),traffic_alert_percent:normalizePctOrNull(traffic_alert_percent)};
+        if(Object.hasOwn(data,'public_remark')) {
+          if(typeof data.public_remark!=='string'||data.public_remark.length>500)return createBadRequestResponse('invalidPublicRemark');
+          values.public_remark=data.public_remark;
+        }
+        const entries=Object.entries(values).filter(([key])=>!nativePatch||Object.hasOwn(nativePatch,key));
+        if(entries.length) {
+          const statements=[env.DB.prepare(`UPDATE servers SET ${entries.map(([key])=>`"${key}" = ?`).join(', ')} WHERE id = ?`).bind(...entries.map(([key,value])=>nativePatch?nativePatch[key]:value),id)];
+          if(!nativePatch||Object.hasOwn(nativePatch,'reset_day'))statements.push(prepareMonitorReporting(env.DB,id,normalizedAgentConfig,networkInterfaces.value));
+          await env.DB.batch(statements);
+        }
       } catch (e) {
         return handleServerMutationError(env.DB, e, 'serverUpdateFailed');
       }
@@ -1450,17 +1468,18 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         message: 'serverUpdated'
       });
     }
-    else if (data.action === 'batch_group') {
+    else if (data.action === 'batch_group' || data.action === 'batch_metadata') {
       const { ids, server_group } = data;
+      const patch=data.action==='batch_group'?{server_group}:data.patch;
       if (!Array.isArray(ids) || !ids.length) return createBadRequestResponse('selectServersToEdit');
       if (new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string' || !isValidUUID(id))) return createBadRequestResponse('invalidServerIdInList');
-      if (typeof server_group !== 'string') return createBadRequestResponse('invalidGroupName');
+      if (!patch || !Object.keys(patch).length || Object.keys(patch).some(k=>!['server_group','offline_notify_disabled'].includes(k)) || (Object.hasOwn(patch,'server_group')&&typeof patch.server_group!=='string') || (Object.hasOwn(patch,'offline_notify_disabled')&&!['0','1'].includes(patch.offline_notify_disabled))) return createBadRequestResponse('invalidGroupName');
       const selected = JSON.stringify(ids);
       // One statement is atomic; a deleted/stale selected node must prevent every update.
-      const result = await env.DB.prepare(`UPDATE servers SET server_group = ?
+      const result = await env.DB.prepare(`UPDATE servers SET ${Object.keys(patch).map(k=>`${k} = ?`).join(', ')}
         WHERE id IN (SELECT value FROM json_each(?))
         AND (SELECT COUNT(*) FROM servers WHERE id IN (SELECT value FROM json_each(?))) = ?`)
-        .bind(server_group.trim(), selected, selected, ids.length).run();
+        .bind(...Object.values(patch).map(v=>v.trim()), selected, selected, ids.length).run();
       if (result.meta.changes !== ids.length) return createBadRequestResponse('invalidServerIdInList');
       clearServersListCache();
       return createSuccessResponse({ success: true, updated: ids.length });
@@ -1618,7 +1637,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             normalizeBooleanFlag(server.is_hidden),
             server.sort_order ?? 0,
             server.timestamp || Date.now(),
-            normalizePctOrNull(server.traffic_alert_percent)
+            normalizePctOrNull(server.traffic_alert_percent),
+            typeof server.public_remark === 'string' ? server.public_remark.slice(0, 500) : ''
           ).run();
           // 分区号被并发占用或 900 个已用满时 SELECT 不返回行，按跳过处理。
           // 只在明确的 0 行写入时跳过，缺少 meta 不能当成失败。
@@ -1688,10 +1708,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     
     return createBadRequestResponse('unknownAction');
     
-  } catch (e) {
-    if (nodeCredentialAction) return Response.json({error:'node_credential_unavailable'}, {status:503, headers:{'Cache-Control':'no-store'}});
-    if (e instanceof SyntaxError) return createBadRequestResponse('invalidRequest');
-    console.error('Admin API 错误:', e);
+  } catch(e) {
+    if(nodeCredentialAction)return Response.json({error:'node_credential_unavailable'},{status:503,headers:{'Cache-Control':'no-store'}});
+    if(e instanceof SyntaxError)return createBadRequestResponse('invalidRequest');
     return createErrorResponse(e);
   }
 }

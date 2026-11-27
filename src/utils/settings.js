@@ -13,7 +13,7 @@ import {
   normalizeNotificationLanguagePreference
 } from '../shared/languages.js';
 
-export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
+export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'touch_icon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
 
 export const LEGACY_NOTIFICATION_FIELDS = ['tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold'];
 
@@ -106,6 +106,7 @@ const defaults = {
   custom_bg: '',
   custom_bg_mobile: '',
   favicon: '',
+  touch_icon: '',
   custom_head: '',
   custom_script: '',
   csp_static: '',

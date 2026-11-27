@@ -1,7 +1,9 @@
 # Native Monitor themes
 
-These are the reviewed static release bundles used by the Worker default frontend.
-The build copies each release's `dist/` directory to `dist/_monitor_theme/<short>/`.
+Default and ServerStatus now use source-built CF nullable-data revisions.
+See [consumer revisions](CONSUMER-REVISIONS.md) for source pins, builds, local packages and update rules.
+The Worker build copies their revised `source/dist/` to `dist/_monitor_theme/<short>/`;
+the original `dist/` remains available to old pinned pages under the internal `upstream/` namespace.
 The original Default v1.4.3 `preview.png` is copied separately to an internal metadata
 namespace for the authenticated admin thumbnail. Manifest files stay in this source directory.
 
@@ -49,7 +51,7 @@ keys a version no longer declares are preserved when saving and cleared by reset
 Large forms use the original section navigation and two-column field layout; number
 validation includes sections not currently visible. The Use/In use badges, icon actions,
 source links, preview.png zoom and non-blocking notifications follow Minimal admin.
-Checking updates compares the release tag first and does not download an unchanged version.
+For an unmodified upstream package, checking updates compares the release tag first and does not download an unchanged version.
 The Worker reads that tag from GitHub's official `releases/latest` redirect, restricted
 to the same repository. It does not consume the shared unauthenticated REST API quota.
 For a new version, the original `theme.tar.gz` is checked when downloaded and unpacked.
@@ -65,7 +67,8 @@ Preview requires existing administrator preview authentication, and Turnstile ve
 when enabled. It never saves a global selection. The `monitor_preview` URL context is preserved
 across SPA navigation and WebSockets by an HTML bootstrap. Formal HTML also adds a WebSocket
 protocol marker, keeping unmarked CF clients on their existing incremental protocol, and
-migrates old `/#/server/<UUID>` and `/#/admin` links. Vendored JS/CSS files are unchanged.
+migrates old `/#/server/<UUID>` and `/#/admin` links. The original reference bundles are unchanged;
+CF revised sources and compiled bundles have separate provenance and version identities.
 Root-relative assets and APIs retain the same authenticated preview context with no-store
 responses; ordinary homepage requests do not consume a theme-selection cookie. A
 `monitor_revision` URL context pins each page and its imports to an immutable release,
@@ -90,7 +93,7 @@ root `theme.json` and `dist/index.html`. Links, devices, traversal and nested so
 are rejected. The uncompressed tar is streamed into indexed immutable D1 BLOB chunks
 of at most 512 KiB, with eight inserts per bounded transaction;
 only a complete validated upload publishes the D1 registry pointer. Failed/conflicting
-updates leave the previous release active. Theme JS/CSS files are not patched.
+updates leave the previous release active. Uploaded theme JS/CSS files are served unchanged. CF consumer changes are compiled from maintained source before packaging.
 
 Installation does not write the saved selection. A previously removed selected short
 resumes its saved selection when reinstalled. **Update theme** keeps configuration and
@@ -107,7 +110,8 @@ The shared adapter provides native me/nodes/history/live and generic theme confi
 Theme-specific SPA routes such as `/instance/:id` work without a CF theme implementation.
 Unknown API/admin/Agent paths never become SPA HTML. Optional integrations such as
 `/chicken/api/nodes` still require their own service. CF does not invent absent daily totals,
-virtualization details or aggregate packet-loss metrics. The package's own missing-data UI remains in use.
+virtualization details or aggregate packet-loss metrics. The CF consumer revisions distinguish unknown from zero in the original theme layouts;
+unmodified upstream packages retain their own missing-data behavior.
 
 ## Back up settings and reinstall packages separately
 

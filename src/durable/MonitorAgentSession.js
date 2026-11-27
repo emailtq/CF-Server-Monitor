@@ -335,10 +335,10 @@ export class MonitorAgentSession {
           const held=this.standardHeld.get(attachment.serverId);
           if (held) {
             await this.flushStandard(attachment,receivedAt,performance.now());
-            await recordMonitorStandard(this.host.env,attachment,await this.standardSession(attachment),{report,receivedAt,facts:input.facts});
+            await recordMonitorStandard(this.host.env,attachment,await this.standardSession(attachment),{report,byteTokens:rpc.byteTokens,receivedAt,facts:input.facts});
             ws.serializeAttachment({...ws.deserializeAttachment(),standardStarted:true});
           }
-          this.standardHeld.set(attachment.serverId,{report,receivedAt,monotonic:performance.now(),generation:attachment.generation,
+          this.standardHeld.set(attachment.serverId,{report,byteTokens:rpc.byteTokens,receivedAt,monotonic:performance.now(),generation:attachment.generation,
             leaseUntil:ws.deserializeAttachment().leaseUntil,started:ws.deserializeAttachment().standardStarted});
         }
         input.latest = {report,trafficReading,receivedAt,source:'monitor',owner:{serverId:attachment.serverId,tokenVersion:attachment.tokenVersion,generation:attachment.generation},capabilities:attachment.capabilities};
@@ -346,11 +346,11 @@ export class MonitorAgentSession {
         if(attachment.capabilities.some(c=>c.method === 'cf.report.batch')) {
           // Only a successful D1 result schedules the next checkpoint; this hint never books traffic or ACKs.
           if(!input.liveCheckpoint || receivedAt<input.liveCheckpoint.persistedAt || receivedAt-input.liveCheckpoint.persistedAt>=60000) {
-            input.liveCheckpoint=await recordMonitorLive(this.host.env,attachment,await this.standardSession(attachment),{report,receivedAt,facts:input.facts});
+            input.liveCheckpoint=await recordMonitorLive(this.host.env,attachment,await this.standardSession(attachment),{report,byteTokens:rpc.byteTokens,receivedAt,facts:input.facts});
           }
           persisted=input.liveCheckpoint.latest;
         } else persisted=(await readMonitorLatest(this.host.env.DB,[attachment.serverId])).get(attachment.serverId);
-        const projection=projectMonitorLatest(attachment.serverId,{latest:{sampledAt:receivedAt,elapsedMs:0,report,source:'cf-live'},
+        const projection=projectMonitorLatest(attachment.serverId,{latest:{sampledAt:receivedAt,elapsedMs:0,report,byteTokens:rpc.byteTokens,source:'cf-live'},
           facts:input.facts,traffic:persisted?.monitor?.traffic,migration:persisted?.monitor?.migration});
         if(persisted) {
           for(const key of ['disk','disk_read_bps','disk_write_bps','disk_read_iops','disk_write_iops','disk_await_ms','disk_util','gpu_info'])projection[key]=persisted[key];
@@ -429,7 +429,7 @@ export class MonitorAgentSession {
     if (!held || held.generation !== attachment.generation) return;
     if (!attachment.standardStarted && !held.started) {
       if (this.owners.get(attachment.serverId)?.previousCF) {if(end)this.standardHeld.delete(attachment.serverId);return;}
-      await recordMonitorStandard(this.host.env,attachment,await this.standardSession(attachment),{report:held.report,receivedAt:held.receivedAt});
+      await recordMonitorStandard(this.host.env,attachment,await this.standardSession(attachment),{report:held.report,byteTokens:held.byteTokens,receivedAt:held.receivedAt});
       held.started=true;
       const live=this.sockets().find(ws=>ws.deserializeAttachment().serverId === attachment.serverId && ws.deserializeAttachment().generation === attachment.generation);
       if(live) live.serializeAttachment({...live.deserializeAttachment(),standardStarted:true});

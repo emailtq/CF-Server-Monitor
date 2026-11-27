@@ -1,0 +1,311 @@
+// Every figure on the page passes through this file, making it the one place
+// worth a check. Run it with `npm test`: Node strips the types itself, so this
+// requires no runner, framework or dependency.
+//
+// Nothing imports it, so the bundle never includes it.
+import {
+  autoRange, axisBytes, axisTop, bytes, currencySymbol, CYCLE_SHORT, cpuName, daysUntil, despike, innerTicks, money, moneyAmount, nearestIndexByTime, niceScale, osName, pair, percent, quarters, rate, timeTicks, uptime, zoomSpan,
+} from "./format.ts"
+
+let failed = 0
+function eq(got: unknown, want: unknown, what: string) {
+  const [a, b] = [JSON.stringify(got), JSON.stringify(want)]
+  if (a !== b) {
+    failed++
+    console.error(`✗ ${what}\n    得到 ${a}\n    期望 ${b}`)
+  }
+}
+
+// bytes: the significant-digit ladder, and the sub-byte case that would
+// otherwise print "512 undefined".
+eq(bytes(0), "0 B", "bytes(0)")
+eq(bytes(0.5), "0 B", "bytes(0.5) 不能落到 UNITS[-1]")
+eq(bytes(-1), "0 B", "bytes(负数)")
+eq(bytes(1023), "1023 B", "bytes 在 B 档不带小数")
+eq(bytes(1024), "1.00 KB", "bytes(1 KiB)")
+eq(bytes(10 * 1024), "10.0 KB", "两位数留一位小数")
+eq(bytes(100 * 1024), "100 KB", "三位数不留小数")
+eq(bytes(1024, 1), "1.0 KB", "digits 覆盖默认档位")
+
+// pair: one unit when both sides share it, two when they do not.
+eq(pair(300 * 1024 ** 2, 900 * 1024 ** 2), "300.00 / 900.00 MB", "同单位只写一次")
+eq(pair(300 * 1024 ** 2, 3 * 1024 ** 3), "300 MB / 3.00 GB", "跨单位各写各的")
+// ★2026-11-07（与 jikasei 1.36.1 / rakugaki 1.22.1 同轮）：pair 与 bytes() 是同一套数字，
+// 两条规则也必须同源 —— 亚字节不能落到 UNITS[-1]，四舍五入顶到 1024 要升一档。
+eq(pair(0.5, 0.9), "0 B / 0 B", "亚字节两端退回 bytes()，不印 undefined")
+eq(pair(1023.999, 1023.999), "1.00 / 1.00 KB", "四舍五入顶到 1024 时升一档")
+eq(pair(1023.4, 1023.4), "1023 / 1023 B", "没顶到 1024 就留在原档")
+
+// rate: the same three significant digits as bytes(), plus the two rules the
+// summary cards forced on it -- the KB bin prints no decimal, and every bin stops
+// at 999 so that no reading is ever four digits wide. The two rates share a 50/50
+// row there, and the narrowest four-column cell leaves 77px for the text: an
+// old-style "1023.9 KB/s" needed 122px and was silently ellipsised.
+eq(rate(0), "0 B/s", "rate(0)")
+eq(rate(0.5), "0 B/s", "rate(0.5) 不能落到 UNITS[-1]")
+eq(rate(512), "512 B/s", "B 档整数")
+eq(rate(5 * 1024), "5.0 KB/s", "10 以下留一位小数")
+eq(rate(62.2 * 1024), "62 KB/s", "KB 档不给小数")
+eq(rate(112.6 * 1024), "113 KB/s", "KB 档四舍五入到整数")
+eq(rate(999.4 * 1024), "999 KB/s", "进位前最长的那串")
+eq(rate(999.5 * 1024), "1.0 MB/s", "到 999.5 进位到上一档")
+eq(rate(1023.9 * 1024), "1.0 MB/s", "1023.9 KB/s 不再印成四位数")
+eq(rate(1.8 * 1024 ** 2), "1.8 MB/s", "MB 档 10 以下留一位")
+eq(rate(20.5 * 1024 ** 2), "21 MB/s", "MB 档 10 以上不留小数")
+eq(rate(999.4 * 1024 ** 2), "999 MB/s", "MB 档进位前最长的那串")
+eq(rate(999.9 * 1024 ** 2), "1.0 GB/s", "MB 档同样封顶进位")
+
+// axisBytes: ticks under three digits keep one decimal, or a narrow axis repeats
+// a label; a trailing .0 adds nothing.
+eq(axisBytes(3.2 * 1024 ** 3), "3.2 GB", "窄轴刻度保留一位")
+eq(axisBytes(2 * 1024 ** 3), "2 GB", "整数刻度不写 .0")
+eq(axisBytes(0), "0 B", "零刻度")
+
+// axisTop: the top is derived from a round gridline, so quarters() lands on round
+// values in the unit the axis is printed in.
+eq(axisTop(0.4, 4, 10, 100), 4, "闲置机器拿到地板值")
+eq(axisTop(63, 4, 10, 100), 80, "63% -> 0/20/40/60/80")
+eq(axisTop(200, 4, 10, 100), 100, "百分比封顶")
+eq(axisTop(25_000_000, 1024, 1024), 32 * 1024 ** 2, "字节轴按 1024 取整")
+eq(quarters(32 * 1024 ** 2).map(axisBytes), ["0 B", "8 MB", "16 MB", "24 MB", "32 MB"], "四条网格线都是整值")
+// 四条刻度为 step·[1,2,3,4]，约束落在第三条：3m 必须能被 axisBytes 精确打印，
+// 而它只保留一位小数。2 的幂均满足；半档 384 与 768 不满足，其第三条刻度为
+// 1.125 Ki 与 2.25 Ki，将被打印为 "1.1" 与 "2.3"。这两档恰好覆盖 1–1.5 MB/s
+// 与 2–3 MB/s。断言针对标签本身，仅比较轴顶比例无法发现该问题。
+eq(quarters(axisTop(2_621_440, 1024, 1024)).map(axisBytes),
+   ["0 B", "1 MB", "2 MB", "3 MB", "4 MB"], "峰值 2.5 MB/s 的四条刻度")
+eq(quarters(axisTop(1_258_291, 1024, 1024)).map(axisBytes),
+   ["0 B", "512 KB", "1 MB", "1.5 MB", "2 MB"], "峰值 1.2 MB/s 的四条刻度")
+// 轴顶必须取自梯子而非数据本身。十进制梯子配合 1024 进制的 scale 最大仅到
+// 10·1024^k，越过该档后 find 落空，`?? target` 将轴顶回退为 max，网格线随之变为
+// max/4 这类非整值，正是本函数要避免的情形。该回退仅在 [4,40)·1024^k 的窄带内
+// 不出问题，而 40 KB/s–4 MB/s 恰是 VPS 最常见的区间。
+for (const max of [3_000, 300_000, 3_000_000, 300_000_000]) {
+  const top = axisTop(max, 1024, 1024)
+  eq(top > max, true, `${max} B/s 的轴顶不能等于数据本身`)
+  // 上界为 2 而非 1.5：梯子移除半档后，最坏情况是下一档 2 的幂。
+  eq(top / max < 2, true, `${max} B/s 的轴顶不能浪费整块面板`)
+}
+
+// niceScale / autoRange（自绘图的自动量程；「最近视距」那层也在 autoRange 里）：非负数据的
+// 下沿不许落到 0 以下 —— 整窗 0ms 的线路经 minSpan 撑开后原来会印出「-0.2ms」「-0.1ms」
+// 刻度（2026-11-07）。
+{
+  // 这组是**当前真实调用路径**（延迟图 domain="auto"）：[0,0] → 撑 0.25 → 取刻度。
+  const flat0 = autoRange(0, 0, 0.25)
+  eq(flat0.lo, 0, "视距撑开后的 0ms：下沿是 0")
+  eq(flat0.ticks.every((v) => v >= 0), true, "视距撑开后的 0ms：没有负刻度")
+  eq(autoRange(0.5, 0.5, 0.25).ticks.every((v) => v >= 0), true, "平直 0.5ms 不出负刻度")
+  // 「最近视距」本身要保住：130–138 的窄带撑到 110–160。
+  eq(autoRange(130, 138, 0.25), { lo: 110, hi: 160, ticks: [110, 120, 130, 140, 150, 160] }, "窄带按视距撑开")
+  eq(autoRange(0, 100, 0.25).hi, 100, "宽量程不撑")
+  // 裸 niceScale：平直 0 走 pad 分支，也要夹住下沿。
+  eq(niceScale(0, 0).lo, 0, "平直 0ms 的裸量程：下沿是 0")
+  eq(niceScale(0, 0).ticks.every((v) => v >= 0), true, "平直 0ms 的裸量程：没有负刻度")
+  eq(niceScale(20, 20).ticks, [18, 19, 20, 21, 22], "平直 20ms：±10% 余量")
+  // 负数数据照旧落在 0 以下 —— 这条护栏只对非负数生效。
+  eq(niceScale(-3, -3).ticks.every((v) => v < 0), true, "负数数据：刻度仍在 0 以下")
+  eq(niceScale(-3, -3).ticks.some((v) => v <= -3) && niceScale(-3, -3).ticks.some((v) => v >= -3), true, "负数数据：范围覆盖数据")
+  // 普通量程：上下沿各向外扩到步长的整数倍（延迟轴不从 0 起）。
+  eq(niceScale(184, 300), { lo: 150, hi: 300, ticks: [150, 200, 250, 300] }, "普通量程扩到整步长")
+  eq(niceScale(184, 301).hi, 350, "轴顶盖得住数据（301 落在下一格）")
+}
+
+// timeTicks: round clock values, phased on local midnight rather than the epoch,
+// and never more than requested.
+{
+  const day = 86_400_000
+  const to = Date.now()
+  const ticks = timeTicks(to - day, to)
+  // ★2026-10-15：原来只有「≤8 / every(...) / 间距均匀」三条，**返回空数组时全真空通过**
+  //   （把 timeTicks 改成 `return []` 实测仍全绿）。补上「非空」「落在窗口内」「相位对齐本地午夜」。
+  eq(ticks.length > 0, true, `24 小时窗要有刻度（得到 ${ticks.length}）`)
+  eq(ticks.length <= 8, true, `24 小时窗最多 8 个刻度（得到 ${ticks.length}）`)
+  eq(ticks.every((t) => t >= to - day && t <= to), true, "刻度都落在窗口内")
+  eq(ticks.some((t) => new Date(t).getHours() === 0 && new Date(t).getMinutes() === 0), true, "至少一枚刻度落在本地零点（相位以本地午夜为基准，不是 epoch）")
+  eq(
+    ticks.every((t) => new Date(t).getMinutes() === 0 && new Date(t).getSeconds() === 0),
+    true,
+    "刻度落在整点上",
+  )
+  eq(
+    ticks.every((t, i) => i === 0 || t - ticks[i - 1] === ticks[1] - ticks[0]),
+    true,
+    "刻度间距均匀",
+  )
+  eq(timeTicks(to, to - day), [], "反向区间不产出刻度")
+}
+
+// 坏值守卫（2026-10-15 审出来的三处）：亚字节档的 pair、percent 的下界与非有限值、带时间的日期串。
+{
+  eq(pair(0.25, 0.5), "0 B / 0 B", "两侧都落在亚字节档 → 退成 bytes()，不印 undefined 单位")
+  eq(pair(2, 4), "2 / 4 B", "字节这一档不补小数（i===0 时 toFixed(0)），同一单位仍共用一个单位")
+  eq(percent(-1, 4), 0, "负读数夹到 0")
+  eq(percent(NaN, 4), null, "无效读数保持未知")
+  eq(percent(1, NaN), 0, "坏总量回 0（不能是 NaN —— 卡片直接拿它当 width）")
+  eq(percent(3, 4), 75, "正常值不变")
+  // 时间戳按**本地**日历日归零：同一 UTC 时刻在 UTC-5 是前一日，断言必须跟着本地日期走，
+  // 否则这条测试在美洲时区必红（2026-10-20 复审出）。
+  const localDay = (s: string) => {
+    const d = new Date(s)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  }
+  eq(daysUntil("2027-07-21T00:00:00Z"), daysUntil(localDay("2027-07-21T00:00:00Z")), "带时间的日期串按本地日历日归零")
+  eq(daysUntil("2027-07-21 12:00:00"), daysUntil("2027-07-21"), "空格写法也按同一日算")
+}
+
+// 图表悬停按时间找点（2026-10-20）：`view` 只在有采样的桶上留行，缺口时下标≠时间。
+{
+  const rows = [0, 60_000, 120_000, 600_000, 660_000].map((ts) => ({ ts }))
+  eq(nearestIndexByTime(rows, 300_000), 2, "缺口中间：取更近的前一行")
+  eq(nearestIndexByTime(rows, 400_000), 3, "越过中点：取后一行")
+  eq(nearestIndexByTime(rows, 600_000), 3, "正好落在行上")
+  eq(nearestIndexByTime(rows, -1), 0, "早于第一行")
+  eq(nearestIndexByTime(rows, 9e9), 4, "晚于最后一行")
+  eq(nearestIndexByTime([], 1), 0, "空数组退 0")
+}
+
+// daysUntil: whole days, negative once past, null when there is no date.
+{
+  const at = (days: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + days)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  }
+  eq(daysUntil(at(10)), 10, "十天后")
+  eq(daysUntil(at(-3)), -3, "已过期为负")
+  eq(daysUntil(null), null, "无到期日")
+  eq(daysUntil("不是日期"), null, "无法解析的日期")
+}
+
+eq(uptime(0), "—", "没上报过就不写时长")
+eq(uptime(90), "1 分", "不足一小时")
+eq(uptime(3 * 3600 + 25 * 60), "3 小时 25 分", "不足一天")
+eq(uptime(2 * 86400 + 5 * 3600), "2 天 5 小时", "超过一天不再写分钟")
+
+// despike：孤立的尖峰被拉回邻域，持续的高延迟保留，超时仍是缺口。
+{
+  const flat = [20, 21, 20, 22, 21, 20, 21]
+  eq(despike(flat), flat, "没有离群点就原样返回")
+  eq(despike([20, 21, 20, 900, 21, 20, 21])[3], 21, "孤立尖峰替换为窗口中位数")
+  // 一段持续的高延迟是真实状况而非尖峰：窗口内多数样本同样高，中位数随之抬高。
+  // 只断言尖峰那一点会漏掉这条——滑动中位数同样能通过前一条断言。
+  eq(despike([20, 21, 300, 310, 305, 300, 21, 20]).slice(2, 6), [300, 310, 305, 300], "持续升高不被削掉")
+  eq(despike([20, null, 900, null, 21]), [20, null, 21, null, 21], "超时保持为缺口，不参与比较")
+  // 延迟以整毫秒存储，稳定线路的窗口内多数样本完全相同，绝对中位差为 0。不设下限
+  // 时这条断言会失败，而它正是削峰要处理的形状：平直的线加一个 2 秒的桶。
+  eq(despike([180, 180, 181, 180, 2000, 180, 180, 181, 180])[4], 180, "平直线路上的尖峰同样被削掉")
+  // 下限不能低到把正常抖动也当成尖峰：整毫秒的数据里 1 ms 的起伏是常态。
+  eq(despike([180, 181, 180, 180, 181, 180, 180]), [180, 181, 180, 180, 181, 180, 180], "1 ms 抖动原样保留")
+}
+
+eq(osName("Debian GNU/Linux 12 (bookworm)"), "Debian 12", "发行版名去掉代号")
+eq(cpuName("Intel(R) Xeon(R) CPU E5-2680 8-Core Processor"), "Intel Xeon E5-2680", "CPU 名去掉商标和核数")
+
+// CYCLE_SHORT：卡片底注那一档的短写法。★2026-10-18：原来那份长写法（CYCLES，「月付」那种）
+// 没有任何调用点、已删 —— 于是一份表就是全部，这里直接钉**七个键**：
+// 少一个键就会在卡片上印出「价格 ¥47.00」（周期整截丢掉），多一个键则是没人会读到的死条目。
+eq(CYCLE_SHORT.monthly, "月", "月付短写法")
+eq(CYCLE_SHORT.yearly, "年", "年付短写法")
+eq(CYCLE_SHORT.once, "一次性", "一次性不缩")
+eq(Object.keys(CYCLE_SHORT).sort(), ["biennial", "monthly", "once", "quarterly", "semiannual", "triennial", "yearly"], "七个周期键一个不少")
+
+// innerTicks（滚轮纵缩那一档的刻度）：**一枚都不许落在 [lo, hi] 外面**。
+// 2026-10-15 站长拿截图报「延迟跑到外面」：循环上界原来写 `hi + step / 2`，会在量程顶端
+// 之外多吐一枚刻度，它的网格线与标签就画到绘图区上面去了。下面第三例就是当时那类数据。
+{
+  const all = (lo: number, hi: number) => {
+    const t = innerTicks(lo, hi)
+    return t.length > 0 && t.every((v) => v >= lo - 1e-9 && v <= hi + 1e-9)
+  }
+  eq(innerTicks(0, 1000), [0, 250, 500, 750, 1000], "整段量程：0/250/500/750/1000")
+  eq(innerTicks(13.2, 38.2), [15, 20, 25, 30, 35], "窄量程只挑范围内的整齐数（首档只落得下 2 枚就退一档）")
+  eq(all(280, 281.3), true, "压线窄量程：不许吐 281.5 那种越界刻度")
+  eq(all(27.95, 52.95), true, "滚轮缩放后的任意边界：刻度全在范围内")
+  eq(all(0, 1), true, "1ms 下限量程：0/0.25/0.5/0.75/1")
+  eq(innerTicks(3, 3), [], "零跨度：不给刻度（免得画出一堆重叠）")
+}
+
+// zoomSpan（滚轮纵缩那一步）：亚毫秒量程不许被「放大」、锚点比例不许被挪、两端夹子的行为。
+// 2026-10-15 审出来的死区就在这里：旧版跨度下限固定 1ms，比自动量程还宽时会把状态映射回自己。
+{
+  const R = (lo: number, hi: number, anchor: number, ratio: number, factor: number, floor: number, cap = 1e5) =>
+    zoomSpan({ lo, hi, anchor, ratio, factor, floor, cap })
+  const spanOf = (r: { lo: number; hi: number }) => r.hi - r.lo
+  // 正常量程（25–50ms、下限 1ms）：收窄到 1ms 就停，且锚点钉住
+  const a1 = R(25, 50, 33, 0.4, 0.02, 1)
+  eq(Math.abs(spanOf(a1) - 1) < 1e-9, true, `收窄到 1ms 下限即停（跨度 ${spanOf(a1)}）`)
+  eq(Math.abs(a1.hi - 33 - 0.6) < 1e-9 && Math.abs(33 - a1.lo - 0.4) < 1e-9, true, "夹到下限时按锚点比例收：锚点在框里仍是 40%")
+  const a2 = R(25, 50, 33, 0.4, 2, 1)
+  eq(spanOf(a2), 50, "外滚 2×：25 → 50")
+  // 亚毫秒量程（1.1–1.5ms、下限 min(1, 0.4/4)=0.1）：滚一格必须**继续收窄**，不许反向放大
+  const b1 = R(1.1, 1.5, 1.3, 0.5, 0.835, 0.1)
+  eq(spanOf(b1) < 0.4 && spanOf(b1) > 0.3, true, `亚毫秒收窄：0.4 → ${spanOf(b1).toFixed(3)}（旧版会放大到 1.0）`)
+  // 下沿贴 0 的卡死现场：外滚必须能出去，跨度只会变大
+  const b2 = R(0, 0.675, 0.27, 0.75, 1.148, 0.1)
+  eq(spanOf(b2) > 0.675, true, `贴 0 外滚：${spanOf(b2).toFixed(3)}（旧版是原地不动）`)
+  // 两端夹子：下沿不越 0、顶端不越 cap
+  const c1 = R(0, 0.675, 0.1, 0.9, 0.5, 0.1)
+  eq(c1.lo >= 0, true, "下沿不越 0")
+  const c2 = R(900, 1000, 500000, 0.5, 4, 1, 1000)
+  eq(c2.hi <= 1000 && spanOf(c2) > 0, true, "顶端不越 cap、跨度不为负")
+  // 比现在还窄的量程不许被放大（floor 取 min(floor, span)）
+  const d1 = R(0, 0.02, 0.01, 0.5, 4, 1)
+  eq(spanOf(d1) > 0.02, true, `比下限还窄的量程：外滚照样变大、不被地板卡住（${spanOf(d1).toFixed(3)}）`)
+}
+
+// ★2026-11-09：币种表是普通对象，`SYMBOLS["constructor"]` 取到的是 Object 构造函数 ——
+// 旧版 `(typeof currency === "string" && SYMBOLS[currency]) || ""` 让 `money(47, "constructor")`
+// 印出「function Object() { [native code] }47.00」（实测）。必须走 Object.hasOwn。
+{
+  eq(currencySymbol("CNY"), "¥", "已知币种给符号")
+  eq(currencySymbol("constructor"), "", "原型键不算币种（constructor）")
+  eq(currencySymbol("__proto__"), "", "原型键不算币种（__proto__）")
+  eq(currencySymbol("toString"), "", "原型键不算币种（toString）")
+  eq(money(47, "CNY"), "¥47.00", "money：有符号币种")
+  eq(money(47, "constructor"), "47.00 constructor", "money：原型键退回后缀代码，不印函数源码")
+  eq(money(47, "__proto__"), "47.00 __proto__", "money：__proto__ 同样退回后缀代码")
+  eq(moneyAmount(47, "toString"), "47.00 toString", "moneyAmount：原型键不再被当成已知币种")
+  eq(money(47, "ABC"), "47.00 ABC", "未知币种退回后缀代码")
+}
+
+// ★2026-11-09：bytes() 缺进位 —— 1023.6 B 旧版印成「1024 B」、1048575 B 印成「1024 KB」，
+// 与 pair()/rate() 的口径（顶到 1024 要升档）不一致。
+{
+  eq(bytes(1023.6), "1.00 KB", "四舍五入顶到 1024 要升档（B → KB）")
+  eq(bytes(1048575), "1.00 MB", "四舍五入顶到 1024 要升档（KB → MB）")
+  eq(bytes(1023), "1023 B", "没顶到 1024 就留在原档")
+  eq(bytes(1024 ** 3 - 1), "1.00 GB", "GB 边界同样升档")
+  eq(axisBytes(1048575), "1 MB", "轴刻度同一条进位规则（digits 由 axisBytes 指定）")
+}
+
+// ★2026-11-09：daysUntil 改成按**日历日**求差。旧版按 24 小时求商，夏令时回拨那天（25 小时）
+// 会把「明天到期」算成 2 天；顺带「今天」也曾返回 -0。
+{
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  // 用「本地年月日 + n」构造，避免用 +86400000 在夏令时那天跨不过去。
+  const dayOffset = (n: number) => {
+    const t = new Date()
+    return new Date(t.getFullYear(), t.getMonth(), t.getDate() + n)
+  }
+  eq(Object.is(daysUntil(iso(new Date())), 0), true, "今天 → +0（不是 -0）")
+  eq(daysUntil(iso(dayOffset(1))), 1, "明天 → 1")
+  eq(daysUntil(iso(dayOffset(7))), 7, "一周后 → 7")
+  eq(daysUntil(iso(dayOffset(-2))), -2, "两天前 → -2")
+  eq(daysUntil("2026-11-09 23:00:00"), daysUntil("2026-11-09"), "空格写法按本地日归零，与 date-only 同解")
+  eq(daysUntil("不是日期"), null, "坏串 → null")
+}
+
+// ★2026-11-09：axisTop 的退化输入不再把 NaN 往下传（`max` 是 NaN 时原来整条轴都是 NaN）。
+{
+  eq(axisTop(Number.NaN, 4, 10), 4, "max 坏掉时退回 floor")
+  eq(Number.isNaN(axisTop(Number.NaN, Number.NaN, 10)), false, "两者都坏时也返回有限值")
+  eq(axisTop(0, 0, 10), 0, "0/0 仍是 0（TimeChart 有 top>0 兜底）")
+}
+
+if (failed) {
+  console.error(`\n${failed} 项不通过`)
+  throw new Error("format 校验未通过")
+}
+console.log("format 校验通过")

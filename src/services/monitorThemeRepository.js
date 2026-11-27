@@ -1,5 +1,6 @@
 import { AppError } from '../utils/errors.js';
-import { installMonitorTheme, loadMonitorPackageRegistry } from './monitorThemePackages.js';
+import { installMonitorTheme, loadMonitorPackageRegistry, loadMonitorRelease, assertMonitorThemePublisher } from './monitorThemePackages.js';
+import { monitorBuiltinRevision } from '../shared/monitorThemes.js';
 import { MONITOR_ARCHIVE_LIMIT } from '../shared/monitorThemeArchive.js';
 
 export function parseMonitorRepository(address) {
@@ -15,9 +16,14 @@ export function parseMonitorRepository(address) {
   } catch { throw new AppError('monitorThemeRepositoryInvalid', 400); }
 }
 
-export async function installMonitorRepository(env, address, expectedShort, expectedRevision, expectedVersion) {
+export async function installMonitorRepository(env, address, expectedShort, expectedRevision, expectedVersion, publisher) {
   if (!env.DB) throw new AppError('monitorThemeStorageUnavailable', 503);
   const repository = parseMonitorRepository(address);
+  const {registry:initialRegistry}=await loadMonitorPackageRegistry(env.DB);
+  if (expectedShort) {
+    const current = await loadMonitorRelease(env.DB, Object.hasOwn(initialRegistry, expectedShort) ? initialRegistry[expectedShort] : monitorBuiltinRevision(expectedShort));
+    if (current?.manifest.cf_revision) throw new AppError('monitorThemeConsumerRevisionRequired', 409);
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);
   let stage = 'metadata', status = 0;
@@ -34,6 +40,7 @@ export async function installMonitorRepository(env, address, expectedShort, expe
     const tag = decodeURIComponent(latest.pathname.slice(prefix.length));
     if (!tag || tag.length > 200 || tag === '.' || tag === '..' || /[\x00-\x1f\x7f]/.test(tag)) throw new AppError('monitorThemeDownloadFailed', 502);
     if (expectedVersion !== undefined && tag.replace(/^v/, '') === expectedVersion) {
+      await assertMonitorThemePublisher(env.DB,publisher);
       const { registry } = await loadMonitorPackageRegistry(env.DB);
       if ((Object.hasOwn(registry, expectedShort) ? registry[expectedShort] : null) !== expectedRevision) throw new AppError('monitorThemeConflict', 409);
       return { updated: false, version: expectedVersion };
@@ -52,7 +59,7 @@ export async function installMonitorRepository(env, address, expectedShort, expe
       if (!response.ok) { await response.body?.cancel(); throw new AppError(response.status === 404 ? 'monitorThemePackageMissing' : 'monitorThemeDownloadFailed', response.status === 404 ? 400 : 502); }
       if (Number(response.headers.get('Content-Length')) > MONITOR_ARCHIVE_LIMIT) { await response.body?.cancel(); throw new AppError('monitorThemeArchiveTooLarge', 413); }
       stage = 'install';
-      const theme = await installMonitorTheme(env, response.body, { expectedShort, repository, expectedRevision });
+      const theme = await installMonitorTheme(env, response.body, { expectedShort, repository, expectedRevision, publisher, initialRegistry });
       return { ...theme, updated: true };
     }
     throw new AppError('monitorThemeDownloadFailed', 502);

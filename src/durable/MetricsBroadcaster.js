@@ -27,6 +27,7 @@ import { getWssReportScheduleState, loadSiteSettings } from '../utils/settings.j
 import { loadMonitorCompatAccess, MONITOR_COMPAT_LIVE_URL } from '../services/monitorCompatAccess.js';
 import { loadMonitorViewerPolicy, authorizeMonitorViewer, MONITOR_VIEWER_LIVE_URL } from '../services/monitorViewerAccess.js';
 import { loadMonitorCompatBaseline, projectMonitorCompatSnapshot } from '../services/monitorCompatSnapshot.js';
+import { stringifyMonitor } from '../services/monitorProjection.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_LEGACY_SCHEMA_VERSION,
@@ -525,7 +526,7 @@ export class MetricsBroadcaster {
     return this.monitorCompatRefresh;
   }
 
-  _monitorCompatFrame(force = false) {
+  _monitorCompatFrame(force = false, standard = false) {
     const current = this.monitorCompatState;
     const now = Date.now();
     if (!current || now >= current.expiresAt) throw new Error('Monitor snapshot expired');
@@ -534,9 +535,12 @@ export class MetricsBroadcaster {
       current.frame = JSON.stringify(projectMonitorCompatSnapshot(current.baseline, {
         display: current.display, latestReportUpdates: this.latestReportUpdates.values(), now
       }));
+      current.standardFrame = stringifyMonitor(projectMonitorCompatSnapshot(current.baseline, {
+        display: current.display, latestReportUpdates: this.latestReportUpdates.values(), now, standard:true
+      }));
       current.frameAt = now;
     }
-    return current.frame;
+    return standard ? current.standardFrame : current.frame;
   }
 
   _forgetMonitorCompatSocket(ws) {
@@ -570,7 +574,7 @@ export class MetricsBroadcaster {
         if (await this._refreshMonitorCompat() !== 200 || this.monitorCompatTimer !== timer) return;
         const frame = this._monitorCompatFrame(true);
         for (const ws of this.monitorCompatSockets) {
-          try { ws.send(frame); } catch (_) { this._closeMonitorCompatSocket(ws); }
+          try { ws.send(this.monitorViewerContexts.has(ws) ? this.monitorCompatState.standardFrame : frame); } catch (_) { this._closeMonitorCompatSocket(ws); }
         }
       } catch (_) {
         this._closeMonitorCompatSockets(503);
@@ -606,7 +610,7 @@ export class MetricsBroadcaster {
         const error = status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Service Unavailable';
         return Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store' } });
       }
-      const frame = this._monitorCompatFrame();
+      const frame = this._monitorCompatFrame(false, viewer);
       const [client, server] = Object.values(new WebSocketPair());
       // Standard sockets stay outside the hibernation group and its global CF ping/pong autoresponse.
       server.accept();

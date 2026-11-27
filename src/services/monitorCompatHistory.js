@@ -9,6 +9,8 @@ import { PROBE_METRIC_FIELDS } from '../utils/historyFields.js';
 import { readMonitorHistoryRows, readMonitorLatest } from '../database/monitorTelemetry.js';
 import { getMonitorProbeIds } from '../database/monitorProbeIds.js';
 import { getMetricsHistory } from '../database/schema.js';
+import { readMonitorTelemetry } from '../database/monitorTelemetry.js';
+import { projectMonitorHistory } from './monitorProjection.js';
 
 const HOUR_MS = 3_600_000;
 const MIB = 1024 ** 2;
@@ -174,4 +176,81 @@ export async function loadMonitorCompatHistory(db, id, query) {
   } finally {
     pendingHistory--;
   }
+}
+
+// Standard viewer history uses the actual core tiers, not the old CF sparse-history ceiling.
+export async function loadMonitorStandardHistory(db, id, query, { accessDays = 1, now = Date.now() } = {}) {
+  const hours = integerParam(query,'hours',6,1,accessDays*24);
+  const points = integerParam(query,'points',1440,60,1440), series = query.getAll('series');
+  if (hours === null || points === null || series.length > 1 || !Number.isSafeInteger(id)) return false;
+  const server = await db.prepare(`SELECT s.* FROM monitor_compat_ids m JOIN servers s ON s.id=m.server_id WHERE m.id=? AND ${MONITOR_COMPAT_VISIBLE}`).bind(id).first();
+  if (!server) return null;
+  if (pendingHistory >= HISTORY_SLOTS) throw new Error('Monitor history busy');
+  pendingHistory++;
+  try {
+    const unit = hours > 7*24 ? 3600 : 60;
+    const step = unit*Math.max(1,Math.ceil(hours*3600/unit/points));
+    const from = Math.floor((now-hours*HOUR_MS)/(step*1000))*step*1000, to = now+1;
+    const tables = (await db.prepare("SELECT name FROM sqlite_master WHERE name IN('monitor_telemetry_nodes','metrics_history','metrics_history_old')").all()).results.map(r=>r.name);
+    const native = tables.includes('monitor_telemetry_nodes') ? await readMonitorTelemetry(db,server.id,{from,to,step:60}) : null;
+    const document = await readLatencyTaskDocument(db);
+    const labels = document ? publicLatencyNodes(document,server.id) : await readLegacyLabels(db);
+    const allowed = new Map(labels.map(label=>[label.id,label]));
+    if (native) native.probeSeries = native.probeSeries.filter(p=>allowed.has(p.metricId)).map(p=>({...p,name:allowed.get(p.metricId).name}));
+    // The projection groups the requested epoch-aligned span; the core stays minute-weighted.
+    const result = projectMonitorHistory(native ? {...native,step} : {step,resourceBuckets:[],probeSeries:[],coverage:{rawRetentionDays:7,rollupRetentionDays:30}});
+    const covered = new Set(native?.resourceBuckets.flatMap(b=>b.coveredMinutes || [b.ts]) || []);
+    const legacy = [];
+    if (tables.includes('metrics_history') && server.history_partition_id) {
+      const range = getHistoryIdRange(server.history_partition_id,Math.max(from,Number(server.timestamp)||0),to);
+      for (const table of ['metrics_history','metrics_history_old']) {
+        if (!tables.includes(table)) continue;
+        const rows = await db.prepare(`SELECT * FROM ${table} WHERE id BETWEEN ? AND ? AND server_id=? AND timestamp>=? AND timestamp<? ORDER BY id`)
+          .bind(range.startId,range.endId,server.id,from,to).all();
+        for (const row of rows.results) if (!covered.has(Math.floor(row.timestamp/60000)*60000)) legacy.push(row);
+      }
+    }
+    // Old summaries cannot reconstruct denominators or weighted peaks. Keep their precision visible.
+    legacy.sort((a,b)=>a.timestamp-b.timestamp);
+    const legacyMetrics = new Map();
+    for (const p of projectResources(legacy)) {
+      const ts = Math.floor(p.ts/step)*step;
+      if (!legacyMetrics.has(ts)) legacyMetrics.set(ts,{...p,ts,sampled_ts:p.ts,cpu_max:null,net_rx_max:null,net_tx_max:null,minutes:null,source:'legacy-MiB/summary'});
+    }
+    // One row per span: mixed buckets retain known native weight and mark the unweighted legacy observations.
+    for (const p of result.metrics) {
+      if (legacyMetrics.has(p.ts)) p.source='native-weighted/legacy-summary-unweighted';
+      legacyMetrics.delete(p.ts);
+    }
+    result.metrics.push(...legacyMetrics.values());
+    const probeIds = legacy.length && native && document ? await getMonitorProbeIds(db,labels.map(p=>p.id)) : null;
+    const legacyPing = legacy.length ? projectPings(legacy,server.id,document,labels,probeIds) : {ping:[],probes:{}};
+    const legacyPings = new Map();
+    for (const p of legacyPing.ping) {
+      const ts = Math.floor(p.ts/step)*step, key = `${p.task_id}:${ts}`;
+      if (!legacyPings.has(key)) legacyPings.set(key,{...p,ts,sampled_ts:p.ts,source:'legacy-summary/unknown-denominator'});
+    }
+    for (const p of result.ping) {
+      const key = `${p.task_id}:${p.ts}`;
+      if (legacyPings.has(key)) p.source='native-probes/legacy-summary-unknown-denominator';
+      legacyPings.delete(key);
+    }
+    result.ping.push(...legacyPings.values());
+    Object.assign(result.probes,legacyPing.probes);
+    for (const p of legacyPing.ping) result.loss[p.task_id] = null;
+    result.metrics.sort((a,b)=>a.ts-b.ts); result.ping.sort((a,b)=>a.task_id-b.task_id || a.ts-b.ts);
+    result.step = step;
+    const availableTimes = [...legacy.map(row=>row.timestamp),
+      ...(native?.rawSamples.map(s=>s.sampledAt) || []), ...(native?.resourceBuckets.map(b=>b.ts) || []),
+      ...(native?.probeSeries.flatMap(p=>p.samples.map(s=>s.sampledAt)) || [])];
+    result.coverage = {...result.coverage,from,to,accessDays,legacySamples:legacy.length,legacyProbeDenominator:'unknown',
+      firstAvailableAt:Math.min(...availableTimes,Infinity), lastAvailableAt:Math.max(...availableTimes,-Infinity)};
+    if (!Number.isFinite(result.coverage.firstAvailableAt)) result.coverage.firstAvailableAt=null;
+    if (!Number.isFinite(result.coverage.lastAvailableAt)) result.coverage.lastAvailableAt=null;
+    if (series.length) {
+      if (series[0] !== 'metrics') result.metrics=[];
+      if (series[0] !== 'ping') {result.ping=[];result.probes={};result.loss={};result.attempts={};}
+    }
+    return result;
+  } finally {pendingHistory--;}
 }

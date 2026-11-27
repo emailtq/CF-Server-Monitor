@@ -2,6 +2,7 @@ import { reduceTrafficLedger, reduceNetworkMark, trafficCounter, trafficCalendar
 import { clearTelemetryCaches, clearAllCaches } from '../utils/cache.js';
 import { getHistoryIdRange } from './indexOptimization.js';
 import { flattenDiskMetrics,attachDiskMetricsObject,DISK_IO_FIELD_TO_COLUMN } from '../utils/metrics.js';
+import { MONITOR_BYTE_FIELDS } from '../shared/monitorAgentProtocol.js';
 export { exportMonitorMetadata, importMonitorMetadata } from './monitorBackup.js';
 import { isValidMonitorPrincipal, MonitorTelemetryError, parseMonitorBatch, packMonitorBucket, unpackMonitorBucket, compressMonitorBytes, monitorReceiptText, monitorBytes,
   MONITOR_BUCKET_BYTES, MONITOR_STATE_BYTES, MONITOR_BUCKET_MS } from '../shared/monitorTelemetry.js';
@@ -113,7 +114,7 @@ export async function recordMonitorLive(env,principal,session,event) {
   }
   const migration=previous.migration || await legacyMigration(db,principal.serverId,session.calendar);
   const returning=migration.mode==='legacy';
-  const state={...previous,live:{sampledAt:event.receivedAt,elapsedMs:0,report:event.report,extra:{},source:'cf-live'},
+  const state={...previous,live:{sampledAt:event.receivedAt,elapsedMs:0,report:event.report,byteTokens:event.byteTokens,extra:{},source:'cf-live'},
     liveCheckpointAt:event.receivedAt,receivedAt:event.receivedAt,facts:event.facts ?? previous.facts ?? null,
     source:previous.source || 'cf-live',migration:{...migration,mode:'monitor',needsBaseline:migration.needsBaseline || returning,
       transitions:(migration.transitions || 0)+(returning ? 1 : 0),activatedAt:previous.migration?.activatedAt ?? event.receivedAt}};
@@ -145,13 +146,15 @@ export function projectMonitorLatest(serverId,state) {
   const latest=state.live && state.live.sampledAt>(state.latest?.sampledAt || 0) ? state.live : state.latest;
   if(!latest)return null;
   const r=latest.report,f=state.facts || {},traffic=state.traffic,month=projectMonitorMonth(state);
+  const byteTokens = Object.fromEntries(MONITOR_BYTE_FIELDS.map(key => [key,latest.byteTokens?.[key] ??
+    (Number.isSafeInteger(r[key]) && r[key]>=0 ? String(r[key]) : null)]));
   const row={server_id:serverId,timestamp:state.receivedAt ?? latest.sampledAt,cpu:r.cpu ?? null,load_avg:r.load?.join(' ') ?? null,
     net_in_speed:r.net_rx ?? null,net_out_speed:r.net_tx ?? null,processes:r.procs ?? null,tcp_conn:r.tcp ?? null,udp_conn:r.udp ?? null,
     net_rx:traffic?.totalRx ?? null,net_tx:traffic?.totalTx ?? null,net_rx_monthly:month.rx,net_tx_monthly:month.tx,
-    os:f.os || '',arch:f.arch || '',kernel_version:f.kernel || '',cpu_info:f.cpu_name || '',cpu_cores:f.cpu_cores ?? null,
+    os:f.os || '',arch:f.arch || '',virt:f.virt || '',kernel_version:f.kernel || '',cpu_info:f.cpu_name || '',cpu_cores:f.cpu_cores ?? null,
     ip_v4:f.ipv4 || '0',ip_v6:f.ipv6 || '0',
     agent_version:f.agent_version || '',boot_time:r.uptime == null ? null : latest.sampledAt-r.uptime*1000,
-    monitor:{source:latest.source,precision:latest.source==='standard' ? 'receiver-held' : 'native-bytes',coverageMs:latest.elapsedMs,migration:state.migration,traffic,month}};
+    monitor:{source:latest.source,sampledAt:latest.sampledAt,byteTokens,precision:latest.source==='standard' ? 'receiver-held' : 'native-bytes',coverageMs:latest.elapsedMs,migration:state.migration,traffic,month}};
   for(const [target,key] of Object.entries({ram_total:'mem_total',ram_used:'mem_used',swap_total:'swap_total',swap_used:'swap_used',disk_total:'disk_total',disk_used:'disk_used'}))row[target]=r[key]==null ? null : r[key]/1048576;
   const extra=latest.source==='cf-live' ? state.latest?.extra || latest.extra : latest.extra;
   Object.assign(row,flattenDiskMetrics({disk:extra?.diskIO},{preserveUnknown:true}));
@@ -387,7 +390,7 @@ export async function recordMonitorStandard(env,principal,session,event) {
     let remaining=held.elapsedMs,start=event.receivedAt-remaining;
     while(remaining>0) {
       const elapsedMs=Math.min(remaining,60000-start%60000),end=start+elapsedMs;
-      samples.push({sampledAt:end-1,elapsedMs,report:held.report,extra:{},network:null,source:'standard'});
+      samples.push({sampledAt:end-1,elapsedMs,report:held.report,byteTokens:held.byteTokens,extra:{},network:null,source:'standard'});
       if(state.traffic && standardCounters(held.report)) {
         state.traffic=reduceTrafficLedger(state.traffic,{epoch:held.report.boot_id,rx:held.report.net_rx_total,tx:held.report.net_tx_total,
           observedAt:end-1,...trafficCalendar(end-1,session.calendar),source:'standard'});
@@ -398,7 +401,7 @@ export async function recordMonitorStandard(env,principal,session,event) {
   }
   if(event.report) {
     const report=event.report;
-    const sample={sampledAt:event.receivedAt,elapsedMs:0,report,extra:{},source:'standard'};
+    const sample={sampledAt:event.receivedAt,elapsedMs:0,report,byteTokens:event.byteTokens,extra:{},source:'standard'};
     const comparable=standardCounters(report);
     const reduced=reduceNetworkMark(state.networkMark,comparable ? sample : {...sample,report:{}});state.networkMark=reduced.mark;
     if(reduced.network) samples.push({...sample,network:reduced.network});

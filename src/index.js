@@ -1,5 +1,7 @@
 import { encryptTurnstileData, isTurnstileVerified } from './middleware/turnstile.js';
 import { handleMonitorThemeUpload } from './handlers/monitorThemeUpload.js';
+import { handleMonitorThemeRest } from './handlers/monitorThemeRest.js';
+import { handleMonitorAdminRest } from './handlers/monitorAdminRest.js';
 import { flushLoginEvents, recoverPanelLoginEvents } from './services/loginEvents.js';
 import { cleanupLoginEvents } from './database/loginEvents.js';
 import { publicExtraPingNodes } from './shared/extraPing.js';
@@ -140,6 +142,8 @@ export default {
     setDebug(env.DEBUG);
 
     const url = new URL(request.url);
+    // Reject ambiguous encoding before either theme or CF asset routing can normalize it.
+    if (/%(?:2f|5c|[01][0-9a-f]|7f|25)/i.test(url.pathname)) return createNotFoundResponse();
     // Worker-first routing resolves native theme files before CF assets; admin/install namespaces stay CF-owned.
     let adminResource = false;
     try {
@@ -147,9 +151,12 @@ export default {
       adminResource = ref.origin === url.origin && /^\/admin(?:\/|$)/.test(ref.pathname);
     } catch {}
     if (env.ASSETS && ['GET', 'HEAD'].includes(request.method) && (
-      /^\/(static|files|mikus|os-icons)(\/|$)/.test(url.pathname) ||
-      /^\/(install[^/]*|uninstall[^/]*|cf-server-monitor\.ps1|manifest\.json)$/.test(url.pathname) ||
-      (adminResource && /^\/(flags\/|favicon\.)/.test(url.pathname)))) return env.ASSETS.fetch(request);
+      /^\/(install[^/]*|uninstall[^/]*|cf-server-monitor\.ps1)$/.test(url.pathname) ||
+      (adminResource && /^\/(static|files|mikus|os-icons|manifest\.json|flags|favicon\.[^/]+)(\/|$)/.test(url.pathname)))) return env.ASSETS.fetch(request);
+    const themeRestResponse = await handleMonitorThemeRest(request, env, url);
+    if (themeRestResponse) return themeRestResponse;
+    const adminRestResponse = await handleMonitorAdminRest(request, env, url, ctx);
+    if (adminRestResponse) return adminRestResponse;
     const uploadResponse = await handleMonitorThemeUpload(request, env, url);
     if (uploadResponse) return uploadResponse;
     // Internal release paths are never exposed directly, including when an embedded asset exists.
@@ -157,6 +164,8 @@ export default {
     if (monitorAgentResponse) return monitorAgentResponse;
     const monitorCompatResponse = await handleMonitorCompat(request, env, url);
     if (monitorCompatResponse) return monitorCompatResponse;
+
+    if (env.ASSETS && ['GET','HEAD'].includes(request.method) && (/^\/(static|files|mikus|os-icons)(\/|$)/.test(url.pathname) || url.pathname==='/manifest.json')) return env.ASSETS.fetch(request);
 
     const method = request.method;
     const path = url.pathname;

@@ -1,0 +1,462 @@
+// 卡片形态的护栏（2026-10-15 按站长给的参考站重排之后钉住的那一套）。
+//
+// 卡片从上到下五块，本护栏逐块断：
+//   ① 身份行：旗子 + 名字 +（掉线机器）「已离线」徽章（状态点只挂卡根、卡内没有）；
+//   ② 系统 · 运行时间（四种处境各自的写法见 metaLine）；
+//   ③ 三格读数 CPU / 内存 / 存储：标签小灰字、读数加粗两小数、条压在读数下缘；
+//      第四格没有表名（2026-10-20 站长要求撤掉负载格、把上传下载挪进那一格，随后连「网络」
+//      二字也去掉）：上行 / 下行两行速率，累计总量在悬停说明里；
+//   ④ 总流量：左「流量 ↕ 重置周期 ⟳」、右「已用 / 额度」（无额度写 N/A），下面一条全宽带；
+//   ⑤ 底注：价格 / 到期在左、备注小卡片在右（**最多 3 枚**、**恒定占位**：有备注没备注卡片等高 —— 2026-10-15 起卡片这一侧也摊备注，
+//      与从前「一处都不摊」的口径不同，底座那一行容不下更多）。
+//
+// 夹具六台：① 在线全字段 ② 掉线（有历史、读数写 —）③ 从未接入（那行说明）④ 连上但没上报
+//         ⑤ 备注四枚（断上限）⑥ 不限流量（断 N/A 与 ∞）。
+// 用法：cd <repo> && node tools/verify_card_form.mjs（先 npm run build，dist/ 得是新的）
+import { spawn } from 'node:child_process'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { createServer } from 'node:http'
+import { extname, join, normalize } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { tmpdir } from 'node:os'
+
+const PORT = Number(process.env.CARDFORM_PORT || 5271)
+const CDP_PORT = PORT + 4000
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.woff2': 'font/woff2' }
+const GB = 1024 ** 3
+
+const metrics = (o) => ({
+  uptime: 318521, cpu: 3.2, load: [0.08, 0.03, 0.01],
+  mem_total: 2 * GB, mem_used: 431800320, swap_total: 0, swap_used: 0,
+  disk_total: 40 * GB, disk_used: 9214510720,
+  net_rx: 866000, net_tx: 464000, total_rx: 5707805336, total_tx: 5203609923,
+  month_rx: 4650258264, month_tx: 4351673970, tcp: 16, udp: 3, procs: 75, ...o,
+})
+const base = (id, name, o) => ({
+  id, name, sort: id, public: true, online: true, country: 'JP', group: '',
+  last_seen: Math.floor(Date.now() / 1000) - 3, last_seen_ago: 3,
+  metrics: metrics({}), os: 'Debian GNU/Linux 12 (bookworm)', kernel: '6.1.0-53-cloud-amd64', arch: 'x86_64', virt: 'kvm',
+  cpu_name: 'AMD EPYC Processor', cpu_cores: 2, mem_total: 2 * GB, swap_total: 0, disk_total: 40 * GB, agent_version: '1.4.0',
+  price: 349, currency: 'CNY', billing_cycle: 'yearly', expires_at: '2027-07-21', expires_in: 299,
+  traffic_limit: 500 * GB, traffic_mode: 'sum', traffic_reset_day: 21, month_start: '2026-09-21',
+  day_rx: 2140585887, day_tx: 2191393745, month_rx: 4650258264, month_tx: 4351673970,
+  total_rx: 5707805336, total_tx: 5203609923,
+  ...o,
+})
+
+const nodes = [
+  // ① 在线、字段齐全（价格 / 到期 / 额度 / 重置日都有）—— 底注右侧还有一枚公开备注
+  base(1, '东京一号', { public_remark: '优化线路' }),
+  // ② 掉线：读数写「—」，但总量与底注还在，底注右侧还摊一枚备注
+  base(2, '掉线二号', {
+    traffic_mode: 'max', online: false, metrics: null, last_seen_ago: 7200, country: 'HK',
+    public_remark: '优化线路', price: 0, expires_at: null, expires_in: null,
+  }),
+  // ③ 从未接入：那行说明，没有读数区
+  base(3, '从未接入三号', { online: false, metrics: null, last_seen: 0, last_seen_ago: null, cpu_cores: 0, mem_total: 0, os: '' }),
+  // ④ 连上但还没上报（hub 口径：online 真、metrics 空）
+  base(4, '刚连上四号', { online: true, metrics: null, last_seen: 0, last_seen_ago: null }),
+  // ⑤ 备注四枚：卡片这一侧只该摊前三枚
+  base(5, '备注五号', { traffic_mode: 'up', public_remark: '甲, 乙, 丙, 丁' }),
+  // ⑥ 不限流量：重置那一格写 N/A，已用那一截写「X / ∞」
+  base(6, '不限量六号', { traffic_mode: 'down', traffic_limit: 0, price: 0, expires_at: null, expires_in: null }),
+]
+
+const server = createServer((req, res) => {
+  const path = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname
+  const json = (b) => { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(b)) }
+  if (path.startsWith('/api/')) {
+    if (path === '/api/me') return json({ authed: false, github: false, public_page: true, site: `http://127.0.0.1:${PORT}`, site_name: '卡片形态校验', history_days: 30 })
+    if (path === '/api/nodes') return json({ nodes })
+    if (path.endsWith('/config')) return json({})
+    if (path.includes('/metrics')) return json({ metrics: [], ping: [], probes: {}, loss: {} })
+    return json({})
+  }
+  const file = join('dist', normalize(path === '/' ? '/index.html' : path).replace(/^(\.\.[/\\])+/, ''))
+  if (!existsSync(file) || statSync(file).isDirectory()) {
+    res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-store' })
+    return res.end(readFileSync('dist/index.html'))
+  }
+  res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' })
+  res.end(readFileSync(file))
+})
+await new Promise((r) => server.listen(PORT, '127.0.0.1', r))
+
+const CHROME = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe', '/usr/bin/google-chrome', '/usr/bin/chromium'].find((p) => existsSync(p)) || 'chrome'
+const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, '--remote-allow-origins=*', '--no-first-run', '--disable-gpu',
+  '--hide-scrollbars', '--no-proxy-server', `--user-data-dir=${join(tmpdir(), `cardform${CDP_PORT}`)}`, '--no-sandbox', 'about:blank'], { stdio: 'ignore' })
+let wsUrl = null
+for (let i = 0; i < 80 && !wsUrl; i++) {
+  try { wsUrl = (await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()).find((t) => t.type === 'page')?.webSocketDebuggerUrl } catch { /* 等 */ }
+  if (!wsUrl) await sleep(250)
+}
+if (!wsUrl) throw new Error('Chrome 没起来')
+const ws = new WebSocket(wsUrl)
+await new Promise((r) => { ws.onopen = r })
+let id = 0
+const pending = new Map()
+const errors = []
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data)
+  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return }
+  if (m.method === 'Runtime.exceptionThrown') errors.push(m.params?.exceptionDetails?.text || 'exception')
+  if (m.method === 'Runtime.consoleAPICalled' && m.params?.type === 'error') errors.push((m.params.args || []).map((a) => a.value).join(' '))
+}
+const send = (m, p = {}) => new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method: m, params: p })) })
+const js = async (expr) => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })).result?.result?.value
+await send('Runtime.enable'); await send('Page.enable')
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1600, deviceScaleFactor: 1, mobile: false })
+
+let pass = 0, fail = 0
+const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? ' — ' + extra : ''}`); if (ok) pass++; else fail++ }
+
+await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
+for (let i = 0; i < 60; i++) { await sleep(200); if (await js(`document.querySelectorAll('[data-node-card]').length === 6`)) break }
+await sleep(700)
+
+// 一次把六张卡片的形态量回来（选择器都写在探针里，断言在 Node 一侧判）。
+const probe = `(() => {
+  const paint = (el, under) => {
+    const c = document.createElement('canvas'); c.width = c.height = 1; const x = c.getContext('2d')
+    if (under) { x.fillStyle = under; x.fillRect(0, 0, 1, 1) }
+    x.fillStyle = getComputedStyle(el).backgroundColor
+    x.fillRect(0, 0, 1, 1)
+    const d = x.getImageData(0, 0, 1, 1).data
+    return { r: d[0], g: d[1], b: d[2], a: +(d[3] / 255).toFixed(2) }
+  }
+  const cards = [...document.querySelectorAll('[data-node-card]')]
+  const box = (el) => { const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) } }
+  const style = (el) => { const s = getComputedStyle(el); return { size: s.fontSize, weight: s.fontWeight, color: s.color } }
+  return JSON.stringify(cards.map((c) => {
+    const m = c.querySelector('[data-metrics]')
+    // ★状态锚点 2026-10-15 起挂在**卡根**上（那枚 8px 的点按站长要求去掉了）：卡里再冒出
+    //   [data-status] 元素＝点又回来了，下面当场报出来。
+    const dotInside = !!c.querySelector('[data-status]')
+    const net = c.querySelector('[data-net="cell"]')
+    // ★第四格是「网络」（2026-10-20）：它没有条，第二行是速率而不是 bar —— 三格读数单独取，
+    //   否则探针会把网络格的下一行当 bar 去读宽度（firstElementChild.style 直接炸）。
+    const cells = m ? [...m.children].filter((el) => !el.hasAttribute('data-net')).map((el) => {
+      const divs = el.querySelectorAll('div')
+      const bar = el.querySelectorAll('div')[2]
+      return {
+        label: divs[0].textContent,
+        value: divs[1].textContent,
+        valueStyle: style(divs[1]),
+        labelStyle: style(divs[0]),
+        title: el.getAttribute('title'),
+        barPct: +(bar.firstElementChild.style.width.replace('%', '')),
+        barH: Math.round(bar.getBoundingClientRect().height),
+      }
+    }) : null
+    const traffic = [...c.querySelectorAll('div')].find((d) => d.children.length === 2 && /^流量/.test(d.textContent))
+    const bars = [...c.querySelectorAll('div.overflow-hidden.rounded-full')]
+    return {
+      name: c.querySelector('h2')?.textContent ?? '(没名字)',
+      box: box(c),
+      status: c.dataset.status ?? null,
+      dotInside,
+      // 身份行的第一个孩子应当是**旗子**（点去掉后不该有别的东西顶在最前）。
+      // 卡片根的第一个孩子现在是铺满卡片的透明链接，所以从 h2 的父行取第一枚。
+      rowFirst: c.querySelector('h2')?.parentElement?.firstElementChild?.tagName.toLowerCase() ?? null,
+      badge: (() => { const b = [...c.querySelectorAll('[data-slot="badge"]')].find((x) => x.textContent.trim() === '已离线'); return b ? { text: b.textContent.trim(), color: paint(b, getComputedStyle(c).backgroundColor) } : null })(),
+      meta: c.querySelector('p')?.textContent ?? null,
+      cells,
+      gridCols: m ? getComputedStyle(m).gridTemplateColumns.split(' ').length : 0,
+      // 列表那一层：一行几张卡（列数按容器可用宽度算，卡片恒 336 宽）。
+      listCols: getComputedStyle(c.parentElement).gridTemplateColumns.split(' ').length,
+      divider: m ? getComputedStyle(m).borderTopWidth : null,
+      net: net ? {
+        // 第四格没有表名（2026-10-20 第二轮站长要求）：格子里只有两个速率行，标签数就是 div 数。
+        rows: net.children.length,
+        upText: net.children[0].innerText.replace(/\\n/g, ' | '),
+        downText: net.children[1].innerText.replace(/\\n/g, ' | '),
+        upAbove: net.children[0].getBoundingClientRect().top < net.children[1].getBoundingClientRect().top,
+        arrowColor: getComputedStyle(net.children[0].querySelector('.text-ok-ink') ?? net.children[0]).color,
+        aria: net.getAttribute('aria-label'),
+        title: net.getAttribute('title'),
+      } : null,
+      traffic: traffic ? traffic.innerText.replace(/\\n/g, ' | ') : null,
+      mode: c.querySelector('[data-net-mode]')?.getAttribute('data-net-mode') ?? null,
+      icon: (() => {
+        const sg = c.querySelector('[data-net-mode] svg')
+        if (!sg) return null
+        return { cls: sg.getAttribute('class') || '', paths: sg.querySelectorAll('path').length }
+      })(),
+      barW: bars.length ? bars[bars.length - 1].firstElementChild.style.width : null,
+      note: (() => { const el = [...c.querySelectorAll('span')].find((s) => /^价格|^剩余|^今天到期|^已过期/.test(s.textContent.trim())); return el ? el.textContent.trim() : null })(),
+      chips: [...c.querySelectorAll('[data-remark="card"] [data-slot="badge"]')].map((b) => b.innerText.trim()),
+      hint: /还没有接入/.test(c.innerText),
+    }
+  }))
+})()`
+const cards = JSON.parse(await js(probe) ?? '[]')
+// 列表按「有实时数据在前、其余沉底」排（见 App.tsx），所以**按名字取**每一台。
+const byName = (n) => cards.find((c) => c.name === n)
+const one = byName('东京一号'), down = byName('掉线二号'), never = byName('从未接入三号')
+const idle = byName('刚连上四号'), many = byName('备注五号'), unlim = byName('不限量六号')
+
+console.log(`闸门：六张卡片都渲染出来了 ${cards.length === 6 ? '✓' : '✗ ' + cards.length}`)
+check('① 六张卡片（三种处境 + 两种边角）都在', cards.length === 6, cards.map((c) => c.name).join(' / '))
+
+// ① 身份行（2026-10-15 起：旗子 + 名字 +（掉线）已离线徽章，**没有状态点**）
+console.log('\n① 身份行：旗子 + 名字 +（掉线）已离线徽章 —— 卡上没有状态点')
+check('在线那台：状态锚 on、没有「已离线」徽章、行首是旗子（不是圆点）',
+  one?.status === 'on' && !one?.badge && one?.rowFirst === 'img',
+  `${one?.status} / badge=${JSON.stringify(one?.badge)} / 行首=${one?.rowFirst}`)
+check('★ 六张卡里都不再有状态点（data-status 只挂卡根，卡内查不到）',
+  cards.length === 6 && cards.every((c) => c && c.dotInside === false && (c.status === 'on' || c.status === 'off')),
+  JSON.stringify(cards.map((c) => ({ 名: c?.name, 锚: c?.status, 卡内有锚: c?.dotInside }))))
+
+// ② meta 行
+console.log('\n② 系统 · 运行时间')
+check('在线：`Debian 12 · 运行时间 3 天 16 小时`（发行版代号已去掉）',
+  one?.meta === 'Debian 12 · 运行时间 3 天 16 小时', String(one?.meta))
+check('掉线：以「已离线」收尾', /· 已离线$/.test(down?.meta ?? ''), String(down?.meta))
+check('从未接入：以「未接入」收尾（且不写系统名）', never?.meta === '未接入', String(never?.meta))
+check('连上未上报：以「在线」收尾', /· 在线$/.test(idle?.meta ?? ''), String(idle?.meta))
+
+// ③ 三格读数 + 网络格
+console.log('\n③ 三格读数 CPU / 内存 / 存储 ＋ 第四格「网络」')
+check('四列、上面一条分隔线：三格读数 + 网络格（负载格已撤）',
+  one?.gridCols === 4 && one.cells.length === 3 && Number.parseFloat(one.divider) >= 1,
+  `cols=${one?.gridCols} cells=${one?.cells?.length} divider=${one?.divider}`)
+check('标签依次是 CPU / 内存 / 存储（弱化灰、12px）',
+  JSON.stringify(one?.cells.map((c) => c.label)) === JSON.stringify(['CPU', '内存', '存储']) &&
+  one.cells.every((c) => c.labelStyle.size === '12px'),
+  JSON.stringify(one?.cells.map((c) => c.label)))
+check('读数是两小数百分比、加粗、比标签大一档（13px/600，参考站那一档）',
+  one?.cells[0].value === '3.20%' && one.cells[1].value === '20.11%' && one.cells[2].value === '21.45%' &&
+  one.cells.every((c) => c.valueStyle.weight === '600' && Number.parseFloat(c.valueStyle.size) === 13),
+  JSON.stringify(one?.cells.map((c) => c.value)))
+check('内存 / 存储的条按真实比例（20.11% / 21.45%）',
+  Math.abs(one.cells[1].barPct - 20.107) < 0.05 && Math.abs(one.cells[2].barPct - 21.454) < 0.05,
+  `${one.cells[1].barPct} / ${one.cells[2].barPct}`)
+check('条的粗细就是那一档的 3px（贴在读数下缘、清新的绿）', one?.cells.every((c) => c.barH === 3), JSON.stringify(one?.cells.map((c) => c.barH)))
+check('CPU 的悬停说明写核数（2 核）', one?.cells[0].title === '2 核', String(one?.cells[0]?.title))
+check('掉线那台：三格读数都写「—」、条不画（宽度 0），网络格两行速率也写「—」',
+  down?.cells.every((c) => c.value === '—' && c.barPct === 0) && /^↑\s*\|?\s*—$/.test(down?.net?.upText ?? "") && /^↓\s*\|?\s*—$/.test(down.net.downText),
+  JSON.stringify(down?.cells?.map((c) => c.value)) + ' / ' + JSON.stringify(down?.net))
+
+// ④ 第四格（2026-10-20 起占了负载那一格的位置；第二轮连「网络」表名也撤了）
+console.log('\n④ 第四格：上行 / 下行两行速率，没有表名')
+check('★ 格子里只有两行速率、没有表名、底部不画条（2026-10-20 站长要求去掉那条占比条）',
+  one?.net?.rows === 2 && one.net.upAbove === true,
+  `格内行数=${one?.net?.rows} / upAbove=${one?.net?.upAbove}`)
+check('上行速率 453 KB/s（tx 侧）、下行 846 KB/s（rx 侧），箭头是 --ok 那一支绿',
+  /↑\s*\|?\s*453 KB\/s/.test(one?.net?.upText ?? '') && /↓\s*\|?\s*846 KB\/s/.test(one.net.downText) &&
+  one.net.arrowColor !== one.cells[0].valueStyle.color,
+  `${one?.net?.upText} / ${one?.net?.downText} / ${one?.net?.arrowColor}`)
+check('累计总量不进卡面，只在悬停说明里（累计 4.85 GB / 5.32 GB + 两侧速率）',
+  !/累计/.test(one?.net?.upText ?? '') && /累计 4\.85 GB/.test(one?.net?.title ?? '') &&
+  /累计 5\.32 GB/.test(one.net.title) && /上传 453 KB\/s/.test(one.net.title) && /下载 846 KB\/s/.test(one.net.title),
+  String(one?.net?.title))
+check('★ 没有视觉表名时给读屏一个名字（aria-label「上传 / 下载」）',
+  one?.net?.aria === '上传 / 下载', String(one?.net?.aria))
+check('掉线那台：两行速率写「—」，悬停说明仍给累计（hub 一直保留总量）',
+  /—/.test(down?.net?.upText ?? '') && /—/.test(down.net.downText) && /累计 4\.85 GB/.test(down.net.title),
+  `${down?.net?.upText} / ${down?.net?.title}`)
+check('★ 整行上传 / 下载两栏已撤、第四格也没有表名（卡片 336×186）', one?.box.h === 186 && one.box.w >= 330 && one.box.w <= 342, `${one?.box?.w}×${one?.box?.h}`)
+
+// ★卡片 2026-10-20 收窄到 336×186（1440 三列；手机单列 358×186）、第四列约 80px：
+//   13px 的「12.3 MB/s」会截断，所以速率统一 12px。这条钉住「最长的速率在桌面也不截」。
+{
+  const raw = await js(`(() => {
+    const row = document.querySelector('[data-net="cell"] > div:nth-child(1)')
+    if (!row) return 'null'
+    const old = row.innerHTML
+    row.innerHTML = '<span class="mr-0.5 text-ok-ink">↑</span>12.3 MB/s'
+    const r = { sw: row.scrollWidth, cw: row.clientWidth, fs: getComputedStyle(row).fontSize }
+    row.innerHTML = old
+    return JSON.stringify(r)
+  })()`)
+  const longRate = JSON.parse(raw ?? 'null')
+  check('★ 桌面 336 宽下最长的速率（12.3 MB/s）不被截（速率统一 12px）', !!longRate && longRate.sw <= longRate.cw + 1, longRate ? `${longRate.sw}/${longRate.cw} @ ${longRate.fs}` : '找不到第四格第一行')
+}
+
+// ★2026-10-20 站长指出：流量图标一直不变，看不出这台按哪种方式计流量。
+//   现在四种方式各有符号：Σ 相加 / ≥ 取较大 / ↑ 仅上行 / ↓ 仅下行（悬停说明写全称）。
+{
+  // ★判据落在 svg 本身上（类名 / 路径数），不看 data-net-mode 那个由模式回显出来的字符串 ——
+  //   否则「把 switch 删掉、四种都画同一枚图标」也能过（2026-10-20 审查抓到的假通过）。
+  const iconCls = (c) => c?.icon?.cls ?? ''
+  check('★ 计费方式在卡面上有区分：相加=↕(lucide)、取较大=自绘≥、仅上行=↑、仅下行=↓',
+    /lucide-arrow-up-down/.test(iconCls(one)) &&
+    down?.icon?.paths === 2 && !/lucide/.test(iconCls(down)) &&
+    /lucide-arrow-up(?![A-Za-z-])/.test(iconCls(many)) &&
+    /lucide-arrow-down/.test(iconCls(unlim)) &&
+    new Set([iconCls(one), iconCls(down), iconCls(many), iconCls(unlim)]).size === 4,
+    JSON.stringify({ 相加: iconCls(one), 取大: down?.icon, 仅上行: iconCls(many), 仅下行: iconCls(unlim) }))
+}
+
+// ⑤ 总流量（2026-10-20 照参考站：用量挪到右端、放大加粗；左边是「流量 ↕ 重置周期 ⟳」）
+console.log('\n⑤ 总流量：左「流量 ↕ 重置周期 ⟳」+ 右「已用 / 额度」')
+check('左边「流量 · 21 日重置」（无图标）、右边加粗「8.38 / 500.00 GB」',
+  /^流量/.test(one?.traffic ?? '') && /21 日重置/.test(one.traffic) && !/每月/.test(one.traffic) &&
+  /8\.38\s*\/\s*500\.00 GB$/.test(one.traffic.trim()) && !/流量重置/.test(one.traffic),
+  String(one?.traffic))
+check('不限量的那台：重置那截写 N/A、用量那截写「X / ∞」',
+  /^流量[\s|·]*N\/A/.test((unlim?.traffic ?? '').trim()) && /∞$/.test((unlim?.traffic ?? '').trim()),
+  String(unlim?.traffic))
+check('全宽进度条按 已用 / 额度 上色（8.38 / 500 ≈ 1.68%）',
+  Math.abs(Number.parseFloat(one?.barW ?? '0') - 1.676) < 0.05, String(one?.barW))
+
+// ⑥ 底注
+console.log('\n⑥ 底注：价格 / 到期 + 备注小卡片')
+check('价格与到期写成 `价格 ¥349.00/年 · 剩余 299 天`',
+  one?.note === '价格 ¥349.00/年 · 剩余 299 天', String(one?.note))
+check('没填价格、也没有到期日的那台：底注那行不写字（行仍恒定占位，卡片照样等高）', unlim?.note === null, String(unlim?.note))
+check('★ 备注小卡片最多 2 枚（卡片收到 336 宽后；夹具写了 4 枚：甲 / 乙 / 丙 / 丁）',
+  JSON.stringify(many?.chips) === JSON.stringify(['甲', '乙']) && many.chips.length === 2, JSON.stringify(many?.chips))
+check('在线那台也摊备注（一枚「优化线路」，底注右侧与价格同行）',
+  JSON.stringify(one?.chips) === JSON.stringify(['优化线路']), JSON.stringify(one?.chips))
+check('掉线那台也摊备注（一枚「优化线路」）', JSON.stringify(down?.chips) === JSON.stringify(['优化线路']), JSON.stringify(down?.chips))
+check('没写备注的那几台：卡片上没有任何小卡片', idle?.chips.length === 0 && unlim?.chips.length === 0)
+check('备注小卡片与底注同一行（右侧、不与价格那截重叠）',
+  (await js(`(() => {
+    const c = document.querySelector('[data-node-card]')
+    const chips = c.querySelector('[data-remark="card"]')
+    const note = [...c.querySelectorAll('span')].find((s) => /^价格|^剩余/.test(s.textContent.trim()))
+    if (!chips || !note) return false
+    return chips.getBoundingClientRect().left >= note.getBoundingClientRect().right - 1
+  })()`)) === true)
+
+// ⑦ 从未接入 + 版面
+console.log('\n⑦ 从未接入与版面')
+check('从未接入那台：只有身份行 + 一行说明，没有读数区', never?.hint === true && never.cells === null, `hint=${never?.hint}`)
+// ★底注**恒定占位**（2026-10-15 站长定的新口径）：有备注 / 没备注、有价格 / 没价格，
+// 卡片一律等高 —— 从前那几像素差来自两处：备注小卡片自己 22px 比底注那行小字高一档（+6），
+// 离线徽章又比名字行高 2px（+2）。现在小卡片收成 15px 紧凑档、身份行定高 22px，两处都钉平。
+// 从未接入那台（没有读数区）本来就是另一种卡型，不参与这条判据。
+{
+  const hs = cards.filter((c) => c.cells).map((c) => c.box.h)
+  check('★ 有备注 / 无备注 / 没价格 / 掉线（带徽章）几种卡片高度完全相同',
+    hs.length >= 4 && new Set(hs).size === 1,
+    JSON.stringify(cards.map((c) => `${c.name}:${c.box.h}`)))
+}
+{
+  // 找不到元素要**报红**（探针返回 -1），并加下界 —— 原来 `b ? h : 0` 配 `<= 16`，
+  // 属性一改名或夹具里没了备注就静默通过（2026-10-15 审出来）。
+  const chipH = await js(`(() => {
+    const b = document.querySelector('[data-remark="card"] [data-slot="badge"]')
+    return b ? Math.round(b.getBoundingClientRect().height * 10) / 10 : -1
+  })()`)
+  check('★ 备注小卡片收成紧凑档（高 10–16px：塞得进底注那行，不把卡片撑高）',
+    typeof chipH === 'number' && chipH >= 10 && chipH <= 16, `实测 ${chipH}px`)
+}
+check('★ 列表一行三张（1440 容器 1080 下每张 ~336 宽，2026-10-20 站长要求「更和谐」）', cards[0]?.listCols === 3, `listCols=${cards[0]?.listCols}`)
+check('★ 卡片是宽扁的（宽 ≥ 1.75×高；336×186 ≈ 1.81:1）',
+  cards.filter((c) => c.cells).every((c) => c.box.w >= 1.75 * c.box.h),
+  JSON.stringify(cards.map((c) => `${c.box.w}x${c.box.h}`)))
+check('1440 视口上整页没有横向溢出',
+  (await js('document.documentElement.scrollWidth <= document.documentElement.clientWidth')) === true,
+  `${await js('document.documentElement.scrollWidth')} vs ${await js('document.documentElement.clientWidth')}`)
+
+// ★宽度带（2026-10-25 站长口径）：窗口变窄时**卡片尺寸不变、只少摆一列**。
+//   旧断点（md 两列 / xl 三列）在 1100–1279 视口上把两张卡各拉到 510 宽、700 左右单张 637 宽 ——
+//   三格读数从设计的 61 涨到 101/130，读数与右端速率之间空成一片（站长两张对照图指的就是这个）。
+//   现在列数由容器的可用宽度算（.card-grid 的 auto-fit），卡片恒 336×186。逐档量，别只钉两端：
+//   三列 ≥1095 视口、两列 732–1094、一列 <732（容器封顶 1080 时可用宽 1032）。
+for (const [w, want] of [[1280, 3], [1100, 3], [1024, 2], [900, 2], [768, 2], [700, 1]]) {
+  await send('Emulation.setDeviceMetricsOverride', { width: w, height: 1200, deviceScaleFactor: 1, mobile: false })
+  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
+  for (let i = 0; i < 60; i++) { await sleep(200); if (await js(`document.querySelectorAll('[data-node-card]').length === 6`)) break }
+  await sleep(600)
+  const m = JSON.parse(await js(probe) ?? '[]')[0]
+  check(`★ ${w} 视口：${want} 列、卡片仍是 336×186（窗口变窄不把卡片拉胖）`,
+    m?.listCols === want && m?.box.w === 336 && m?.box.h === 186,
+    JSON.stringify({ listCols: m?.listCols, card: `${m?.box?.w}x${m?.box?.h}` }))
+}
+// 回到 1440 再往下跑（⑨ 的点击/键盘判据按 1440 摆位）
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1600, deviceScaleFactor: 1, mobile: false })
+await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
+for (let i = 0; i < 60; i++) { await sleep(200); if (await js(`document.querySelectorAll('[data-node-card]').length === 6`)) break }
+await sleep(400)
+
+console.log('\n⑧ 窄屏（390）：四列（三格读数 + 网络格）不换行、不横向溢出')
+await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 1200, deviceScaleFactor: 2, mobile: true })
+await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
+for (let i = 0; i < 60; i++) { await sleep(200); if (await js(`document.querySelectorAll('[data-node-card]').length === 6`)) break }
+await sleep(700)
+const m390 = JSON.parse(await js(probe) ?? '[]')
+check('手机上一列：四列仍是四列（三格读数 + 网络格）', m390[0]?.gridCols === 4 && m390[0]?.cells.length === 3, `${m390[0]?.gridCols} / ${m390[0]?.cells?.length}`)
+check('手机上一列：列表是单列、卡片**铺满可用宽度**（电脑固定 336，手机上照旧铺满）',
+  m390[0]?.listCols === 1 && m390[0]?.box.w === 358,
+  `listCols=${m390[0]?.listCols} card=${m390[0]?.box?.w}`)
+check('手机上三格读数与网络格两行速率都没被截（scrollWidth ≤ clientWidth）',
+  (await js(`(() => {
+    const c = document.querySelector('[data-node-card]')
+    const vals = [...c.querySelectorAll('[data-metrics] .tnum')]
+    return vals.length === 5 && vals.every((el) => el.scrollWidth <= el.clientWidth + 1)
+  })()`)) === true,
+  await js(`[...document.querySelectorAll('[data-metrics] .tnum')].map((e) => e.textContent + ' ' + e.scrollWidth + '/' + e.clientWidth).join(' | ')`))
+check('390 宽上页面没有横向溢出',
+  (await js('document.documentElement.scrollWidth <= document.documentElement.clientWidth')) === true,
+  `${await js('document.documentElement.scrollWidth')} vs ${await js('document.documentElement.clientWidth')}`)
+// ★窄屏最长的速率（`12.3 MB/s`，13px + 箭头）也得整段放得下：否则真机上大流量那台会被截成
+//   `↑ 12.3 M…` —— 速率是网络格的重心，截掉单位就读不出来了。
+const rawRate = await js(`(() => {
+  const row = document.querySelector('[data-net="cell"] > div:nth-child(1)')
+  if (!row) return 'null'
+  const old = row.innerHTML
+  row.innerHTML = '<span class="mr-0.5 text-ok-ink">↑</span>12.3 MB/s'
+  const r = { sw: row.scrollWidth, cw: row.clientWidth, fs: getComputedStyle(row).fontSize }
+  row.innerHTML = old
+  return JSON.stringify(r)
+})()`)
+const longRate = JSON.parse(rawRate ?? 'null')
+check('★ 390 宽上最长的速率（12.3 MB/s）不被截', !!longRate && longRate.sw <= longRate.cw + 1, longRate ? `${longRate.sw}/${longRate.cw} @ ${longRate.fs}` : '找不到第四格第一行')
+
+// ⑨ 整卡可点的语义（2026-10-20）：卡根不再是 role=button；语义链接收在标题里，卡根 onClick
+//    兜住其余区域。这条同时钉住三件事：鼠标点卡片中心能进详情、键盘 Enter 能进、卡内 title 悬停
+//    没有被覆盖层挡住（复审出的回归）。
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1600, deviceScaleFactor: 1, mobile: false })
+await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
+for (let i = 0; i < 60; i++) { await sleep(200); if (await js(`document.querySelectorAll('[data-node-card]').length === 6`)) break }
+await sleep(500)
+{
+  const target = JSON.parse(await js(`(() => {
+    const c = document.querySelector('[data-node-card]')
+    const a = c.querySelector('h2 a[href^="/node/"]')
+    const r = c.getBoundingClientRect()
+    const ar = a?.getBoundingClientRect()
+    const hitAt = (x, y) => { const h = document.elementFromPoint(x, y); return !!h && !!a && (h === a || a.contains(h)) }
+    const tip = c.querySelector('[data-metrics] [title]') ?? c.querySelector('[title]')
+    const tr = tip?.getBoundingClientRect()
+    const hit = tr ? document.elementFromPoint(tr.x + tr.width / 2, tr.y + tr.height / 2) : null
+    return JSON.stringify({
+      id: c.getAttribute('data-node-card'), name: c.querySelector('h2')?.textContent ?? '',
+      href: a?.getAttribute('href') ?? null, role: c.getAttribute('role'),
+      linkHit: !!ar && hitAt(ar.x + ar.width / 2, ar.y - 2) && hitAt(ar.x + ar.width / 2, ar.bottom + 2),
+      tip: !!tip && !!hit && (hit === tip || tip.contains(hit)),
+      top: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.tagName ?? '',
+      x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
+    })
+  })()`))
+  check('★ 整卡可点用链接语义：卡根无 role、标题里有 /node/id 链接、读完 title 可悬停、链接命中区 ≥24',
+    target.role === null && target.href === `/node/${target.id}` && target.tip && target.linkHit,
+    JSON.stringify(target))
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount: 1 })
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 })
+  for (let i = 0; i < 30; i++) { await sleep(200); if ((await js('location.pathname')) !== '/') break }
+  // 详情页是懒加载的：路径一变就先出骨架，节点名要等 NodeDetail 那块 chunk 到了才有。
+  let detailName = ''
+  for (let i = 0; i < 40; i++) { await sleep(200); detailName = await js(`document.querySelector('main h2')?.textContent ?? ''`); if (detailName) break }
+  const path = await js('location.pathname')
+  check('★ 点卡片中心 → /node/{id}，详情页标题是同一台',
+    path === `/node/${target.id}` && detailName === target.name, `${path} / ${detailName}`)
+
+  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
+  for (let i = 0; i < 60; i++) { await sleep(200); if (await js(`document.querySelectorAll('[data-node-card]').length === 6`)) break }
+  await js(`document.querySelector('[data-node-card] h2 a').focus()`)
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
+  for (let i = 0; i < 30; i++) { await sleep(200); if ((await js('location.pathname')) !== '/') break }
+  check('★ 键盘：链接拿到焦点后按 Enter 也能进详情',
+    (await js('location.pathname')) === `/node/${target.id}`, await js('location.pathname'))
+}
+
+check('没有控制台异常', errors.length === 0, errors.slice(0, 2).join(' | '))
+
+console.log(`\n结果: PASS ${pass} / FAIL ${fail}`)
+ws.close(); chrome.kill(); server.close()
+process.exit(fail ? 1 : 0)

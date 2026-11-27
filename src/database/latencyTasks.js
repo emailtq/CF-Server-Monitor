@@ -54,7 +54,7 @@ export async function loadLatencyTasks(db) {
   return row ? reconcileLatencyTasks(db, row, 'reconcile') : null;
 }
 
-async function writeDocument(db, previous, document, purge = []) {
+async function writeDocument(db, previous, document, purge = [], tcpScope = undefined) {
   // Assignment periods belong to the catalog CAS, not to a reconnecting socket.
   const now = Date.now();
   const live = new Set(document.tasks.flatMap(task=>task.nodes.map(node=>JSON.stringify([node,task.metric_id || task.id]))));
@@ -88,8 +88,10 @@ async function writeDocument(db, previous, document, purge = []) {
   }
   for (let i = 0; i < document.seen_nodes.length; i += 1000) add('seen', JSON.stringify({ seen_nodes: document.seen_nodes.slice(i, i + 1000) }));
   const raw = JSON.stringify({ version: document.version, revision: document.revision, chunked: true, write_id: crypto.randomUUID(), tasks: [], seen_nodes: [] });
+  const tcpGuard=tcpScope===undefined?'':" AND NOT EXISTS(SELECT 1 FROM servers WHERE ping_mode='icmp' AND (? IS NULL OR id IN(SELECT value FROM json_each(?))))";
+  const tcpArgs=tcpScope===undefined?[]:[tcpScope,tcpScope];
   const statement = previous
-    ? db.prepare("UPDATE settings SET value = ? WHERE key = 'latency_tasks' AND value = ?").bind(raw, previous)
+    ? db.prepare(`UPDATE settings SET value = ? WHERE key = 'latency_tasks' AND value = ? ${tcpGuard}`).bind(raw, previous,...tcpArgs)
     : db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').bind(key, raw);
   const statements = [statement, db.prepare("DELETE FROM settings WHERE key GLOB 'latency_tasks:*' AND EXISTS(SELECT 1 FROM settings WHERE key='latency_tasks' AND value=?)").bind(raw)];
   let group = [], size = 0;
@@ -108,7 +110,16 @@ async function writeDocument(db, previous, document, purge = []) {
     const { results: tables } = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('metrics_history','metrics_history_old')").all();
     statements.push(...tables.map(({ name }) => db.prepare(`WITH deleted AS (SELECT value FROM json_each(?)) UPDATE ${name} SET extra_probes=(SELECT json_group_object(key,json(value)) FROM json_each(${name}.extra_probes) WHERE key NOT IN (SELECT value FROM deleted)) WHERE json_valid(extra_probes) AND EXISTS (SELECT 1 FROM json_each(${name}.extra_probes) WHERE key IN (SELECT value FROM deleted)) AND EXISTS (SELECT 1 FROM settings WHERE key='latency_tasks' AND value=?)`).bind(JSON.stringify(purge), raw)));
   }
-  const batch = await db.batch(statements);
+  if(tcpScope!==undefined)statements.push(db.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM settings WHERE key='latency_tasks' AND value=?)
+    AND EXISTS(SELECT 1 FROM servers WHERE ping_mode='icmp' AND (? IS NULL OR id IN(SELECT value FROM json_each(?)))) THEN '' ELSE '{}' END)`)
+    .bind(raw,tcpScope,tcpScope));
+  let batch;
+  try {batch=await db.batch(statements);}
+  catch(error) {
+    // This assertion is last in the transaction; a mode change cannot commit a TCP catalog.
+    if(tcpScope!==undefined&&/malformed JSON/.test(error.message))throw new AppError('monitor_icmp_tasks_unavailable',422);
+    throw error;
+  }
   return batch[0].meta.changes > 0;
 }
 
@@ -128,16 +139,16 @@ async function createLatencyDocument(db, settings) {
 }
 
 // Register/delete and edits reconcile against the same CAS row, including auto-join.
-export async function changeLatencyTasks(db, settings, action, input = {}) {
+export async function changeLatencyTasks(db, settings, action, input = {}, options = {}) {
   const row = await readDocument(db) || await createLatencyDocument(db, settings);
-  return reconcileLatencyTasks(db, row, action, input);
+  return reconcileLatencyTasks(db, row, action, input, options);
 }
 
-async function reconcileLatencyTasks(db, row, action, input = {}) {
+async function reconcileLatencyTasks(db, row, action, input = {}, {standardTcp=false} = {}) {
   for (let attempt = 0; attempt < 8; attempt++) {
     const document = row.document;
     let purge = [];
-    const { results } = await db.prepare('SELECT id FROM servers').all();
+    const { results } = await db.prepare(standardTcp?'SELECT id,ping_mode FROM servers':'SELECT id FROM servers').all();
     const nodes = results.map(node => node.id), fresh = nodes.filter(id => !document.seen_nodes.includes(id));
     for (const task of document.tasks) task.nodes = [...new Set([...task.nodes.filter(id => nodes.includes(id)), ...(task.auto_join ? fresh : [])])];
     document.seen_nodes = nodes;
@@ -200,6 +211,14 @@ async function reconcileLatencyTasks(db, row, action, input = {}) {
       document.tasks = document.tasks.filter(task => task.id !== input.id);
       purge = document.archives.filter(entry => entry.id === task.id).map(entry => entry.metric_id || entry.id);
     }
+    let tcpScope;
+    if(standardTcp) {
+      const affected=action==='save'?document.tasks.filter(task=>input.id?task.id===input.id:task===document.tasks.at(-1)):
+        document.tasks.filter(task=>task.nodes.includes(input.node));
+      const autoJoin=affected.some(task=>task.auto_join),scope=new Set(affected.flatMap(task=>task.nodes));
+      if(results.some(node=>node.ping_mode==='icmp'&&(autoJoin||scope.has(node.id))))throw new AppError('monitor_icmp_tasks_unavailable',422);
+      tcpScope=autoJoin?null:JSON.stringify([...scope]);
+    }
     // A catalog can contain disjoint node targets; the Agent boundary applies to each delivered config, not their union.
     if (['save', 'node'].includes(action)) for (const node of nodes) {
       const assigned = document.tasks.filter(task => task.nodes.includes(node)).map(task => ({ id: task.metric_id || task.id, target: task.target, interval: task.interval }));
@@ -209,7 +228,7 @@ async function reconcileLatencyTasks(db, row, action, input = {}) {
     }
     if (JSON.stringify(document) === row.serialized) return document;
     document.revision++;
-    if (await writeDocument(db, row.raw, document, purge)) return document;
+    if (await writeDocument(db, row.raw, document, purge, tcpScope)) return document;
     row = await readDocument(db);
   }
   throw new AppError('latency_config_conflict', 409);

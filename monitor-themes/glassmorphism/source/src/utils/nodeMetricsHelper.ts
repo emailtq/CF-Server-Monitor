@@ -1,0 +1,183 @@
+import { trafficUsage, trafficPercentage, sumKnown } from "./traffic"
+import type { NodeData } from '@/stores/nodes'
+import { getDaysUntilExpired } from '@/utils/tagHelper'
+
+export interface TopNodeMetric {
+  node: NodeData
+  value: number
+}
+
+export interface HighLoadMetric {
+  key: 'cpu' | 'memory' | 'disk'
+  label: string
+  percentage: number
+}
+
+export function hasTrafficLimit(node: Pick<NodeData, 'traffic_limit'>): boolean {
+  return (node.traffic_limit || 0) > 0
+}
+
+type TrafficUsageFields = 'net_total_up' | 'net_total_down' | 'traffic_limit_type' | 'traffic_up' | 'traffic_down' | 'traffic_used'
+
+/**
+ * 本周期已用流量。优先使用 Hub 按计费方式算好的 month_used（与后台和流量告警一致）；
+ * 旧版 Hub 没有该字段时按同样规则计算：up / down / max，其余一律按上下行之和。
+ */
+export function getTrafficUsed(node: Pick<NodeData, TrafficUsageFields>): number | null {
+  const up = node.traffic_up !== undefined ? node.traffic_up : node.net_total_up
+  const down = node.traffic_down !== undefined ? node.traffic_down : node.net_total_down
+  return trafficUsage(up, down, node.traffic_limit_type, node.traffic_used)
+}
+
+export function getTrafficUsedPercentage(node: Pick<NodeData, 'traffic_limit' | TrafficUsageFields>): number | null {
+  return trafficPercentage(getTrafficUsed(node), node.traffic_limit)
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** 某年某月按「重置日」落在哪一天；遇到 29/30/31 这类短月时收敛到当月最后一天 */
+function resetDateOfMonth(year: number, month: number, day: number): Date {
+  const lastDay = new Date(year, month + 1, 0).getDate()
+  return new Date(year, month, Math.min(day, lastDay))
+}
+
+/**
+ * 距离下次流量重置还有几天（今天重置为 0）。
+ * Hub 的 traffic_reset_day 是每月重置日；未设置（0 或越界）或没有流量限额时返回 null。
+ */
+export function getDaysUntilTrafficReset(
+  node: Pick<NodeData, 'traffic_limit' | 'traffic_reset_day'>,
+  now: Date = new Date(),
+): number | null {
+  if (!hasTrafficLimit(node))
+    return null
+
+  const resetDay = Math.trunc(node.traffic_reset_day ?? 0)
+  if (!Number.isFinite(resetDay) || resetDay < 1 || resetDay > 31)
+    return null
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  let next = resetDateOfMonth(today.getFullYear(), today.getMonth(), resetDay)
+  if (next.getTime() < today.getTime())
+    next = resetDateOfMonth(today.getFullYear(), today.getMonth() + 1, resetDay)
+
+  return Math.round((next.getTime() - today.getTime()) / DAY_MS)
+}
+
+export function getRealtimeTotalSpeed(node: Pick<NodeData, 'net_in' | 'net_out'>): number {
+  return (node.net_in || 0) + (node.net_out || 0)
+}
+
+export function getRealtimePeakSpeed(node: Pick<NodeData, 'net_in' | 'net_out'>): number {
+  return Math.max(node.net_in || 0, node.net_out || 0)
+}
+
+export function getTotalTraffic(node: Pick<NodeData, 'net_total_up' | 'net_total_down'>): number | null {
+  return sumKnown([node.net_total_up, node.net_total_down])
+}
+
+export function getConnectionCount(node: Pick<NodeData, 'connections' | 'connections_udp'>): number {
+  return (node.connections || 0) + (node.connections_udp || 0)
+}
+
+export function getMemoryPercentage(node: Pick<NodeData, 'ram' | 'mem_total'>): number {
+  return clampPercentage((node.ram || 0) / (node.mem_total || 1) * 100)
+}
+
+export function getDiskPercentage(node: Pick<NodeData, 'disk' | 'disk_total'>): number {
+  return clampPercentage((node.disk || 0) / (node.disk_total || 1) * 100)
+}
+
+export function getHighLoadMetrics(node: NodeData, threshold: number): HighLoadMetric[] {
+  if (!node.online)
+    return []
+
+  const metrics: HighLoadMetric[] = []
+  const safeThreshold = clampThreshold(threshold, 80)
+  const cpu = clampPercentage(node.cpu || 0)
+  const memory = getMemoryPercentage(node)
+  const disk = getDiskPercentage(node)
+
+  if (cpu >= safeThreshold)
+    metrics.push({ key: 'cpu', label: 'CPU', percentage: cpu })
+  if (memory >= safeThreshold)
+    metrics.push({ key: 'memory', label: '内存', percentage: memory })
+  if (disk >= safeThreshold)
+    metrics.push({ key: 'disk', label: '硬盘', percentage: disk })
+
+  return metrics
+}
+
+export function isHighLoadNode(node: NodeData, threshold: number): boolean {
+  return getHighLoadMetrics(node, threshold).length > 0
+}
+
+export function hasValidExpiry(node: Pick<NodeData, 'expired_at' | 'expires_in'>): boolean {
+  if (node.expires_in !== undefined)
+    return node.expires_in !== null && Number.isFinite(node.expires_in)
+  if (!node.expired_at)
+    return false
+
+  const time = Date.parse(String(node.expired_at))
+  return Number.isFinite(time)
+}
+
+export function getExpiryDays(node: Pick<NodeData, 'expired_at' | 'expires_in'>): number | null {
+  if (!hasValidExpiry(node))
+    return null
+
+  return getDaysUntilExpired(node.expired_at, node.expires_in)
+}
+
+export function isExpiringNode(node: NodeData, days: number): boolean {
+  if (node.price === 0)
+    return false
+
+  const expiryDays = getExpiryDays(node)
+  if (expiryDays === null)
+    return false
+
+  return expiryDays <= Math.max(1, days)
+}
+
+export function isTrafficWarningNode(node: NodeData, threshold: number): boolean {
+  if (!hasTrafficLimit(node))
+    return false
+
+  return (getTrafficUsedPercentage(node) ?? -1) >= clampThreshold(threshold, 80)
+}
+
+export function getTopNodeBy(nodes: readonly NodeData[], selector: (node: NodeData) => number | null): TopNodeMetric | null {
+  let topNode: NodeData | null = null
+  let topValue = -Infinity
+
+  for (const node of nodes) {
+    const value = selector(node)
+    if (value === null || !Number.isFinite(value))
+      continue
+
+    if (value > topValue) {
+      topValue = value
+      topNode = node
+    }
+  }
+
+  if (!topNode)
+    return null
+
+  return { node: topNode, value: Math.max(0, topValue) }
+}
+
+export function clampThreshold(value: number, fallback: number): number {
+  if (!Number.isFinite(value))
+    return fallback
+
+  return Math.min(Math.max(value, 1), 100)
+}
+
+function clampPercentage(value: number): number {
+  if (!Number.isFinite(value))
+    return 0
+
+  return Math.min(Math.max(value, 0), 100)
+}

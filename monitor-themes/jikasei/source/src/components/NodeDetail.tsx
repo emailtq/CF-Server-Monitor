@@ -1,0 +1,878 @@
+import { bucketLoss } from "@/lib/loss"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+
+import { Check, Copy, Info } from "lucide-react"
+
+import { TimeChart } from "@/components/Chart"
+import { PingTooltip } from "@/components/ChartTooltip"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Country, cycleText, deployed, expiryText, offlineSeconds, priceText, RemarkChips } from "@/components/NodeCard"
+import { api, type Node } from "@/lib/api"
+import {
+  axisBytes, axisTop, bytes, despike, cpuName, osName, rate, uptime,
+} from "@/lib/format"
+import { hasDetailRemarks, remarkChips } from "@/lib/notes"
+import { remarksOnCards, type RemarkPlacement } from "@/lib/site-settings"
+import { rangesFor } from "@/lib/ranges"
+
+type Point = {
+  ts: number
+  cpu: number
+  mem_used: number
+  disk_used: number
+  net_rx: number
+  net_tx: number
+  /** 连接条数（hub 的历史桶里带着 `tcp / udp`；老 hub 的桶可能没有这个键——图会自行留白）。 */
+  tcp?: number | null
+  udp?: number | null
+  /** 进程总数（同一个历史桶的 `procs`；老 hub 的桶同样可能没有这个键）。 */
+  procs?: number | null
+}
+// `latency` is the bucket's median round trip, null when every probe in it timed
+// out. `band` is the range its answers spanned, absent when they spanned nothing.
+// `loss` is the percentage that timed out, absent when none did.
+type PingPoint = {
+  task_id: number
+  ts: number
+  latency: number | null
+  band?: [number, number]
+  source?: string
+  loss?: number | null
+}
+/** Probe names by id, sent alongside the samples they label. */
+type Probes = Record<string, string>
+/**
+ * Proportion of the whole window each probe lost, by id; null/missing is unknown.
+ * A measured loss-free window is numeric zero. Sent because it cannot be derived here: every bucket's `loss` is
+ * already a percentage of that bucket, so the sample counts it was divided by are
+ * unavailable. Averaging them would weight a bucket holding one sample equally
+ * with one holding twelve, and the window's first and last buckets are partial
+ * regardless of what the probe does.
+ */
+type Loss = Record<string, number | null>
+
+// 时间范围那排按钮由 hub 的保留天数生成（见 @/lib/ranges）：hub 1.3.2 起 `hours` 的上限就是
+// 保留天数本身（登录与匿名相同），1.15.x 那排写死的 1/6/24 小时 + 7 天只对老 hub 成立。
+// 两个页签共用同一组窗口——延迟页签原先停在上面的 24 小时，理由是「一周宽的桶会把抖动与丢包
+// 摊平」；但那是替访客做判断：想看一周走势的人只能在资源页签里看，而延迟恰恰是资源页签给不了的
+// 那条。窗口拉长不会让点数变多，hub 只会把桶放得更宽（168 小时 ≈ 9 分钟一桶，30 天以上走
+// 小时汇总），所以更长的探测史仍画得下、也仍看得见趋势。
+// 延迟图最多同时画四条线路，所以这里备九个色相、每个再配一版短虚线：前九条走实线，
+// 第十条起色相重复、换线型。色相表是 index.css 里的 --chart-1..9，深浅两套只差亮度，
+// 同一台机器在两种主题下是同一种颜色。
+const COLORS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `var(--chart-${n})`)
+const PALETTE = [
+  ...COLORS.map((stroke) => ({ stroke, dash: undefined })),
+  ...COLORS.map((stroke) => ({ stroke, dash: "6 3" })),
+]
+
+const TABS = [
+  { key: "resources", label: "资源" },
+  { key: "latency", label: "网络延迟" },
+] as const
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h4 className="mb-2 text-xs font-medium text-muted-foreground">{title}</h4>
+      <div className="h-40 w-full text-muted-foreground">{children}</div>
+    </div>
+  )
+}
+
+function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs transition-colors ${
+        active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
+ * How many samples of a probe's own series make up seven minutes of neighbours.
+ *
+ * The window the filter judges against has to be a duration, not a count: the
+ * hub buckets a window to the `points` asked for below, so the same day arrives
+ * as one-minute buckets on a desktop and two-minute ones on a phone, and a fixed
+ * count would clip a five-minute stall on the first while keeping it on the
+ * second. The smallest gap is the bucket interval; a longer one is the node
+ * being offline. Odd, so the window has a middle, and bounded so a sparse probe
+ * still has neighbours and a dense one does not pay for a wide sort.
+ */
+function despikeWindow(points: { ts: number }[]): number {
+  let step = Infinity
+  for (let i = 1; i < points.length; i++) step = Math.min(step, points[i].ts - points[i - 1].ts)
+  return Math.min(15, Math.max(3, Math.round(420 / step) | 1))
+}
+
+/**
+ * 在线时间：与卡片上原先那枚状态徽章同一个时长，只是搬进信息项里——徽章占的是
+ * 标题行，而标题行在手机上本来就窄。没接入（探针从没上报过）与离线是两回事：
+ * 前者没有时长可言，后者写清楚已经离线多久（不足一分钟就不报数）。
+ */
+function onlineFor(node: Node) {
+  if (node.online) return node.metrics ? uptime(node.metrics.uptime) : "—"
+  if (!deployed(node)) return "未接入"
+  const down = offlineSeconds(node)
+  return down >= 60 ? `离线 ${uptime(down)}` : "离线"
+}
+
+function Fact({ label, value, title }: { label: string; value?: string | number | null; title?: string }) {
+  if (value === null || value === undefined || value === "") return null
+  return (
+    <div className="min-w-0" title={title}>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="truncate text-sm">{value}</dd>
+    </div>
+  )
+}
+
+export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, remarkPlacement }: {
+  node: Node
+  /** 紧凑形态点开一行时的就地渲染：省掉身份行与规格，直接落在延迟上，高度写死。 */
+  embedded?: boolean
+  /** 就地展开时通往整页详情的口子。不传就不画那个链接。 */
+  onOpenDetail?: () => void
+  /** hub 的历史保留天数（`/api/me` 的 `history_days`）；老 hub 不给，按 7 天算（见 @/lib/ranges）。 */
+  historyDays?: number
+  /** 「备注显示位置」：`embedded`（紧凑展开行）算「卡片」那一侧，整页详情那一块算「详情页」那一侧。 */
+  remarkPlacement?: RemarkPlacement
+}) {
+  // 这台机器的备注（见 @/lib/notes）：私有在前（仅自己可见）、公有在后，都拆成一枚枚小卡片。
+  // ★**公开**备注在整页详情上不单独摊（站长 2026-10-03 定的口径）：这一页只留规格与图表，
+  // 列表卡片上那几处（经典/延迟的右上角浮层、详细档标题行右端、紧凑展开行那格）才摊它们；
+  // 而**私有**备注在整页详情那一块里跟它一起摊（见下面那个块）。
+  // 下面那枚控件与备注条都只在 embedded（紧凑展开）时才出现。
+  // 同一个节点在两处出现，口径却不同：`embedded`（紧凑展开行那一格）算「卡片」那一侧，
+  // 整页详情那一块算「详情页」那一侧——所以这里按「备注显示位置」分别取一次（见 @/lib/site-settings）。
+  const chips = remarkChips(node)
+  const cardChips = remarksOnCards(remarkPlacement ?? "both") ? chips : []
+  // 判据与骨架共用一处（hasDetailRemarks）：两边口径一歪，骨架就会对不上高度（护栏 verify_detail_preload）。
+  const detailChips = hasDetailRemarks(node, remarkPlacement ?? "both") ? chips : []
+  const [peekOpen, setPeekOpen] = useState(false)
+  const peekRef = useRef<HTMLSpanElement | null>(null)
+  // 摊开时点别处 / Esc 收起（与「延迟」档那枚同一个做法）。
+  useEffect(() => {
+    if (!peekOpen) return
+    const onDown = (e: PointerEvent) => {
+      const el = e.target
+      // ★同 CardStyleMenu：`instanceof HTMLElement` 漏 SVG（2026-11-21 三审）。
+      if (!(el instanceof Element) || !peekRef.current?.contains(el)) setPeekOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPeekOpen(false) }
+    document.addEventListener("pointerdown", onDown)
+    document.addEventListener("keydown", onKey)
+    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey) }
+  }, [peekOpen])
+  // 就地展开只讲延迟（那一格点开就是为了看延迟），所以页签默认落在延迟而不是资源。
+  // 整页详情还听地址栏的：`?tab=latency` 时直接落在「网络延迟」—— 卡面延迟行那一下
+  // （以及紧凑展开行的「完整详情 ›」）就是靠它直达的（2026-10-12 的创意项）；
+  // 其余一概落「资源」，与从前一致。刷新同理：URL 里带着哪个页签，落哪个。
+  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>(
+    embedded ? "latency" : new URLSearchParams(location.search).get("tab") === "latency" ? "latency" : "resources",
+  )
+  /**
+   * 切页签（整页详情）：顺手把 `?tab=` 同步进地址栏（replace，不往历史里塞条目）——
+   * 刷一下还落在同一个页签，分享出去的链接也指得准。就地展开（embedded）不动地址：
+   * 那一格的页签属于表格里的这一行，不属于这一页的 URL。
+   */
+  const chooseTab = (key: (typeof TABS)[number]["key"]) => {
+    setTab(key)
+    if (embedded) return
+    const url = new URL(location.href)
+    if (key === "latency") url.searchParams.set("tab", "latency")
+    else url.searchParams.delete("tab")
+    history.replaceState({}, "", url)
+  }
+  // Each tab keeps its own range: a 7-day trend and a 1-hour trace answer
+  // different questions.
+  const [ranges, setRanges] = useState({ resources: 6, latency: 6 })
+  // 可选窗口按保留天数生成（老 hub 按 7 天，结果与 1.15.x 那排逐字相同）。
+  const RANGES = rangesFor(historyDays)
+  const RANGES_FOR = { resources: RANGES, latency: RANGES }
+  const hours = ranges[tab]
+  const [smooth, setSmooth] = useState(false)
+  // Probes switched off. Hiding a slow one is what makes the fast ones readable,
+  // as the axis rescales to what remains.
+  const [hiddenProbes, setHiddenProbes] = useState<number[]>([])
+  const [data, setData] = useState<{ metrics: Point[]; ping: PingPoint[]; probes: Probes; loss?: Loss } | null>(null)
+  // Retained rather than folded into an empty result: a refused request and an
+  // empty window are different answers, and the hub has reason to refuse this one
+  // -- it caps how many history windows it builds concurrently, since each holds
+  // the connection the agents report through. Rendered as an empty window, a 503
+  // would misdirect the reader.
+  const [failed, setFailed] = useState("")
+  // Where the chart begins on screen, so its height can occupy the remainder.
+  const [chartTop, setChartTop] = useState(0)
+  const chartColRef = useRef<HTMLDivElement | null>(null)
+  const roRef = useRef<ResizeObserver | null>(null)
+  const queuedRef = useRef(0)
+  /** 量一次这一列在文档里的 top（视口坐标 + scrollY），值没变就不 setState。 */
+  const onChartLayout = useCallback(() => {
+    const el = chartColRef.current
+    if (!el) return
+    const top = el.getBoundingClientRect().top + scrollY
+    setChartTop((was) => (Math.abs(was - top) < 0.5 ? was : top))
+  }, [])
+  /**
+   * 把 RO 挂到这一列的**父容器**上（那一列自己的高度由 chartTop 决定，盯它会自激）。
+   * 元素每次（重新）挂上都要调一次 —— 切页签时这一列整块换掉，父节点也跟着换。
+   */
+  const attachChartObserver = useCallback(() => {
+    const parent = chartColRef.current?.parentElement
+    const ro = roRef.current
+    if (!parent || !ro) return
+    ro.disconnect()
+    ro.observe(parent)
+  }, [])
+  /**
+   * 图表那一列的起始位置（px，文档坐标）：它的高度按「视口剩余」算，所以要这个 top。
+   *
+   * ★用 **useCallback 稳定的 callback ref**，不是内联箭头（2026-11-07 二审）：内联箭头
+   *   每次渲染都是新身份，React 会在每次提交时 detach(null) → attach(el)，于是活节点每
+   *   2 秒（每次推送）两次 `getBoundingClientRect()` + 两次 setState —— 一次强制重排加
+   *   一轮额外渲染。稳定身份只在元素真的挂上 / 换掉 / 卸下时被调用一次。
+   *   ★这里必须是**回调**而不是 `useLayoutEffect(..., [])`：这一列只长在「资源 / 延迟」
+   *   两个页签里，切页签时元素会重新挂载 —— effect 的依赖不变就不会重跑，量出来的
+   *   top 是上一个页签的，高度算成 0/负值之后图表连 svg 都不画。
+   */
+  const measureChartTop = useCallback((el: HTMLDivElement | null) => {
+    chartColRef.current = el
+    if (!el || embedded) return
+    // `+ scrollY`：getBoundingClientRect 从视口量，而这个 top 要当「文档里第几像素」用。
+    const top = el.getBoundingClientRect().top + scrollY
+    // 值没变就别 setState（重挂载时常见）。
+    setChartTop((was) => (Math.abs(was - top) < 0.5 ? was : top))
+    // ★元素（重新）挂上就把 RO 挂到它的新父节点上（2026-11-22 三审）：这一列在切页签 /
+    //   从「资源」切到「延迟」时会整块重新挂载，而观察父节点的动作原先只在 effect 首跑
+    //   之后的那一帧做一次 —— 于是新元素的父节点从没被观察过，旧的又被 disconnect 掉，
+    //   「TCP/UDP 那一格出现/消失时重算 chartTop」等于只剩 window.resize 一条路。
+    //   放在 callback ref 里就跟着元素的生命周期走：挂上即观察，无需 effect 依赖 tab。
+    attachChartObserver()
+  }, [embedded, attachChartObserver])
+  // 窗口缩放会改这个 top（上面的信息格换行、图表宽度变化），监听一次重的。
+  // ★还要盯**上面那块自己**的高度变化（2026-11-21 三审）：那段注释一直写着「ResizeObserver
+  //   盯布局变化」，实现里却只有 window.resize。而上面那排信息格会随实时推送增减 ——
+  //   `Fact` 在值缺失时返回 null，「TCP / UDP 连接」那一格就在 metrics 到达/失效时整格出现
+  //   或消失，这时 chartTop 不重算：图表高度按旧的 top 算，底部要么超出视口要么空一大块。
+  //   观察的是这一列的**父容器**（那一列本身的高度就是由 chartTop 决定的，盯它会自激）。
+  //
+  // ★观察器要跟着元素走（2026-11-22 三审）：这一列只在「资源 / 延迟」两个页签里存在，切页签
+  //   时整块重新挂载 —— 原先「effect 首跑后一帧 attach 一次」的实现里，新元素的父节点从没
+  //   被观察、旧节点又被 disconnect，于是：
+  //     · 详情页默认落在「资源」页签时 `chartColRef.current` 还是 null → RO 从未观察任何元素；
+  //     · 之后切到「延迟」再切回来，观察的仍是已离线的旧父节点。
+  //   结果「TCP/UDP 那一格出现/消失时重算」只覆盖「?tab=latency 直接进入且不再切页签」一条路径。
+  //   改成：观察器由 ref 持有（`attachChartObserver` 稳定），元素的 callback ref 在每次
+  //   挂上时调它重新 observe 新父节点 —— 生命周期对着元素走，不必让 effect 依赖 tab。
+  //   （`roRef` / `queuedRef` / `onChartLayout` / `attachChartObserver` 都声明在上面，
+  //   因为 measureChartTop 要用 attachChartObserver。）
+  useEffect(() => {
+    if (embedded) return
+    window.addEventListener("resize", onChartLayout)
+    // 同一次重排里量，避免「先看到旧高度再跳」。
+    if (typeof ResizeObserver === "function") {
+      const ro = new ResizeObserver(() => {
+        if (queuedRef.current) return
+        queuedRef.current = requestAnimationFrame(() => { queuedRef.current = 0; onChartLayout() })
+      })
+      roRef.current = ro
+      // effect 跑的时候元素多半还没挂上（callback ref 在提交阶段才被调用）：挂上了就由
+      // measureChartTop 负责 observe，这里补一次是给「先有 effect、后挂元素」之外的顺序兜底。
+      attachChartObserver()
+      return () => {
+        window.removeEventListener("resize", onChartLayout)
+        ro.disconnect()
+        roRef.current = null
+        if (queuedRef.current) cancelAnimationFrame(queuedRef.current)
+        queuedRef.current = 0
+      }
+    }
+    return () => window.removeEventListener("resize", onChartLayout)
+  }, [embedded, onChartLayout, attachChartObserver])
+
+  useEffect(() => {
+    let active = true
+    // The charts must not continue drawing the old range while the new one is in
+    // flight.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setData(null)
+    // oxlint-disable-next-line react/set-state-in-effect
+    setFailed("")
+    // What this screen can resolve, in device pixels, which is the unit the line
+    // is drawn in: a 1280-wide retina panel has 2560 of them for a day of minutes.
+    // Read here rather than from a ref, since the hub only thins further, an
+    // approximate figure suffices, and the viewport is known before layout. A
+    // rotation keeps whatever it fetched with.
+    //
+    // The tab determines which half is requested; the other accounted for a third
+    // to two thirds of every response and was never drawn.
+    const points = Math.round(globalThis.innerWidth * (globalThis.devicePixelRatio || 1))
+    const series = tab === "latency" ? "ping" : "metrics"
+    api<{ metrics: Point[]; ping: PingPoint[]; probes: Probes; loss?: Loss }>(
+      `/nodes/${node.id}/metrics?hours=${hours}&points=${points}&series=${series}`,
+    )
+      .then((next) => { if (active) setData(next) })
+      .catch((e: Error) => {
+        // `|| "..."` as in App.tsx: HTTP/2 dropped statusText, so a bodiless
+        // failure from a proxy arrives as the empty string and renders as no
+        // error.
+        if (active) { setFailed(e.message || "网络错误"); setData({ metrics: [], ping: [], probes: {} }) }
+      })
+    return () => { active = false }
+  }, [node.id, hours, tab])
+
+  const m = node.metrics
+  // 计费那一截（价格 / 周期）：原先只收在「经典 / 延迟」两档的浮层里，浮层撤掉后搬到本页
+  // 信息格（见下面「价格」那一格）。价格 0 不出现 —— 与卡片同一口径（NodeCard 的 priceText）。
+  const price = priceText(node)
+  const cycle = cycleText(node)
+  // One series per probe that reported, labelled from the names the samples
+  // arrived with. Memoised, as are the two below: the node prop changes every few
+  // seconds as live metrics arrive, and rebuilding the chart's data array on those
+  // renders would make React re-key every path (the chart itself is positional —
+  // it draws whatever array it is handed).
+  const pingSeries = useMemo(
+    () =>
+      [...new Set((data?.ping ?? []).map((p) => p.task_id))]
+        .map((id) => {
+          // Timeouts are retained: dropping them would draw a probe losing half
+          // its packets as an unbroken line, and one that never answered not at
+          // all.
+          const points = (data?.ping ?? []).filter((p) => p.task_id === id)
+          // Taken from the hub rather than summed from the buckets above, each of
+          // which is already a percentage of its own bucket, so averaging them
+          // would report one lost round in thirteen as 50%. Left unrounded, since
+          // `Math.round` would render 0.28% and 0.00% as the same badge, and the
+          // Only a measured zero omits the loss badge.
+          const loss = data?.loss?.[id] ?? null
+          return { id, name: data?.probes?.[id] ?? `探测 ${id}`, points, loss }
+        })
+        .filter((s) => s.points.length > 0),
+    [data],
+  )
+
+  // The hub answers in seconds; the time axis requires milliseconds.
+  const metricRows = useMemo(
+    () => (data?.metrics ?? []).map((m) => ({ ...m, ts: m.ts * 1_000 })),
+    [data],
+  )
+
+  // Axis tops for the panels with no capacity to measure against. CPU and a
+  // transfer rate do not express fullness: against a fixed 0-100, a machine
+  // sitting at 0.4% draws as a line along the panel's floor. Memory and disk keep
+  // their totals as tops, where fullness is the entire question.
+  const tops = useMemo(() => {
+    const max = (pick: (m: Point) => number) =>
+      metricRows.reduce((hi, m) => Math.max(hi, pick(m)), 0)
+    const connTop = axisTop(max((m) => Math.max(m.tcp ?? 0, m.udp ?? 0)), 4, 10)
+    // ★2026-10-30（与 kanso 同轮）：进程总数也是「计数不是容量」，口径与连接数完全同款
+    //   ——轴顶取窗口峰值、下限 4、补到 4 的倍数（四分刻度不出小数）。
+    const procTop = axisTop(max((m) => m.procs ?? 0), 4, 10)
+    return {
+      // A floor of 4%, or a machine that never exceeds 0.4% would get an axis of
+      // 0-0.4 and render every scheduler blip as a peak. Capped at 100.
+      cpu: axisTop(max((m) => m.cpu), 4, 10, 100),
+      // Base 1024, so the steps are round in the unit `axisBytes` prints.
+      rate: axisTop(max((m) => Math.max(m.net_rx, m.net_tx)), 1024, 1024),
+      // ★2026-10-16（TCP / UDP 面板，与 kanso 同步）：连接条数没有容量可比 —— 取窗口里
+      //   两条线的最大值为准；下限 4（空窗 / 老 hub 缺键时轴也站得住），不封顶
+      //   （流量大的机器 tcp 上千是常态）。
+      // ★（同轮审出）连接数是计数，四分刻度不能带 x.5：axisTop 的阶梯含 1.5 / 2.5 / 7.5，
+      //   峰值落在 (4,6] / (8,10] / (20,30] 时轴顶会是 6 / 10 / 30。把轴顶补到 4 的倍数
+      //   （6→8、10→12、30→32），任何峰值下四分刻度都是整数。
+      conn: connTop + ((4 - (connTop % 4)) % 4),
+      procs: procTop + ((4 - (procTop % 4)) % 4),
+    }
+  }, [metricRows])
+
+  const shownProbes = useMemo(
+    () => pingSeries.filter((s) => !hiddenProbes.includes(s.id)),
+    [pingSeries, hiddenProbes],
+  )
+  // Keyed on the full list, so a line keeps its shade when others are hidden.
+  const style = (id: number) => PALETTE[pingSeries.findIndex((p) => p.id === id) % PALETTE.length]
+
+  // The hub stamps every sample with its bucket rather than the second the probe
+  // finished, so probes reporting at the bucket's rate share rows instead of each
+  // contributing its own: a day of four probes is 717 rows rather than 2,868. A
+  // slower probe leaves gaps in its own column, and the chart breaks its path at
+  // null rather than bridging across them.
+  //
+  // Every probe and both versions of every sample are held here whether or not
+  // they are on screen: hiding a probe or enabling despiking only changes which
+  // series the chart is handed, so the row array keeps its identity.
+  const pingRows = useMemo(() => {
+    const rows = new Map<
+      number,
+      { ts: number } & Record<string, number | [number, number] | null>
+    >()
+    for (const s of pingSeries) {
+      const windowSize = despikeWindow(s.points)
+      const smoothed = despike(s.points.map((p) => p.latency), windowSize)
+      // The band spans the same outliers as the line, and with one probe on
+      // screen it is what the axis is fitted to, so it is clipped alongside it
+      // rather than left to pull the axis back open. The latency fills the
+      // buckets that carry no band, keeping each filter's window dense.
+      const lo = despike(s.points.map((p) => p.band?.[0] ?? p.latency), windowSize)
+      const hi = despike(s.points.map((p) => p.band?.[1] ?? p.latency), windowSize)
+      s.points.forEach((p, i) => {
+        const row = rows.get(p.ts) ?? { ts: p.ts * 1_000 }
+        row[`t${s.id}`] = p.latency
+        row[`s${s.id}`] = smoothed[i]
+        row[`l${s.id}`] = bucketLoss(p, data?.loss?.[s.id])
+        // A bucket with a single answer carries no band and spans only that
+        // answer. Left null, `connectNulls` would bridge the hours between the
+        // few buckets that have one: 2 to 10 of 1,440 in a day, the widest gap
+        // 803 minutes, drawn as one large wedge.
+        row[`b${s.id}`] = p.band ?? (p.latency === null ? null : [p.latency, p.latency])
+        // Taken as the span of three filtered series rather than a pair: the two
+        // edges are filtered independently, so a bucket that answered slightly
+        // faster than usual can trip the low edge alone and come back above the
+        // high one -- [180, 178] against a line of 176, drawn backwards with the
+        // line outside it.
+        const [low, high] = [lo[i], hi[i]]
+        row[`c${s.id}`] =
+          low === null || high === null
+            ? null
+            : [Math.min(low, high, smoothed[i] ?? low), Math.max(low, high, smoothed[i] ?? high)]
+        rows.set(p.ts, row)
+      })
+    }
+    return [...rows.values()].sort((a, b) => a.ts - b.ts)
+  }, [pingSeries])
+
+  // 延迟 tooltip 要按时间戳回查整行：图表只把光标下那几条曲线交给它，而丢包率挂在同一行
+  // 的另一列上（`l<id>`），得连行一起拿到。
+  const rowByTs = useMemo(() => new Map(pingRows.map((row) => [row.ts, row])), [pingRows])
+
+  return (
+    <div className="space-y-4">
+      {/* 就地展开（紧凑形态点开一行）时不重复这台机器的身份行、规格与备注：那一行在表格里
+          已经报过名字，规格留给整页详情，这里只留延迟本身。 */}
+      {!embedded && (
+      <>
+      {/* 旗子在前、名字在后，与卡片上的次序一致。状态徽章与 agent 版本不在这行：
+          在线时长已经并进下面的信息项，agent 版本对访客没有意义。
+          名字后那枚小按钮＝把机器名复制进剪贴板（站长自用的快捷，见 CopyName）。 */}
+      <div className="flex items-center gap-2">
+        <Country node={node} />
+        <h2 className="truncate text-lg font-medium">{node.name}</h2>
+        <CopyName name={node.name} />
+      </div>
+
+      {/* One flat row of facts: what is left after the traffic figures moved
+          out is one machine's spec sheet, and a box around a single topic is
+          just a box. Three across at lg, two at md, one on a phone -- a kernel
+          version or a CPU model needs about 270px to stay whole.
+          ★2026-10-16 站长定的次序（与 kanso 同步）：系统 → 架构 → TCP / UDP 连接打头
+            （一台机器的「身份」），再是 CPU / 内存 / 今日流量，在线时间收尾。 */}
+      <dl className="grid gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
+        <Fact label="系统" value={[osName(node.os), node.kernel].filter(Boolean).join(" · ")} />
+        <Fact
+          label="架构"
+          value={[node.arch, node.virt !== "none" ? node.virt : "", typeof m?.procs === "number" ? `${m.procs} 进程` : ""]
+            .filter(Boolean)
+            .join(" · ")}
+        />
+        {/* 连接数：hub 的实时上报里带着 TCP / UDP 连接条数（`metrics.tcp / udp`，2026-10-14
+            应站长要求加到详情页；2026-10-15 站长在 kanso 要求合成**一格**，本仓 2026-10-16
+            同步）。写法照「内存 / 硬盘」那格：标签 `TCP / UDP 连接`、值 `17 / 3`。离线机器
+            `metrics` 是 null，这一格随 Fact 的既有口径一起隐身 ——「没有这个值」本来就不该占格子。 */}
+        <Fact
+          label="TCP / UDP 连接"
+          value={typeof m?.tcp === "number" && typeof m?.udp === "number" ? `${m.tcp} / ${m.udp}` : null}
+        />
+        <Fact
+          label="CPU"
+          value={node.cpu_name ? `${cpuName(node.cpu_name)} × ${node.cpu_cores}` : `${node.cpu_cores} 核`}
+        />
+        <Fact label="内存 / 硬盘" value={`${bytes(node.mem_total)} / ${bytes(node.disk_total)}`} />
+        <Fact label="今日流量" value={`↓ ${bytes(node.day_rx)} · ↑ ${bytes(node.day_tx)}`} />
+        {/* 第三行收尾三格：在线时间 → 价格 → 到期。
+            「在线时间」取代原先标题行上那枚状态徽章；「价格」「到期」是 2026-10-30 从
+            「经典 / 延迟」两档右上角那枚 ⓘ 浮层搬来的（浮层撤掉之后它们只剩这一处），
+            排法与 kanso 那九格同一条栅格（三列 × 三行）。到期那一格悬停给绝对日期。 */}
+        <Fact label="在线时间" value={onlineFor(node)} />
+        <Fact label="价格" value={price ? [price, cycle].filter(Boolean).join(" / ") : null} />
+        <Fact label="到期" value={expiryText(node) ?? "无期限"} title={node.expires_at || undefined} />
+      </dl>
+
+      {/* 整页详情那一块备注：**私有 + 公有合并成一串小卡片**（私有在前、带锁与描边 = 仅自己可见）。
+          hub 只把私有备注下发给登录的管理员，所以访客在这一块里看到的就只有公有那几枚——同一套版式，
+          不需要两套分支（见 `@/lib/notes` 的 `remarkChips`）。
+          ★**不加容器**（没有底、没有描边、没有内边距）：小卡片直接落在页面上，与列表卡片那几处同一副
+          面孔。早先那层「白框」是给整段文字当底用的，改成小卡片之后它只是多余的一圈边（用户 2026-10-03
+          要求去掉）。护栏里有一条断「那一块没有描边、底色是透明的」。没写备注时一个像素都不占。 */}
+      {detailChips.length > 0 && (
+        <div data-remark-block className="flex min-w-0 flex-wrap items-center gap-1">
+          <RemarkChips chips={detailChips} />
+        </div>
+      )}
+      </>
+      )}
+
+      <div className={embedded ? "space-y-2" : "space-y-2 border-t pt-4"}>
+        {!embedded && (
+        <div className="flex gap-1">
+          {TABS.map((t) => (
+            <Tab key={t.key} active={tab === t.key} onClick={() => chooseTab(t.key)}>
+              {t.label}
+            </Tab>
+          ))}
+        </div>
+        )}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex gap-1">
+            {RANGES_FOR[tab].map((r) => (
+              <Tab
+                key={r.hours}
+                active={hours === r.hours}
+                onClick={() => setRanges((all) => ({ ...all, [tab]: r.hours }))}
+              >
+                {r.label}
+              </Tab>
+            ))}
+          </div>
+          {tab === "latency" && (
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={smooth}
+                onChange={(e) => setSmooth(e.target.checked)}
+                className="accent-foreground"
+              />
+              削峰
+            </label>
+          )}
+          {/* 备注在这一行右端：桌面（≥sm）**直接并排**在「完整详情 ›」左边（不新增行高），
+              手机这一行放不下，收成一枚小图标 + 浮层（点开看全，点别处 / Esc 收起）。
+              一枚备注一枚小卡片（私有 + 公有合并成一串，私有那几枚带锁与描边）。
+              宽度上限用固定 px（内容尺寸容器里百分比会被解析成很小的值）。没写备注时这一行与从前
+              逐像素相同。
+              ★只有「紧凑」就地展开（embedded）才需要这条入口：整页详情把整串摊在规格下面（见上面那段），
+              所以那一页的量程栏右边不再挂图标，免得同一句话出现两遍。 */}
+          {embedded && (cardChips.length > 0 || onOpenDetail) && (
+            <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-x-4 gap-y-1">
+              {cardChips.length > 0 && (
+                <>
+                  {/* ★不许再给它 `max-w-[14rem]` 那种上限：这一行的左边本来是空的（量程按钮与削峰只占
+                      一小段），上限一压，四枚备注就各自缩成「测…」（用户 2026-10-03 指出的）。
+                      `flex-1` + 右对齐让它把左边的空档吃满，真的放不下时才按老规矩截断。 */}
+                  <span data-note-strip className="hidden min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden sm:flex">
+                    <RemarkChips chips={cardChips} />
+                  </span>
+                  <span
+                    ref={peekRef}
+                    className="relative inline-flex items-center sm:hidden"
+                    onPointerEnter={() => setPeekOpen(true)}
+                    onPointerLeave={() => setPeekOpen(false)}
+                  >
+                    <button
+                      data-note-popover
+                      aria-expanded={peekOpen}
+                      aria-label={`备注：${cardChips.map((c) => c.text).join("、")}`}
+                      onClick={(e) => {
+                        // 这一块本身在展开行里，点它不该连带开合那一行。
+                        e.stopPropagation()
+                        setPeekOpen((open) => !open)
+                      }}
+                      // 只拦「激活键」的冒泡（别让 Enter 顺带开合这一行、跳详情页）；Esc 必须放它上去。
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation() }}
+                      className="inline-flex text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <Info className="size-3.5" />
+                    </button>
+                    {peekOpen && (
+                      <span
+                        data-note-panel
+                        role="tooltip"
+                        className="absolute top-5 right-0 z-20 flex w-max max-w-[16rem] flex-wrap gap-1 rounded-md border bg-card px-2 py-1.5 shadow-md"
+                      >
+                        <RemarkChips chips={cardChips} />
+                      </span>
+                    )}
+                  </span>
+                </>
+              )}
+              {onOpenDetail && (
+                <button onClick={onOpenDetail} className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+                  完整详情 ›
+                </button>
+              )}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 读 `metricRows.length` 而不是 `data.metrics.length`：真 hub 五个键每次都带齐
+          （没要的那半是空数组），但响应一旦少 `metrics` 这个键（老 hub / 形状漂移 / 桩），
+          **切回本页签的那一帧** —— effect 把 data 清空之前 —— 就会抛 TypeError、整棵树被
+          React 卸载，整页空白。2026-10-09 在演示站实测到；metricRows 已经兜过底
+          （`data?.metrics ?? []`），长度口径一致。回归哨兵见 tools/verify_detail_charts.mjs 的「三」。 */}
+      {!data ? (
+        <Skeleton className="h-40 w-full" />
+      ) : failed ? (
+        <p className="py-8 text-center text-sm text-destructive" role="alert">读取历史数据失败：{failed}</p>
+      ) : tab === "latency" ? (
+        pingSeries.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有延迟数据</p>
+        ) : (
+          // An explicit pixel height on the column, so the chart can be `flex-1`
+          // within it while the legend takes what it needs: four probes are one row
+          // of chips on a desktop and two on a phone, so any fixed reservation is
+          // wrong on one of them.
+          <div
+            // ★不再用内联 ref（2026-11-07 二审）：那个箭头函数**每次渲染都是新身份**，
+            //   React 会在每次提交时先 detach（传 null）再 attach，于是活节点每 2 秒两次
+            //   `getBoundingClientRect()` + 两次 setState —— 一次强制重排 + 一轮额外渲染。
+            //   改成挂载时量一次 + ResizeObserver 盯布局变化（窗口缩放、上面那几行读数
+            //   换行都会改这个 top）。就地展开时高度写死，不再按视口撑满（下面还压着别的行）。
+            ref={measureChartTop}
+            style={
+              !embedded && chartTop
+                ? { height: `calc(100svh - ${Math.round(chartTop)}px - 1rem)` }
+                : undefined
+            }
+            className={embedded ? "flex h-72 flex-col gap-3" : "flex min-h-72 flex-col gap-3"}>
+            {/* `min-h-0` is what makes `flex-1` a real number rather than the
+                content's own height: ResponsiveContainer reads its parent, and
+                a flex child not told it may shrink reports whatever the SVG
+                last was. The column above has a height in pixels, so this
+                resolves at layout instead of coming back 0. */}
+            <div className="min-h-0 w-full flex-1 text-muted-foreground">
+              {shownProbes.length === 0 ? (
+                <p className="py-8 text-center text-sm">没有选中任何探测</p>
+              ) : (
+                <TimeChart
+                  rows={pingRows}
+                  series={[
+                    // 区间（band）只在屏上只有一个探测时画：四个叠在一起会糊成一片，还会把轴拉宽
+                    // （原注释那段「四个的 band 会互相叠成雾」）。
+                    ...(shownProbes.length === 1
+                      ? shownProbes.map((s) => ({
+                          key: `${smooth ? "c" : "b"}${s.id}`,
+                          name: s.name,
+                          color: style(s.id).stroke,
+                          band: true,
+                        }))
+                      : []),
+                    ...shownProbes.map((s) => ({
+                      key: `${smooth ? "s" : "t"}${s.id}`,
+                      name: s.name,
+                      color: style(s.id).stroke,
+                      dash: style(s.id).dash,
+                    })),
+                  ]}
+                  hours={hours}
+                  // 延迟轴不从 0 起：这些线路活在一条窄带里，锚到 0 会把起伏压平。
+                  domain="auto"
+                  unit="ms"
+                  left={52}
+                  // 缩放与对位都归图表自己管（滚轮纵向缩放 + 左键拖着线平移，见 Chart 的
+                  // `wheelZoom`）：原来那套「横向拖选一段放大」2026-10-15 与 kanso 同步下线。
+                  // 滚轮缩放延迟范围（2026-10-15）：光标在图上滚 = 收放 Y 轴、双击复位。
+                  // 只开在整页详情——紧凑展开的图在列表里，滚轮要留给翻列表。
+                  wheelZoom={!embedded}
+                  label="节点延迟走势"
+                  renderTooltip={(row) => (
+                    <PingTooltip active label={row.ts} rowByTs={rowByTs} probes={shownProbes} smooth={smooth} style={style} />
+                  )}
+                />
+              )}
+            </div>
+
+            {/* Under the chart: what it covers is picked at the top, what is
+                drawn in it is picked here. 图例紧贴图下方（HTML 与 SVG 是两块
+                独立的东西，这是能贴得最近的位置）。 */}
+            {(pingSeries.length > 1 || pingSeries.some((s) => (s.loss === null || s.loss > 0))) && (
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {pingSeries.map((s) => {
+                const shown = !hiddenProbes.includes(s.id)
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() =>
+                      setHiddenProbes((h) => (shown ? [...h, s.id] : h.filter((id) => id !== s.id)))
+                    }
+                    className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-opacity ${
+                      shown ? "" : "opacity-40"
+                    }`}
+                  >
+                    {/* The swatch carries the same shade and dash as the line. */}
+                    <svg width="14" height="6" className="shrink-0" aria-hidden>
+                      <line
+                        x1="0"
+                        y1="3"
+                        x2="14"
+                        y2="3"
+                        stroke={style(s.id).stroke}
+                        strokeDasharray={style(s.id).dash}
+                        strokeWidth="2"
+                      />
+                    </svg>
+                    {s.name}
+                    {/* The line is only what answered, so a probe dropping
+                        half its packets draws like a healthy one. */}
+                    {(s.loss === null || s.loss > 0) && (
+                      <span className="tabular-nums opacity-60">
+                        {s.loss === null ? "丢包未知" : `丢 ${s.loss < 1 ? "<1" : Math.round(s.loss)}%`}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            )}
+          </div>
+        )
+      ) : metricRows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有历史数据</p>
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {/* ★2026-10-30 与 kanso 同轮（站长要求）：资源区**每排两张、一共三排**（lg 起两列；
+              窄屏仍是一列），六张卡＝网络速率 · TCP / UDP 连接 · 进程 · CPU · 内存 · 硬盘。
+              ★2026-10-16 站长定稿的次序（与 kanso 同步）：网络速率与 TCP / UDP 连接打头
+              （在 CPU 之前），其后 进程 / CPU / 内存 / 硬盘（进程卡 2026-10-30 加、排 CPU 之前）。 */}
+          {/* A rate has no total to be a fraction of, so this one climbs the
+              ladder like CPU rather than pinning to a capacity. */}
+          <Panel title="网络速率">
+            <TimeChart
+              rows={metricRows}
+              series={[
+                { key: "net_rx", name: "下行", color: "var(--ok)" },
+                { key: "net_tx", name: "上行", color: "var(--chart-2)" },
+              ]}
+              hours={hours}
+              top={tops.rate}
+              unit="/s"
+              yFormat={axisBytes}
+              format={(v) => rate(v)}
+              label="网络速率走势"
+            />
+          </Panel>
+
+          {/* ★2026-10-16 与 kanso 同步：TCP / UDP 连接的条数走势，两条线各一个色相
+              （TCP 蓝 / UDP 粉）。数据就在同一次历史指标（metrics）响应的 `tcp / udp` 两列里
+              （hub 1.4.x 的 metrics 桶实测带这两个键）。口径与其余几张同款、
+              只是不填面积：连接数是计数，不是「占了多少容量」。 */}
+          <Panel title="TCP / UDP 连接">
+            <TimeChart
+              rows={metricRows}
+              series={[
+                { key: "tcp", name: "TCP", color: "var(--chart-1)" },
+                { key: "udp", name: "UDP", color: "var(--chart-9)" },
+              ]}
+              hours={hours}
+              top={tops.conn}
+              label="TCP / UDP 连接数走势"
+            />
+          </Panel>
+
+          {/* ★2026-10-30 与 kanso 同轮新增：进程总数走势。hub 只上报进程**数**（`procs`），
+              没有逐进程的列表 —— 所以这张画的是条数，口径与「TCP / UDP 连接」同款：
+              计数不填面积、轴顶取窗口峰值并补到 4 的倍数。标题右端就是当前值。 */}
+          <Panel title={m && typeof m.procs === "number" ? `进程 · ${m.procs}` : "进程"}>
+            <TimeChart
+              rows={metricRows}
+              series={[{ key: "procs", name: "进程", color: "var(--chart-8)" }]}
+              hours={hours}
+              top={tops.procs}
+              label="进程数走势"
+            />
+          </Panel>
+
+          <Panel title="CPU">
+            <TimeChart
+              rows={metricRows}
+              series={[{ key: "cpu", name: "CPU", color: "var(--chart-1)", area: true }]}
+              hours={hours}
+              top={tops.cpu}
+              unit="%"
+              format={(v) => `${v.toFixed(1)}%`}
+              label="CPU 使用率走势"
+            />
+          </Panel>
+
+          {/* The axis top is the machine's memory, so the line's height is the
+              fraction in use whatever range is picked. Tracking the window's
+              own maximum, which is what an area chart does by default, puts
+              127 MB of a 457 MB box at the top of the panel. The size is in the
+              title because the axis top is claiming it. */}
+          <Panel title={`内存 · ${bytes(node.mem_total)}`}>
+            <TimeChart
+              rows={metricRows}
+              series={[{ key: "mem_used", name: "内存", color: "var(--chart-4)", area: true }]}
+              hours={hours}
+              top={node.mem_total}
+              yFormat={axisBytes}
+              format={(v) => bytes(v)}
+              label="内存使用量走势"
+            />
+          </Panel>
+
+          {/* The disk it is filling, for the same reason as memory: a node
+              using 2.7% of its disk draws along the top of the panel when the
+              axis tracks the window's own maximum. */}
+          <Panel title={`硬盘 · ${bytes(node.disk_total)}`}>
+            <TimeChart
+              rows={metricRows}
+              series={[{ key: "disk_used", name: "硬盘", color: "var(--chart-3)", area: true }]}
+              hours={hours}
+              top={node.disk_total}
+              yFormat={axisBytes}
+              format={(v) => bytes(v)}
+              label="硬盘使用量走势"
+            />
+          </Panel>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 标题行右端那枚「复制机器名」（只长在整页详情上）：一键把名字取进剪贴板去 ssh 用 ——
+ * 站长自用的快捷，所以刻意低调（小图标、悬停才浮出一层浅底，不与旁边的信息争视线）。
+ *
+ * 按下后换一枚对勾、悬停说明换成「已复制」，1.6 秒后回到原样（连点可重复复制）。
+ * 剪贴板 API 只在安全上下文可用（https / localhost）；不可用时如实换成「复制失败」的
+ * 说明文字，**不假装成功** —— 静态预览那种普通 http 场景走得到这一支。
+ */
+function CopyName({ name }: { name: string }) {
+  const [state, setState] = useState<"idle" | "ok" | "fail">("idle")
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  const copy = async () => {
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(name)
+      ok = true
+    } catch {
+      ok = false
+    }
+    setState(ok ? "ok" : "fail")
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setState("idle"), 1600)
+  }
+  return (
+    <button
+      type="button"
+      data-copy-name=""
+      /* 命中区用**纵向型**（`tap-y-6`：上下各扩 10px → 24×44），不用四向的 tap-8：
+         详情页标题行这批控件（资源/网络延迟/量程段）的口径就是「横向不动」（四向外扩
+         会互相盖住，护栏量着「横向撑开 ±2px」），复制按钮跟着同一档才不会成为例外。 */
+      className="tap tap-y-6 grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      onClick={copy}
+      title={state === "ok" ? "已复制" : state === "fail" ? "复制失败" : "复制机器名"}
+      aria-label="复制机器名"
+    >
+      {state === "ok" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </button>
+  )
+}

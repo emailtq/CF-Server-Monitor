@@ -1,0 +1,656 @@
+{
+  "name": "Glassmorphism · 玻璃拟态",
+  "short": "glassmorphism",
+  "description": "极简探针玻璃拟态主题，提供地球视图与节点界面。",
+  "version": "1.4.8",
+  "author": "Gongsc",
+  "url": "https://github.com/Gongsc/Theme-Glassmorphism",
+  "config": [
+    {
+      "type": "title",
+      "label": "01 · 基础与外观"
+    },
+    {
+      "key": "themeMode",
+      "type": "select",
+      "default": "beijing",
+      "options": [
+        {
+          "value": "beijing",
+          "label": "beijing"
+        },
+        {
+          "value": "light",
+          "label": "light"
+        },
+        {
+          "value": "dark",
+          "label": "dark"
+        }
+      ],
+      "help": "beijing=北京时间自动； light=亮色； dark=暗色。",
+      "label": "默认主题模式"
+    },
+    {
+      "key": "dataUpdateInterval",
+      "type": "number",
+      "default": 3,
+      "help": "实时数据刷新间隔，单位：秒（建议 1-10 秒）",
+      "label": "数据更新间隔",
+      "min": 1,
+      "max": 60
+    },
+    {
+      "key": "defaultViewMode",
+      "type": "select",
+      "default": "card",
+      "options": [
+        {
+          "value": "card",
+          "label": "card"
+        },
+        {
+          "value": "list",
+          "label": "list"
+        }
+      ],
+      "help": "节点列表的默认显示模式",
+      "label": "默认视图模式"
+    },
+    {
+      "key": "nodeCardSize",
+      "type": "select",
+      "default": "compact",
+      "options": [
+        {
+          "value": "mini",
+          "label": "mini"
+        },
+        {
+          "value": "compact",
+          "label": "compact"
+        },
+        {
+          "value": "comfortable",
+          "label": "comfortable"
+        },
+        {
+          "value": "large",
+          "label": "large"
+        }
+      ],
+      "help": "从高密度 mini 到宽松 large；默认 compact。",
+      "label": "节点卡片尺寸"
+    },
+    {
+      "key": "siteIconUrl",
+      "type": "string",
+      "default": "",
+      "help": "用于页面左上角、浏览器标签页和 iOS 主屏幕的图标；留空时使用内置图标。可填写 http(s) 图片地址或以 / 开头的站内路径，也可在主题设置面板中上传图片，图片将缩放为 180×180 并保存在站点配置中（上限 48 KiB）。",
+      "label": "站点图标"
+    },
+    {
+      "type": "title",
+      "label": "02 · 首页布局"
+    },
+    {
+      "key": "alertEnabled",
+      "type": "boolean",
+      "default": false,
+      "help": "在首页显示自定义公告",
+      "label": "启用公告"
+    },
+    {
+      "key": "alertTitle",
+      "type": "string",
+      "default": "",
+      "help": "公告的标题内容",
+      "label": "公告标题"
+    },
+    {
+      "key": "alertContent",
+      "type": "text",
+      "default": "",
+      "help": "公告的详细内容（支持简单 Markdown 格式）",
+      "label": "公告内容"
+    },
+    {
+      "key": "stopEarth",
+      "type": "boolean",
+      "default": false,
+      "help": "开启后地球默认不自动旋转，用户仍可手动拖拽查看；点阵平铺地图同时停止扫描线与波纹动画",
+      "label": "停止地球旋转"
+    },
+    {
+      "key": "earthRenderer",
+      "type": "select",
+      "default": "cobe",
+      "options": [
+        {
+          "value": "realistic",
+          "label": "realistic"
+        },
+        {
+          "value": "cobe",
+          "label": "cobe"
+        },
+        {
+          "value": "tiled",
+          "label": "tiled"
+        },
+        {
+          "value": "dots",
+          "label": "dots"
+        }
+      ],
+      "help": "realistic=贴图，cobe=点阵，tiled=平铺地图，dots=点阵平铺地图。",
+      "label": "地球样式"
+    },
+    {
+      "key": "earthShowCity",
+      "type": "boolean",
+      "default": false,
+      "help": "按节点名称识别城市（如 Tokyo、东京、LAX、HKG），在地球上定位到城市并显示城市名；识别不到的节点仍按国家显示。Monitor 不提供城市信息，结果只来自节点名称与下方规则。",
+      "label": "地球显示城市"
+    },
+    {
+      "key": "earthCityRules",
+      "type": "text",
+      "default": "# 从上到下匹配，第一条命中的规则生效；自定义规则建议写在最前面。\n# 格式：关键词1, 关键词2 = 城市。城市写下方内置城市名，或 显示名@纬度,经度；写 - 表示不识别。\n\n# 亚太\n香港, Hong Kong, HongKong, HKG, HK = 香港\n台北, Taipei, TPE, 臺北 = 台北\n东京, Tokyo, TYO, NRT, HND, 東京 = 东京\n大阪, Osaka, OSA, KIX = 大阪\n首尔, Seoul, SEL, ICN, 首爾 = 首尔\n春川, Chuncheon = 春川\n新加坡, Singapore, SIN, SG, 狮城 = 新加坡\n吉隆坡, Kuala Lumpur, KualaLumpur, KUL = 吉隆坡\n曼谷, Bangkok, BKK = 曼谷\n胡志明市, Ho Chi Minh, Ho Chi Minh City, Saigon, SGN, 胡志明 = 胡志明市\n河内, Hanoi, HAN = 河内\n马尼拉, Manila, MNL = 马尼拉\n雅加达, Jakarta, JKT, CGK = 雅加达\n孟买, Mumbai, BOM = 孟买\n德里, Delhi, New Delhi, DEL, 新德里 = 德里\n班加罗尔, Bengaluru, Bangalore, BLR = 班加罗尔\n\n# 中国大陆与澳门\n北京, Beijing, PEK, BJS = 北京\n上海, Shanghai, SHA, PVG, 沪 = 上海\n广州, Guangzhou, CAN = 广州\n深圳, Shenzhen, SZX = 深圳\n杭州, Hangzhou, HGH = 杭州\n宁波, Ningbo, NGB = 宁波\n南京, Nanjing, NKG = 南京\n宿迁, Suqian = 宿迁\n成都, Chengdu, CTU = 成都\n重庆, Chongqing, CKG = 重庆\n武汉, Wuhan, WUH = 武汉\n西安, Xi'an, Xian, XIY = 西安\n青岛, Qingdao, TAO = 青岛\n天津, Tianjin, TSN = 天津\n厦门, Xiamen, XMN = 厦门\n福州, Fuzhou, FOC = 福州\n郑州, Zhengzhou, CGO = 郑州\n长沙, Changsha, CSX = 长沙\n沈阳, Shenyang, SHE = 沈阳\n澳门, Macau, Macao, MFM, 澳門 = 澳门\n\n# 北美\n洛杉矶, Los Angeles, LosAngeles, LAX, LA, 洛杉磯 = 洛杉矶\n圣何塞, San Jose, SanJose, SJC, 硅谷, Silicon Valley = 圣何塞\n弗里蒙特, Fremont = 弗里蒙特\n旧金山, San Francisco, SanFrancisco, SFO, SF, 三藩市 = 旧金山\n西雅图, Seattle, SEA = 西雅图\n波特兰, Portland, PDX = 波特兰\n拉斯维加斯, Las Vegas, LasVegas, LAS, 赌城 = 拉斯维加斯\n凤凰城, Phoenix, PHX = 凤凰城\n盐湖城, Salt Lake City, SLC = 盐湖城\n丹佛, Denver, DEN = 丹佛\n达拉斯, Dallas, DFW, DAL = 达拉斯\n堪萨斯城, Kansas City, MCI = 堪萨斯城\n芝加哥, Chicago, ORD, CHI = 芝加哥\n亚特兰大, Atlanta, ATL = 亚特兰大\n迈阿密, Miami, MIA = 迈阿密\n阿什本, Ashburn, IAD, Virginia, 弗吉尼亚 = 阿什本\n华盛顿, Washington, WAS, DCA = 华盛顿\n纽约, New York, NewYork, NYC, JFK, NY = 纽约\n新泽西, New Jersey, Newark, EWR, NJ = 新泽西\n布法罗, Buffalo, BUF = 布法罗\n多伦多, Toronto, YYZ = 多伦多\n蒙特利尔, Montreal, YUL = 蒙特利尔\n温哥华, Vancouver, YVR = 温哥华\n\n# 拉美\n墨西哥城, Mexico City, MEX = 墨西哥城\n圣保罗, Sao Paulo, São Paulo, SaoPaulo, GRU = 圣保罗\n圣地亚哥, Santiago, SCL = 圣地亚哥\n布宜诺斯艾利斯, Buenos Aires, EZE = 布宜诺斯艾利斯\n\n# 欧洲\n伦敦, London, LON, LHR = 伦敦\n曼彻斯特, Manchester, MAN = 曼彻斯特\n都柏林, Dublin, DUB = 都柏林\n巴黎, Paris, PAR, CDG = 巴黎\n阿姆斯特丹, Amsterdam, AMS = 阿姆斯特丹\n布鲁塞尔, Brussels, BRU = 布鲁塞尔\n法兰克福, Frankfurt, FRA = 法兰克福\n杜塞尔多夫, Dusseldorf, Düsseldorf, DUS = 杜塞尔多夫\n纽伦堡, Nuremberg, Nürnberg, Nurnberg, NUE = 纽伦堡\n法尔肯施泰因, Falkenstein, FSN = 法尔肯施泰因\n柏林, Berlin, BER = 柏林\n慕尼黑, Munich, München, MUC = 慕尼黑\n汉堡, Hamburg, HAM = 汉堡\n苏黎世, Zurich, Zürich, ZRH = 苏黎世\n维也纳, Vienna, VIE = 维也纳\n米兰, Milan, MIL, MXP = 米兰\n马德里, Madrid, MAD = 马德里\n里斯本, Lisbon, LIS = 里斯本\n华沙, Warsaw, WAW = 华沙\n布拉格, Prague, PRG = 布拉格\n布加勒斯特, Bucharest, OTP = 布加勒斯特\n索非亚, Sofia, SOF = 索非亚\n赫尔辛基, Helsinki, HEL = 赫尔辛基\n斯德哥尔摩, Stockholm, STO, ARN = 斯德哥尔摩\n奥斯陆, Oslo, OSL = 奥斯陆\n哥本哈根, Copenhagen, CPH = 哥本哈根\n莫斯科, Moscow, MOW, SVO = 莫斯科\n圣彼得堡, Saint Petersburg, St Petersburg, LED = 圣彼得堡\n基辅, Kyiv, Kiev, IEV = 基辅\n\n# 中东与非洲\n迪拜, Dubai, DXB = 迪拜\n伊斯坦布尔, Istanbul, IST = 伊斯坦布尔\n特拉维夫, Tel Aviv, TLV = 特拉维夫\n约翰内斯堡, Johannesburg, JNB = 约翰内斯堡\n开罗, Cairo, CAI = 开罗\n拉各斯, Lagos, LOS = 拉各斯\n\n# 大洋洲\n悉尼, Sydney, SYD = 悉尼\n墨尔本, Melbourne, MEL = 墨尔本\n奥克兰, Auckland, AKL = 奥克兰",
+      "help": "从上到下匹配，第一条命中的规则生效，自定义规则建议写在最前面。每行：关键词 = 城市，多个关键词用逗号分隔；英文和代码按整词匹配，中文按包含匹配。城市写内置城市的中文名或英文名，或写 显示名@纬度,经度 自定义坐标；写 - 表示不识别城市。内置城市与节点国家不一致时该条跳过。清空后不识别任何城市，点「恢复默认」可找回内置规则。",
+      "label": "城市匹配规则"
+    },
+    {
+      "key": "hideEarth",
+      "type": "boolean",
+      "default": false,
+      "help": "隐藏地球后仅显示总览卡片",
+      "label": "隐藏地球"
+    },
+    {
+      "key": "hideGeneralCard",
+      "type": "boolean",
+      "default": false,
+      "help": "隐藏地球和总览卡片",
+      "label": "隐藏头部"
+    },
+    {
+      "key": "visitorInfoEnabled",
+      "type": "boolean",
+      "default": true,
+      "help": "显示访客 IP 信息，样式见下方“访客信息样式”",
+      "label": "显示访客信息"
+    },
+    {
+      "key": "visitorInfoStyle",
+      "type": "select",
+      "default": "auto",
+      "options": [
+        {
+          "value": "auto",
+          "label": "auto"
+        },
+        {
+          "value": "bar",
+          "label": "bar"
+        },
+        {
+          "value": "card",
+          "label": "card"
+        }
+      ],
+      "help": "同一时间只显示一种。auto=超宽屏显示左下角详情卡片，其余屏幕显示底部 IP 条；bar=始终显示底部 IP 条；card=只显示左下角详情卡片（仅超宽屏可见）。",
+      "label": "访客信息样式"
+    },
+    {
+      "key": "glassColorPreset",
+      "type": "select",
+      "default": "柔和",
+      "options": [
+        {
+          "value": "翡翠",
+          "label": "翡翠"
+        },
+        {
+          "value": "柔和",
+          "label": "柔和"
+        },
+        {
+          "value": "高对比",
+          "label": "高对比"
+        },
+        {
+          "value": "午夜",
+          "label": "午夜"
+        },
+        {
+          "value": "自定义",
+          "label": "自定义"
+        }
+      ],
+      "help": "选择“自定义”后读取下方 JSON。",
+      "label": "毛玻璃配色方案"
+    },
+    {
+      "key": "colorVisionMode",
+      "type": "select",
+      "default": "标准",
+      "options": [
+        {
+          "value": "标准",
+          "label": "标准"
+        },
+        {
+          "value": "色觉友好",
+          "label": "色觉友好"
+        }
+      ],
+      "help": "色觉友好使用蓝、蓝绿、橙、朱红、紫红，并为图表和状态增加线型、纹理、文字或图标区分。",
+      "label": "色觉辅助配色"
+    },
+    {
+      "key": "glassCustomColors",
+      "type": "text",
+      "default": "{\"lightCard\":\"#f1f5f9bd\",\"lightControl\":\"#e2e8f0c2\",\"lightText\":\"#14151a\",\"lightMutedText\":\"#3f4552\",\"lightBorder\":\"#cbd5e199\",\"darkCard\":\"#0d111ad9\",\"darkControl\":\"#101624cc\",\"darkText\":\"#f7f8fb\",\"darkMutedText\":\"#d6dae4\",\"darkBorder\":\"#ffffff2e\"}",
+      "help": "lightCard/darkCard=卡片； lightControl/darkControl=控制条； lightText/darkText=主文字； lightMutedText/darkMutedText=次文字； lightBorder/darkBorder=边框。支持 #RRGGBB 和 #RRGGBBAA。",
+      "label": "自定义毛玻璃颜色 JSON"
+    },
+    {
+      "type": "title",
+      "label": "03 · 首页总览卡片"
+    },
+    {
+      "key": "generalCardPreset",
+      "type": "select",
+      "default": "官方",
+      "options": [
+        {
+          "value": "官方",
+          "label": "官方"
+        },
+        {
+          "value": "基础",
+          "label": "基础"
+        },
+        {
+          "value": "运维",
+          "label": "运维"
+        },
+        {
+          "value": "资源",
+          "label": "资源"
+        },
+        {
+          "value": "财务",
+          "label": "财务"
+        },
+        {
+          "value": "流量",
+          "label": "流量"
+        },
+        {
+          "value": "资产",
+          "label": "资产"
+        },
+        {
+          "value": "完整",
+          "label": "完整"
+        },
+        {
+          "value": "自定义",
+          "label": "自定义"
+        }
+      ],
+      "help": "完整=展示全部可用卡片；自定义时读取下方 keys，顺序就是显示顺序。",
+      "label": "头部卡片方案"
+    },
+    {
+      "key": "generalCardKeys",
+      "type": "text",
+      "default": "memory\ndisk\nremainingValue\ntotalTraffic\nuploadSpeed\ndownloadSpeed",
+      "help": "逗号、空格或换行分隔。 currentTime=当前时间； memory=内存； disk=硬盘； remainingValue=剩余价值； totalTraffic=累计流量； uploadSpeed=实时上行； downloadSpeed=实时下行； onlineNodes=在线节点； offlineNodes=离线节点； avgCpu=平均CPU； avgLoad=平均负载； swap=交换内存； processes=进程总数； connections=连接总数； cpuCores=CPU核心； trafficQuota=流量配额； trafficPeak=实时峰值； uploadPeakNode=上行最高节点； downloadPeakNode=下行最高节点； highLoadNodes=高负载节点； expiringNodes=即将到期； trafficWarnings=流量预警； connectionPeakNode=连接峰值节点； regionDistribution=地区分布； systemDistribution=系统分布； virtualizationDistribution=虚拟化分布； monthlyCost=月费用； yearlyCost=年费用。",
+      "label": "自定义头部卡片 keys"
+    },
+    {
+      "type": "title",
+      "label": "04 · 高级工具与隐私"
+    },
+    {
+      "key": "homeToolsEnabled",
+      "type": "boolean",
+      "default": true,
+      "help": "登录后显示性价比、健康和导出工具。",
+      "label": "登录后显示高级工具"
+    },
+    {
+      "key": "hideAdminEntryWhenLoggedOut",
+      "type": "boolean",
+      "default": false,
+      "help": "未登录时隐藏顶部后台管理入口",
+      "label": "隐藏后台入口"
+    },
+    {
+      "key": "hidePriceWhenLoggedOut",
+      "type": "boolean",
+      "default": false,
+      "help": "未登录时隐藏节点卡片/列表中的价格、剩余价值和费用类卡片；在线天数仍会显示",
+      "label": "未登录隐藏价格"
+    },
+    {
+      "key": "providerAliases",
+      "type": "string",
+      "default": "",
+      "help": "格式：Provider:alias1,alias2;Provider2:alias。",
+      "label": "厂商自定义别名"
+    },
+    {
+      "key": "disablePageAnimation",
+      "type": "boolean",
+      "default": false,
+      "help": "减少页面过渡动画效果，提升访问速度和响应性",
+      "label": "减弱过渡动画"
+    },
+    {
+      "type": "title",
+      "label": "05 · 节点卡片、列表与快捷控制"
+    },
+    {
+      "key": "nodeCardPingStyle",
+      "type": "select",
+      "default": "bars",
+      "options": [
+        {
+          "value": "bars",
+          "label": "旧样式（延迟 / 丢包方柱）"
+        },
+        {
+          "value": "sparkline",
+          "label": "延迟曲线（Sparkline）"
+        }
+      ],
+      "help": "节点卡片上延迟与丢包的显示方式，多线路和单线路摘要都生效；列表视图不受影响。延迟曲线下悬停或点按曲线可查看该时段的时间、延迟与丢包，手机上点按后提示停留，点空白处关闭。",
+      "label": "卡片延迟样式"
+    },
+    {
+      "key": "homeQuickControlsEnabled",
+      "type": "boolean",
+      "default": true,
+      "help": "在节点分组旁显示收藏、总流量、峰值、离线、高负载、即将到期等快捷按钮",
+      "label": "显示主页快捷控制"
+    },
+    {
+      "key": "homeQuickControlPreset",
+      "type": "select",
+      "default": "完整",
+      "options": [
+        {
+          "value": "基础",
+          "label": "基础"
+        },
+        {
+          "value": "流量",
+          "label": "流量"
+        },
+        {
+          "value": "运维",
+          "label": "运维"
+        },
+        {
+          "value": "完整",
+          "label": "完整"
+        },
+        {
+          "value": "自定义",
+          "label": "自定义"
+        }
+      ],
+      "help": "自定义时读取下方 keys。",
+      "label": "快捷控制方案"
+    },
+    {
+      "key": "homeQuickControlKeys",
+      "type": "text",
+      "default": "favorite\ntotalTraffic\npeak\noffline",
+      "help": "逗号、空格或换行分隔。 favorite=收藏； totalTraffic=总流量； upload=上行； download=下行； peak=实时峰值； offline=离线； highLoad=高负载； expiring=即将到期。",
+      "label": "自定义快捷按钮 keys"
+    },
+    {
+      "key": "nodeListMetadataEnabled",
+      "type": "boolean",
+      "default": true,
+      "help": "在列表视图显示节点信息栏；关闭后隐藏厂商、地区和分组信息列。",
+      "label": "列表信息栏"
+    },
+    {
+      "key": "nodeListMetadataFields",
+      "type": "text",
+      "default": "provider\nregion",
+      "help": "逗号、空格或换行分隔。 provider=厂商； region=地区； group=分组。",
+      "label": "列表信息字段 keys"
+    },
+    {
+      "key": "offlineNodesLast",
+      "type": "boolean",
+      "default": false,
+      "help": "筛选或排序时优先显示在线节点。",
+      "label": "离线节点置底"
+    },
+    {
+      "key": "homeHighLoadThreshold",
+      "type": "number",
+      "default": 80,
+      "help": "CPU、内存或硬盘占用达到该百分比时归为高负载节点（1-100）",
+      "label": "高负载阈值",
+      "min": 1,
+      "max": 100
+    },
+    {
+      "key": "homeTrafficWarningThreshold",
+      "type": "number",
+      "default": 80,
+      "help": "节点流量配额使用率达到该百分比时归为流量预警（1-100）",
+      "label": "流量预警阈值",
+      "min": 1,
+      "max": 100
+    },
+    {
+      "key": "homeExpiringDays",
+      "type": "number",
+      "default": 30,
+      "help": "节点剩余天数小于等于该值时归为即将到期（1-3650）",
+      "label": "即将到期天数",
+      "min": 1,
+      "max": 3650
+    },
+    {
+      "key": "diskPredictionEnabled",
+      "type": "boolean",
+      "default": false,
+      "help": "基于负载历史里的磁盘用量趋势预测耗尽时间；样本少于 2 天或未增长时不显示",
+      "label": "启用磁盘耗尽预测"
+    },
+    {
+      "key": "diskPredictionThresholdDays",
+      "type": "number",
+      "default": 30,
+      "help": "预计剩余天数小于等于该值时在节点卡片和详情负载图中显示提示（1-3650）",
+      "label": "磁盘预测预警天数",
+      "min": 1,
+      "max": 3650
+    },
+    {
+      "type": "title",
+      "label": "06 · 节点详情概览卡片"
+    },
+    {
+      "key": "nodeDetailSectionTabsEnabled",
+      "type": "boolean",
+      "default": false,
+      "help": "默认关闭，保持节点详情页纵向连续展示；开启后按概览、负载、延迟分区显示。",
+      "label": "详情页分区标签页"
+    },
+    {
+      "key": "detailMetricCardPreset",
+      "type": "select",
+      "default": "综合",
+      "options": [
+        {
+          "value": "财务",
+          "label": "财务"
+        },
+        {
+          "value": "状态",
+          "label": "状态"
+        },
+        {
+          "value": "资源",
+          "label": "资源"
+        },
+        {
+          "value": "网络",
+          "label": "网络"
+        },
+        {
+          "value": "综合",
+          "label": "综合"
+        },
+        {
+          "value": "自定义",
+          "label": "自定义"
+        }
+      ],
+      "help": "宽屏每行 4 张，中屏 3 张，移动端 2 张。财务/状态/资源/网络=8 张；综合=16 张；自定义读取下方 keys。",
+      "label": "详情概览卡片方案"
+    },
+    {
+      "key": "detailMetricCardKeys",
+      "type": "text",
+      "default": "nodePrice\nmonthlyCost\nremainingTime\nremainingValue\ntotalTraffic\ntrafficQuota\nuptime\nconnections",
+      "help": "逗号、空格或换行分隔。 nodePrice=节点价格； monthlyCost=月均支出； remainingTime=剩余时间； remainingValue=剩余价值； cpuUsage=CPU使用率； memoryUsage=内存使用率； swapUsage=交换内存使用率； diskUsage=硬盘使用率； load=系统负载； processes=进程数； connections=连接数； uptime=运行时间； uploadSpeed=实时上行； downloadSpeed=实时下行； totalTraffic=累计流量； trafficQuota=流量配额。",
+      "label": "自定义详情卡片 keys"
+    },
+    {
+      "type": "title",
+      "label": "07 · 节点详情图表"
+    },
+    {
+      "key": "chartDashboardPreset",
+      "type": "select",
+      "default": "默认",
+      "options": [
+        {
+          "value": "默认",
+          "label": "默认"
+        },
+        {
+          "value": "精简",
+          "label": "精简"
+        },
+        {
+          "value": "自定义",
+          "label": "自定义"
+        }
+      ],
+      "help": "默认=CPU、内存、磁盘、网络、连接、进程；精简=CPU、内存、网络；自定义读取下方 keys。",
+      "label": "详情负载图方案"
+    },
+    {
+      "key": "chartDashboardTemplate",
+      "type": "text",
+      "default": "cpu\nmemory\ndisk\nnetwork\nconnections\nprocess",
+      "help": "逗号、空格或换行分隔。 cpu=CPU； memory=内存/Swap 及总量； disk=磁盘/总量； network=实时上下行； connections=TCP/UDP 连接数； process=进程数。连接数、进程数和 Swap 曲线需要 Hub 1.4.1 及以上，较早版本不显示。旧 JSON 仍兼容。",
+      "label": "自定义详情图表 keys"
+    },
+    {
+      "type": "title",
+      "label": "08 · 自定义背景"
+    },
+    {
+      "key": "backgroundEnabled",
+      "type": "boolean",
+      "default": true,
+      "help": "启用后可设置自定义图片、视频或 Bing 每日壁纸作为页面背景",
+      "label": "启用自定义背景"
+    },
+    {
+      "key": "backgroundType",
+      "type": "select",
+      "default": "bing",
+      "options": [
+        {
+          "value": "image",
+          "label": "自定义图片"
+        },
+        {
+          "value": "video",
+          "label": "自定义视频"
+        },
+        {
+          "value": "bing",
+          "label": "Bing 每日壁纸"
+        }
+      ],
+      "help": "image=自定义图片；video=自定义视频；bing=Bing 每日壁纸（中国区，亮色和暗色模式共用）。",
+      "label": "背景类型"
+    },
+    {
+      "key": "lightBackgroundUrl",
+      "type": "string",
+      "default": "",
+      "help": "图片或视频模式使用，支持公开的 http(s) URL 或站内路径。",
+      "label": "亮色模式背景地址"
+    },
+    {
+      "key": "darkBackgroundUrl",
+      "type": "string",
+      "default": "",
+      "help": "图片或视频模式使用，支持公开的 http(s) URL 或站内路径。",
+      "label": "暗色模式背景地址"
+    },
+    {
+      "key": "backgroundBlur",
+      "type": "number",
+      "default": 30,
+      "help": "背景的高斯模糊半径（单位：px），0 表示不模糊",
+      "label": "背景模糊半径",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "key": "backgroundOverlay",
+      "type": "number",
+      "default": 0,
+      "help": "范围 -100 到 100；0 关闭，正数加深，负数降低透明度。",
+      "label": "背景遮罩强度",
+      "min": -100,
+      "max": 100
+    },
+    {
+      "type": "title",
+      "label": "09 · 首页多线路延迟"
+    },
+    {
+      "key": "homepageMultiPing",
+      "type": "boolean",
+      "default": true,
+      "help": "普通卡片按线路显示延迟、窗口丢包率和历史色条；mini 与列表保留单线路摘要。",
+      "label": "卡片显示多线路延迟"
+    },
+    {
+      "key": "homepageMultiPingTaskIds",
+      "type": "string",
+      "default": "",
+      "help": "按显示顺序填写后台延迟监控的完整名称，例如：浙江电信,浙江联通,浙江移动。使用逗号分隔，名称须完全一致；也兼容任务 ID。留空自动显示可用线路；未匹配、未绑定或无采样显示空白。同名任务会全部匹配。",
+      "label": "首页探测线路名称或 ID"
+    },
+    {
+      "key": "homepageMultiPingCount",
+      "type": "number",
+      "default": 3,
+      "help": "每张卡片显示 1–8 条线路，默认 3 条。色条展示最近 1 小时，数字延迟为最新采样，丢包率使用后端窗口汇总。",
+      "label": "最多显示线路数",
+      "min": 1,
+      "max": 8
+    }
+  ]
+}

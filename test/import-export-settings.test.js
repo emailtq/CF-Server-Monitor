@@ -112,7 +112,9 @@ test('actual admin export/frontend parse/import preserves monitor identities and
   try {
   const target=await isolated.getD1Database('DB');await createSchema(target);await ensureMonitorTelemetrySchema(db);
   const id='9abc1234-1234-4234-8234-abcdef123456';
+  await db.prepare("ALTER TABLE servers ADD COLUMN public_remark TEXT DEFAULT ''").run();
   await db.prepare('INSERT OR IGNORE INTO servers(id,name,history_partition_id) VALUES(?,?,?)').bind(id,'native',83).run();
+  await db.prepare('UPDATE servers SET public_remark=? WHERE id=?').bind('public backup tag',id).run();
   await db.prepare('INSERT OR IGNORE INTO terminal_nodes(server_id,token_hash,token_version,credential_version,updated_at) VALUES(?,?,?,?,?)').bind(id,'synthetic-hash',1,1,Date.now()).run();
   await recordMonitorBatch({DB:db},{serverId:id,tokenVersion:1},session(),frame(1,{probes:[]}));
   const exported=await adminCall({action:'export_servers'}),parsed=parseServerBackup(JSON.stringify(exported.data));
@@ -124,6 +126,7 @@ test('actual admin export/frontend parse/import preserves monitor identities and
   assert.equal(JSON.parse(node.state).traffic.totalRx,'1');assert.equal(node.active_stream,'');
   assert.notEqual((await target.prepare('SELECT token_hash FROM terminal_nodes WHERE server_id=?').bind(id).first()).token_hash,'synthetic-hash');
   assert.equal((await target.prepare('SELECT history_partition_id FROM servers WHERE id=?').bind(id).first()).history_partition_id,83);
+  assert.equal((await target.prepare('SELECT public_remark FROM servers WHERE id=?').bind(id).first()).public_remark,'public backup tag');
   }finally{await isolated.dispose();await db.prepare("DELETE FROM servers WHERE id='9abc1234-1234-4234-8234-abcdef123456'").run();}
 });
 

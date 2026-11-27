@@ -1,0 +1,1099 @@
+<script setup lang="ts">
+import type { ChartDashboardCardKey } from '@/stores/app'
+import type { RecordFormat } from '@/utils/recordHelper'
+import type { StatusRecord } from '@/utils/rpc'
+import { Icon } from '@iconify/vue'
+import { useIntervalFn } from '@vueuse/core'
+import dayjs from 'dayjs'
+import { computed, onMounted, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
+import VChart from 'vue-echarts'
+import MetricChartHeader from '@/components/MetricChartHeader.vue'
+import { Button } from '@/components/ui/button'
+import { CardX } from '@/components/ui/card-x'
+import { Empty } from '@/components/ui/empty'
+import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { loadNodeLoadRecords, useNodeLoadStats } from '@/composables/useNodeLoadStats'
+import { LOAD_RECORD_MAX_COUNT } from '@/constants/load'
+import { useAppStore } from '@/stores/app'
+import { useNodesStore } from '@/stores/nodes'
+import { getLoadChartPalette } from '@/utils/chartPalette'
+import { formatBytes, formatBytesSplit } from '@/utils/helper'
+import { historyWindows, windowLabel } from '@/monitor/transport'
+import { insertChartGaps } from '@/monitor/chartGaps'
+import { getSharedRpc } from '@/utils/rpc'
+import '@/utils/echarts' // 共享 ECharts 配置
+
+const props = defineProps<{
+  uuid: string
+}>()
+
+const appStore = useAppStore()
+const nodesStore = useNodesStore()
+
+// 从 publicSettings 获取记录保留时间
+const maxRecordPreserveTime = computed(() => appStore.publicSettings?.record_preserve_time || 720)
+
+const dataUpdateInterval = computed(() => appStore.dataUpdateInterval * 1000)
+const detailLoadStatsHours = computed(() => appStore.publicSettings?.record_preserve_time || 720)
+
+// 使用 store 中的 isDark computed
+const isDark = computed(() => appStore.isDark)
+
+const chartColors = reactive(getLoadChartPalette(appStore.colorVisionFriendly))
+
+watchEffect(() => {
+  Object.assign(chartColors, getLoadChartPalette(appStore.colorVisionFriendly))
+})
+
+const CUSTOM_VIEW_LABEL = '自定义'
+interface CustomRange {
+  start: dayjs.Dayjs
+  end: dayjs.Dayjs
+  hours: number
+}
+
+// 图表主题相关颜色
+const chartThemeColors = computed(() => ({
+  text: isDark.value ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.85)',
+  textSecondary: isDark.value ? 'rgba(255, 255, 255, 0.55)' : 'rgba(0, 0, 0, 0.55)',
+  textTertiary: isDark.value ? 'rgba(255, 255, 255, 0.35)' : 'rgba(0, 0, 0, 0.35)',
+  borderColor: isDark.value ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+  splitLineColor: isDark.value ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+  tooltipBg: isDark.value ? 'rgba(40, 40, 40, 0.95)' : 'rgba(255, 255, 255, 0.8)',
+  tooltipShadow: isDark.value ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.06)',
+  crosshairColor: isDark.value ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.1)',
+}))
+
+// 通用 Tooltip 配置
+const baseTooltipConfig = computed(() => ({
+  trigger: 'axis' as const,
+  confine: false,
+  backgroundColor: chartThemeColors.value.tooltipBg,
+  borderColor: 'transparent',
+  borderWidth: 0,
+  borderRadius: 6,
+  textStyle: {
+    color: chartThemeColors.value.text,
+    fontSize: 12,
+    lineHeight: 20,
+  },
+  extraCssText: `backdrop-filter: blur(5px);z-index:9;box-shadow:0 0 0 1px ${chartThemeColors.value.tooltipShadow}, 0 0 16px ${chartThemeColors.value.tooltipShadow}`,
+  axisPointer: {
+    type: 'cross' as const,
+    crossStyle: {
+      color: chartThemeColors.value.textTertiary,
+    },
+    lineStyle: {
+      color: chartThemeColors.value.crosshairColor,
+      width: 1,
+      type: 'dashed' as const,
+    },
+    shadowStyle: {
+      color: chartThemeColors.value.crosshairColor,
+    },
+  },
+}))
+
+// 图表边距配置
+const chartMargin = { top: 30, right: 24, bottom: 32, left: 56 }
+const chartMarginWithLegend = { top: 30, right: 24, bottom: 52, left: 56 }
+
+// 视图选项
+const presetHours = [4, 24, 168, 720, 2160]
+
+// 可用视图列表
+const availableViews = computed(() => {
+  const views: { label: string, hours?: number }[] = [{ label: '实时' }]
+  for (const hours of historyWindows(presetHours, maxRecordPreserveTime.value))
+    views.push({ label: windowLabel(hours), hours })
+  views.push({ label: CUSTOM_VIEW_LABEL })
+  return views
+})
+
+// 当前选中的视图
+const selectedView = ref<string>('实时')
+const customStartInput = ref('')
+const customEndInput = ref('')
+const selectedHours = computed(() => {
+  const view = availableViews.value.find(v => v.label === selectedView.value)
+  return view?.hours
+})
+const isRealtime = computed(() => selectedView.value === '实时')
+const isCustomRange = computed(() => selectedView.value === CUSTOM_VIEW_LABEL)
+const customRange = computed<CustomRange | null>(() => {
+  if (!customStartInput.value || !customEndInput.value)
+    return null
+
+  const start = dayjs(customStartInput.value)
+  const end = dayjs(customEndInput.value)
+  if (!start.isValid() || !end.isValid() || !end.isAfter(start))
+    return null
+
+  return {
+    start,
+    end,
+    hours: Math.max(1, Math.ceil(end.diff(start, 'hour', true))),
+  }
+})
+const customRangeError = computed(() => {
+  if (!isCustomRange.value || (!customStartInput.value && !customEndInput.value))
+    return ''
+  if (!customStartInput.value || !customEndInput.value)
+    return '请选择开始和结束时间'
+  return customRange.value ? '' : '结束时间必须晚于开始时间'
+})
+const effectiveHistoryHours = computed(() => isCustomRange.value ? customRange.value?.hours ?? 4 : selectedHours.value ?? 4)
+
+// 数据状态
+const remoteData = shallowRef<StatusRecord[]>([])
+const loading = ref(false)
+const isInitialLoad = ref(true) // 是否为首次加载（用于控制实时模式下的 NSpin 显示）
+const error = ref<string | null>(null)
+
+// 节点信息
+const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
+const { diskPrediction, diskPredictionState } = useNodeLoadStats(
+  () => props.uuid,
+  {
+    hours: () => detailLoadStatsHours.value,
+    enabled: () => appStore.diskPredictionEnabled && appStore.privateFeaturesAllowed,
+    diskTotal: () => nodeInfo.value?.disk_total ?? 0,
+    online: () => nodeInfo.value?.online ?? false,
+    permission: 'diskPrediction',
+  },
+)
+const diskPredictionSummary = computed(() => {
+  if (!appStore.diskPredictionEnabled || !appStore.privateFeaturesAllowed)
+    return ''
+
+  const prediction = diskPrediction.value
+  if (prediction) {
+    const days = Math.max(0, Math.ceil(prediction.daysUntilFull))
+    return days <= 0
+      ? '预计已满'
+      : `预计 ${days} 天后满`
+  }
+
+  const state = diskPredictionState.value
+  if (state.reason === 'no_samples')
+    return '暂无趋势'
+  if (state.reason === 'insufficient_samples')
+    return '样本不足'
+  if (state.reason === 'insufficient_duration')
+    return '趋势积累中'
+  return ''
+})
+
+// RPC 客户端
+const rpc = getSharedRpc()
+
+// ==================== 数据获取 ====================
+
+// Monitor 历史提供 CPU、内存、磁盘、网络，Hub 1.4.1 起另有 Swap、连接数和进程数；负载没有历史，不进入图表。
+function statusToRecordFormat(records: StatusRecord[]): RecordFormat[] {
+  return records.map(r => ({
+    client: r.client,
+    time: r.time,
+    cpu: metricValue(r.cpu),
+    cpu_peak: metricValue(r.cpu_peak),
+    ram: metricValue(r.ram),
+    ram_total: metricValue(r.ram_total),
+    disk: metricValue(r.disk),
+    disk_total: metricValue(r.disk_total),
+    net_in: metricValue(r.net_in),
+    net_out: metricValue(r.net_out),
+    net_in_peak: metricValue(r.net_in_peak),
+    net_out_peak: metricValue(r.net_out_peak),
+    swap: metricValue(r.swap),
+    swap_total: metricValue(r.swap_total),
+    connections: metricValue(r.connections),
+    connections_udp: metricValue(r.connections_udp),
+    process: metricValue(r.process),
+  }))
+}
+
+function metricValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+async function fetchRecentData() {
+  if (!props.uuid)
+    return
+
+  // 只在首次加载时显示 loading
+  if (isInitialLoad.value) {
+    loading.value = true
+  }
+  error.value = null
+
+  try {
+    const result = await rpc.getNodeRecentStatus(props.uuid)
+    const records = result?.records || []
+    records.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
+    const maxLength = 150
+    remoteData.value = records.slice(-maxLength)
+  }
+  catch (err) {
+    error.value = err instanceof Error ? err.message : '获取数据失败'
+    remoteData.value = []
+  }
+  finally {
+    loading.value = false
+    isInitialLoad.value = false
+  }
+}
+
+async function fetchHistoryData() {
+  if (!props.uuid)
+    return
+
+  if (isCustomRange.value && !customRange.value) {
+    remoteData.value = []
+    error.value = customRangeError.value || '请选择有效的自定义时间范围'
+    return
+  }
+
+  loading.value = true
+  error.value = null
+
+  try {
+    remoteData.value = await loadNodeLoadRecords(props.uuid, effectiveHistoryHours.value, LOAD_RECORD_MAX_COUNT)
+  }
+  catch (err) {
+    error.value = err instanceof Error ? err.message : '获取数据失败'
+    remoteData.value = []
+  }
+  finally {
+    loading.value = false
+  }
+}
+
+async function fetchData() {
+  if (isRealtime.value) {
+    await fetchRecentData()
+  }
+  else {
+    await fetchHistoryData()
+  }
+}
+
+// ==================== 数据处理 ====================
+
+const chartData = computed(() => {
+  const data = statusToRecordFormat(remoteData.value)
+  if (!data.length)
+    return []
+
+  const step = remoteData.value.find(r => Number.isFinite(r.step) && r.step! > 0)?.step
+  return insertChartGaps(data, time => ({
+    ...Object.fromEntries(Object.keys(data[0]!).map(key => [key, null])),
+    client: props.uuid,
+    time,
+  } as RecordFormat), step ? step * 1000 : undefined)
+})
+
+const latestStatus = computed(() => {
+  const data = chartData.value
+  if (!data.length)
+    return null
+  return data.at(-1) ?? null
+})
+
+// ==================== 工具函数 ====================
+
+function formatTime(time: string, showDate: boolean): string {
+  const date = dayjs(time)
+  if (showDate) {
+    return date.format('M/D HH:mm')
+  }
+  return date.format('HH:mm')
+}
+
+function formatTimeForTooltip(time: string, hours: number): string {
+  const date = dayjs(time)
+  if (hours < 24) {
+    return date.format('HH:mm:ss')
+  }
+  return date.format('MM/DD HH:mm')
+}
+
+const showDateInAxis = computed(() => (effectiveHistoryHours.value) >= 24)
+
+// 通用 X 轴配置
+const baseXAxisConfig = computed(() => ({
+  type: 'time' as const,
+  axisLabel: {
+    formatter: (value: number) => formatTime(new Date(value).toISOString(), showDateInAxis.value),
+    fontSize: 11,
+    color: chartThemeColors.value.textSecondary,
+    margin: 12,
+  },
+  axisLine: {
+    show: true,
+    lineStyle: { color: chartThemeColors.value.borderColor, width: 1 },
+  },
+  axisTick: { show: false },
+  boundaryGap: false,
+}))
+
+// 通用 Y 轴配置
+const baseYAxisConfig = computed(() => ({
+  type: 'value' as const,
+  axisLabel: {
+    fontSize: 11,
+    color: chartThemeColors.value.textSecondary,
+  },
+  axisLine: { show: false },
+  axisTick: { show: false },
+  splitLine: {
+    lineStyle: {
+      color: chartThemeColors.value.splitLineColor,
+      type: 'dashed' as const,
+    },
+  },
+}))
+
+// ==================== 图表配置 ====================
+
+// Hub 1.3.2 起每个时间桶带最高 CPU：短时间占满在长窗口的平均值里几乎看不出，峰值用虚线补上
+const hasCpuPeak = computed(() => chartData.value.some(r => r.cpu_peak != null))
+
+function tooltipValues(params: unknown) {
+  return (params as Array<{ value: [number, number | null] }>).map(item => ({ ...item, value: item.value[1] }))
+}
+
+// CPU 图表
+const cpuChartOption = computed(() => ({
+  animation: false,
+  // 全局颜色配置（确保 Tooltip 圆点颜色与线条一致）
+  color: [chartColors.primary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    formatter: (params: unknown) => {
+      const p = tooltipValues(params) as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      if (!p.length)
+        return ''
+      const firstParam = p[0]
+      if (!firstParam)
+        return ''
+      const record = chartData.value[firstParam.dataIndex]
+      if (!record)
+        return ''
+
+      const timeStr = formatTimeForTooltip(record.time, effectiveHistoryHours.value)
+      let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
+      html += '<div style="display:flex;flex-direction:column;gap:4px">'
+
+      for (const item of p) {
+        if (item.value == null)
+          continue
+        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
+        html += `<div style="display:flex;align-items:center">${colorDot}<span>${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${item.value?.toFixed(1) ?? '-'}%</span></div>`
+      }
+      html += '</div>'
+      return html
+    },
+  },
+  legend: hasCpuPeak.value
+    ? {
+        data: ['CPU', '峰值'],
+        bottom: 4,
+        itemWidth: 12,
+        itemHeight: 12,
+        itemGap: 20,
+        icon: 'roundRect',
+        textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
+      }
+    : undefined,
+  grid: hasCpuPeak.value ? chartMarginWithLegend : chartMargin,
+  xAxis: baseXAxisConfig.value,
+  yAxis: {
+    ...baseYAxisConfig.value,
+    name: 'CPU %',
+    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    min: 0,
+    max: 100,
+    axisLabel: { ...baseYAxisConfig.value.axisLabel, formatter: '{value}%' },
+  },
+  series: [
+    {
+      name: 'CPU',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.cpu]),
+      connectNulls: false,
+
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0,
+          y: 0,
+          x2: 0,
+          y2: 1,
+          colorStops: [
+            { offset: 0, color: chartColors.primaryAreaStrong },
+            { offset: 1, color: chartColors.primaryAreaFaint },
+          ],
+        },
+      },
+    },
+    ...(hasCpuPeak.value
+      ? [{
+          name: '峰值',
+          type: 'line',
+          data: chartData.value.map(r => [Date.parse(r.time), r.cpu_peak]),
+      connectNulls: false,
+          showSymbol: false,
+          lineStyle: { width: 1, type: 'dashed' as const, opacity: 0.6, color: chartColors.primary, cap: 'round' as const },
+        }]
+      : []),
+  ],
+}))
+
+// Hub 1.4.1 起历史带 Swap；未配置 Swap 的节点（总量为 0）不画，避免多出两条贴底的线
+const hasSwap = computed(() => (nodeInfo.value?.swap_total ?? 0) > 0 && chartData.value.some(r => r.swap != null))
+
+// 内存图表
+const memoryChartOption = computed(() => ({
+  animation: false,
+  color: [chartColors.primary, chartColors.quinary, chartColors.secondary, chartColors.quaternary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    formatter: (params: unknown) => {
+      const p = tooltipValues(params) as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      if (!p.length)
+        return ''
+      const firstParam = p[0]
+      if (!firstParam)
+        return ''
+      const record = chartData.value[firstParam.dataIndex]
+      if (!record)
+        return ''
+
+      const ramUsed = record.ram ?? 0
+      const ramTotal = record.ram_total ?? nodeInfo.value?.mem_total ?? 0
+      const ramPercent = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0'
+      const swapUsed = record.swap ?? 0
+      const swapTotal = record.swap_total ?? nodeInfo.value?.swap_total ?? 0
+      const swapPercent = swapTotal > 0 ? ((swapUsed / swapTotal) * 100).toFixed(1) : '0'
+
+      const timeStr = formatTimeForTooltip(record.time, effectiveHistoryHours.value)
+      let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
+      html += '<div style="display:flex;flex-direction:column;gap:4px">'
+
+      for (const item of p) {
+        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
+        if (item.seriesName === 'RAM') {
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>RAM</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(ramUsed)} (${ramPercent}%)</span></div>`
+        }
+        else if (item.seriesName === 'RAM 总量') {
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>RAM 总量</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(ramTotal)}</span></div>`
+        }
+        else if (item.seriesName === 'Swap' && record.swap != null) {
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>Swap</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(swapUsed)} (${swapPercent}%)</span></div>`
+        }
+        else if (item.seriesName === 'Swap 总量') {
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>Swap 总量</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(swapTotal)}</span></div>`
+        }
+      }
+      html += '</div>'
+      return html
+    },
+  },
+  legend: {
+    data: hasSwap.value ? ['RAM', 'RAM 总量', 'Swap', 'Swap 总量'] : ['RAM', 'RAM 总量'],
+    bottom: 4,
+    itemWidth: 10,
+    itemHeight: 8,
+    textStyle: { fontSize: 10, color: chartThemeColors.value.textSecondary },
+  },
+  grid: chartMarginWithLegend,
+  xAxis: baseXAxisConfig.value,
+  yAxis: {
+    ...baseYAxisConfig.value,
+    name: '内存',
+    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    axisLabel: {
+      ...baseYAxisConfig.value.axisLabel,
+      formatter: (val: number) => formatBytes(val),
+    },
+  },
+  series: [
+    {
+      name: 'RAM',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.ram]),
+      connectNulls: false,
+
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0,
+          y: 0,
+          x2: 0,
+          y2: 1,
+          colorStops: [
+            { offset: 0, color: chartColors.primaryAreaStrong },
+            { offset: 1, color: chartColors.primaryAreaFaint },
+          ],
+        },
+      },
+    },
+    {
+      name: 'RAM 总量',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.ram == null ? null : r.ram_total ?? nodeInfo.value?.mem_total ?? null]),
+      connectNulls: false,
+      showSymbol: false,
+      lineStyle: { width: 1.2, type: 'dashed' as const, color: chartColors.quinary, cap: 'round' as const },
+    },
+    ...(hasSwap.value
+      ? [
+          {
+            name: 'Swap',
+            type: 'line',
+            data: chartData.value.map(r => [Date.parse(r.time), r.swap]),
+      connectNulls: false,
+            showSymbol: false,
+            lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
+          },
+          {
+            name: 'Swap 总量',
+            type: 'line',
+            data: chartData.value.map(r => [Date.parse(r.time), r.swap == null ? null : r.swap_total ?? nodeInfo.value?.swap_total ?? null]),
+      connectNulls: false,
+            showSymbol: false,
+            lineStyle: { width: 1.2, type: 'dashed' as const, color: chartColors.quaternary, cap: 'round' as const },
+          },
+        ]
+      : []),
+  ],
+}))
+
+// 磁盘图表
+const diskChartOption = computed(() => ({
+  animation: false,
+  color: [chartColors.tertiary, chartColors.quinary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    formatter: (params: unknown) => {
+      const p = tooltipValues(params) as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      if (!p.length)
+        return ''
+      const firstParam = p[0]
+      if (!firstParam)
+        return ''
+      const record = chartData.value[firstParam.dataIndex]
+      if (!record)
+        return ''
+
+      const diskUsed = record.disk ?? 0
+      const diskTotal = record.disk_total ?? nodeInfo.value?.disk_total ?? 0
+      const diskPercent = diskTotal > 0 ? ((diskUsed / diskTotal) * 100).toFixed(1) : '0'
+
+      const timeStr = formatTimeForTooltip(record.time, effectiveHistoryHours.value)
+      let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
+      html += '<div style="display:flex;flex-direction:column;gap:4px">'
+      for (const item of p) {
+        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
+        const text = item.seriesName === '磁盘总量' ? formatBytes(diskTotal) : `${formatBytes(diskUsed)} (${diskPercent}%)`
+        html += `<div style="display:flex;align-items:center">${colorDot}<span>${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${text}</span></div>`
+      }
+      html += '</div>'
+      return html
+    },
+  },
+  legend: {
+    data: ['磁盘已用', '磁盘总量'],
+    bottom: 4,
+    itemWidth: 10,
+    itemHeight: 8,
+    textStyle: { fontSize: 10, color: chartThemeColors.value.textSecondary },
+  },
+  grid: chartMarginWithLegend,
+  xAxis: baseXAxisConfig.value,
+  yAxis: {
+    ...baseYAxisConfig.value,
+    name: '磁盘',
+    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    axisLabel: {
+      ...baseYAxisConfig.value.axisLabel,
+      formatter: (val: number) => formatBytes(val),
+    },
+  },
+  series: [
+    {
+      name: '磁盘已用',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.disk]),
+      connectNulls: false,
+
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0,
+          y: 0,
+          x2: 0,
+          y2: 1,
+          colorStops: [
+            { offset: 0, color: chartColors.tertiaryAreaStrong },
+            { offset: 1, color: chartColors.tertiaryAreaFaint },
+          ],
+        },
+      },
+    },
+    {
+      name: '磁盘总量',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.disk == null ? null : r.disk_total ?? nodeInfo.value?.disk_total ?? null]),
+      connectNulls: false,
+      showSymbol: false,
+      lineStyle: { width: 1.2, type: 'dashed' as const, color: chartColors.quinary, cap: 'round' as const },
+    },
+  ],
+}))
+
+// 较新的 Hub 为每个时间桶返回最高速率：长时间段的平均值会抹平突发，峰值用虚线补上
+const hasNetworkPeak = computed(() => chartData.value.some(r => r.net_in_peak != null || r.net_out_peak != null))
+
+const NETWORK_SERIES_LABELS: Record<string, string> = {
+  下载: '↓ 下载',
+  上传: '↑ 上传',
+  下载峰值: '↓ 峰值',
+  上传峰值: '↑ 峰值',
+}
+
+// 网络图表
+const networkChartOption = computed(() => ({
+  animation: false,
+  color: [chartColors.quinary, chartColors.quaternary, chartColors.quinary, chartColors.quaternary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    formatter: (params: unknown) => {
+      const p = tooltipValues(params) as Array<{ dataIndex: number, seriesName: string, value: number | null, color: string }>
+      if (!p.length)
+        return ''
+      const firstParam = p[0]
+      if (!firstParam)
+        return ''
+      const record = chartData.value[firstParam.dataIndex]
+      if (!record)
+        return ''
+
+      const timeStr = formatTimeForTooltip(record.time, effectiveHistoryHours.value)
+      let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
+      html += '<div style="display:flex;flex-direction:column;gap:4px">'
+
+      for (const item of p) {
+        if (item.value == null)
+          continue
+        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
+        const label = NETWORK_SERIES_LABELS[item.seriesName] ?? item.seriesName
+        html += `<div style="display:flex;align-items:center">${colorDot}<span>${label}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(item.value)}/s</span></div>`
+      }
+      html += '</div>'
+      return html
+    },
+  },
+  legend: {
+    data: hasNetworkPeak.value ? ['下载', '上传', '下载峰值', '上传峰值'] : ['下载', '上传'],
+    bottom: 4,
+    itemWidth: 12,
+    itemHeight: 12,
+    itemGap: 20,
+    icon: 'roundRect',
+    textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
+  },
+  grid: chartMarginWithLegend,
+  xAxis: baseXAxisConfig.value,
+  yAxis: {
+    ...baseYAxisConfig.value,
+    name: '速度',
+    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    axisLabel: {
+      ...baseYAxisConfig.value.axisLabel,
+      formatter: (val: number) => formatBytes(val),
+    },
+  },
+  series: [
+    {
+      name: '下载',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.net_in]),
+      connectNulls: false,
+
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.quinary, cap: 'round' as const },
+    },
+    {
+      name: '上传',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.net_out]),
+      connectNulls: false,
+
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
+    },
+    ...(hasNetworkPeak.value
+      ? [
+          {
+            name: '下载峰值',
+            type: 'line',
+            data: chartData.value.map(r => [Date.parse(r.time), r.net_in_peak]),
+      connectNulls: false,
+            showSymbol: false,
+            lineStyle: { width: 1, type: 'dashed' as const, opacity: 0.6, color: chartColors.quinary, cap: 'round' as const },
+          },
+          {
+            name: '上传峰值',
+            type: 'line',
+            data: chartData.value.map(r => [Date.parse(r.time), r.net_out_peak]),
+      connectNulls: false,
+            showSymbol: false,
+            lineStyle: { width: 1, type: 'dashed' as const, opacity: 0.6, color: chartColors.quaternary, cap: 'round' as const },
+          },
+        ]
+      : []),
+  ],
+}))
+
+// 连接数与进程数：Hub 1.4.1 起才有历史，旧版 Hub 整张卡片不显示
+const hasConnections = computed(() => chartData.value.some(r => r.connections != null || r.connections_udp != null))
+const hasProcess = computed(() => chartData.value.some(r => r.process != null))
+
+function countTooltip(params: unknown): string {
+  const p = tooltipValues(params) as Array<{ dataIndex: number, seriesName: string, value: number | null, color: string }>
+  const firstParam = p[0]
+  const record = firstParam ? chartData.value[firstParam.dataIndex] : undefined
+  if (!firstParam || !record)
+    return ''
+
+  const timeStr = formatTimeForTooltip(record.time, effectiveHistoryHours.value)
+  let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
+  html += '<div style="display:flex;flex-direction:column;gap:4px">'
+  for (const item of p) {
+    if (item.value == null)
+      continue
+    const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
+    html += `<div style="display:flex;align-items:center">${colorDot}<span>${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${Math.round(item.value)}</span></div>`
+  }
+  html += '</div>'
+  return html
+}
+
+const countYAxisConfig = computed(() => ({
+  ...baseYAxisConfig.value,
+  nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+  min: 0,
+  minInterval: 1,
+  axisLabel: {
+    ...baseYAxisConfig.value.axisLabel,
+    formatter: (val: number) => Math.round(val).toString(),
+  },
+}))
+
+// 连接数图表
+const connectionsChartOption = computed(() => ({
+  animation: false,
+  color: [chartColors.primary, chartColors.tertiary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    formatter: (params: unknown) => countTooltip(params),
+  },
+  legend: {
+    data: ['TCP', 'UDP'],
+    bottom: 4,
+    itemWidth: 12,
+    itemHeight: 12,
+    itemGap: 20,
+    icon: 'roundRect',
+    textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
+  },
+  grid: chartMarginWithLegend,
+  xAxis: baseXAxisConfig.value,
+  yAxis: { ...countYAxisConfig.value, name: '连接数' },
+  series: [
+    {
+      name: 'TCP',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.connections]),
+      connectNulls: false,
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
+    },
+    {
+      name: 'UDP',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.connections_udp]),
+      connectNulls: false,
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
+    },
+  ],
+}))
+
+// 进程数图表
+const processChartOption = computed(() => ({
+  animation: false,
+  color: [chartColors.quaternary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    formatter: (params: unknown) => countTooltip(params),
+  },
+  grid: chartMargin,
+  xAxis: baseXAxisConfig.value,
+  yAxis: { ...countYAxisConfig.value, name: '进程' },
+  series: [
+    {
+      name: '进程数',
+      type: 'line',
+      data: chartData.value.map(r => [Date.parse(r.time), r.process]),
+      connectNulls: false,
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
+    },
+  ],
+}))
+
+const chartDashboardCards = computed(() => appStore.chartDashboardTemplate.cards)
+
+function isChartCardEnabled(key: ChartDashboardCardKey): boolean {
+  return chartDashboardCards.value.includes(key)
+}
+
+function getChartCardOrder(key: ChartDashboardCardKey): number {
+  const index = chartDashboardCards.value.indexOf(key)
+  return index < 0 ? 99 : index
+}
+
+function getChartCardStyle(key: ChartDashboardCardKey): Record<string, string> {
+  return { order: String(getChartCardOrder(key)) }
+}
+
+// ==================== 实时更新 ====================
+
+// 使用 VueUse 的 useIntervalFn 自动管理定时器
+const { pause: pauseRealtimeUpdate, resume: resumeRealtimeUpdate } = useIntervalFn(
+  () => fetchData(),
+  dataUpdateInterval,
+  { immediate: false },
+)
+
+// 根据是否为实时模式控制定时器
+watch(isRealtime, (realtime) => {
+  if (realtime) {
+    resumeRealtimeUpdate()
+  }
+  else {
+    pauseRealtimeUpdate()
+  }
+}, { immediate: true })
+
+// 生命周期 ====================
+
+watch(selectedView, () => {
+  isInitialLoad.value = true // 切换视图时重置首次加载状态
+  if (!isCustomRange.value || customRange.value)
+    fetchData()
+})
+
+watch(() => props.uuid, () => {
+  remoteData.value = []
+  isInitialLoad.value = true // 切换节点时重置首次加载状态
+  fetchData()
+})
+
+onMounted(() => {
+  fetchData()
+})
+</script>
+
+<template>
+  <div class="flex flex-col gap-4">
+    <!-- 时间选择器 -->
+    <div class="flex flex-col items-center gap-2">
+      <Tabs v-model="selectedView" class="w-full items-center">
+        <TabsList class="h-8 bg-background/50 backdrop-blur-xl pointer-events-auto rounded-md" data-load-chart-range>
+          <TabsTrigger
+            v-for="view in availableViews" :key="view.label" :value="view.label"
+            class="h-6.5 text-xs border-none data-[state=active]:text-green-600 shadow-none rounded-sm"
+          >
+            {{ view.label }}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      <div v-if="isCustomRange" class="flex w-full flex-col items-center gap-2 sm:flex-row sm:justify-center">
+        <div class="grid w-full gap-2 sm:w-auto sm:grid-cols-[minmax(0,13rem)_minmax(0,13rem)_auto]">
+          <Input
+            v-model="customStartInput"
+            type="datetime-local"
+            aria-label="负载图开始时间"
+            class="h-8 bg-background/50 text-xs"
+          />
+          <Input
+            v-model="customEndInput"
+            type="datetime-local"
+            aria-label="负载图结束时间"
+            class="h-8 bg-background/50 text-xs"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            :disabled="!customRange"
+            class="h-8 text-xs"
+            @click="fetchData"
+          >
+            应用
+          </Button>
+        </div>
+        <div v-if="customRangeError" class="text-[11px] text-orange-500">
+          {{ customRangeError }}
+        </div>
+      </div>
+    </div>
+
+    <!-- 内容区域 -->
+    <Spinner :show="loading">
+      <div v-if="error" class="text-red-500 py-8 text-center">
+        {{ error }}
+      </div>
+      <div v-else-if="chartData.length === 0 && !loading" class="py-8">
+        <Empty description="暂无负载数据" />
+      </div>
+
+      <!-- 图表网格 -->
+      <div v-else class="gap-4 grid grid-cols-1 md:grid-cols-2">
+        <!-- CPU 卡片 -->
+        <CardX v-if="isChartCardEnabled('cpu')" size="small" class="bg-background/50 border-none hover:bg-background transition-all rounded-md" data-load-chart-card="cpu" :style="getChartCardStyle('cpu')">
+          <template #header>
+            <MetricChartHeader title="CPU" icon="tabler:cpu" tone="rose">
+              <div v-if="latestStatus?.cpu != null" class="text-xs flex gap-0.5 items-baseline">
+                <span data-latest-cpu>{{ latestStatus.cpu.toFixed(1) }}</span>
+                <span>%</span>
+              </div>
+              <span v-else>-</span>
+            </MetricChartHeader>
+          </template>
+          <div class="h-48 xl:h-56">
+            <VChart :option="cpuChartOption" autoresize />
+          </div>
+        </CardX>
+
+        <!-- 内存卡片 -->
+        <CardX v-if="isChartCardEnabled('memory')" size="small" class="bg-background/50 border-none hover:bg-background transition-all rounded-md" :style="getChartCardStyle('memory')">
+          <template #header>
+            <MetricChartHeader :title="hasSwap ? '内存与 Swap' : '内存'" icon="tabler:database" tone="violet">
+              <div class="text-xs flex gap-1 items-baseline">
+                <template v-if="latestStatus?.ram != null">
+                  <span>{{ formatBytesSplit(latestStatus.ram).value }}</span>
+                  <span>{{ formatBytesSplit(latestStatus.ram).unit }}</span>
+                </template>
+                <span v-else>-</span>
+                <span>·</span>
+                <template v-if="nodeInfo?.mem_total">
+                  <span>{{
+                    formatBytesSplit(nodeInfo.mem_total).value }}</span>
+                  <span>{{ formatBytesSplit(nodeInfo.mem_total).unit }}</span>
+                </template>
+                <span v-else>-</span>
+              </div>
+            </MetricChartHeader>
+          </template>
+          <div class="h-48 xl:h-56">
+            <VChart :option="memoryChartOption" autoresize />
+          </div>
+        </CardX>
+
+        <!-- 磁盘卡片 -->
+        <CardX v-if="isChartCardEnabled('disk')" size="small" class="bg-background/50 border-none hover:bg-background transition-all rounded-md" :style="getChartCardStyle('disk')">
+          <template #header>
+            <MetricChartHeader title="磁盘" icon="tabler:device-floppy" tone="emerald" :subtitle="diskPredictionSummary">
+              <div class="text-xs flex gap-1 items-baseline shrink-0">
+                <template v-if="latestStatus?.disk != null">
+                  <span>{{ formatBytesSplit(latestStatus.disk).value }}</span>
+                  <span>{{ formatBytesSplit(latestStatus.disk).unit }}</span>
+                </template>
+                <span v-else>-</span>
+                <span>·</span>
+                <template v-if="nodeInfo?.disk_total">
+                  <span>{{ formatBytesSplit(nodeInfo.disk_total).value }}</span>
+                  <span>{{ formatBytesSplit(nodeInfo.disk_total).unit }}</span>
+                </template>
+                <span v-else>-</span>
+              </div>
+            </MetricChartHeader>
+          </template>
+          <div class="h-48 xl:h-56">
+            <VChart :option="diskChartOption" autoresize />
+          </div>
+        </CardX>
+
+        <!-- 网络卡片 -->
+        <CardX v-if="isChartCardEnabled('network')" size="small" class="bg-background/50 border-none hover:bg-background transition-all rounded-md" :style="getChartCardStyle('network')">
+          <template #header>
+            <MetricChartHeader title="实时网络" icon="tabler:network" tone="sky">
+              <div class="text-xs flex gap-2 items-baseline">
+                <span class="flex flex-row items-center justify-center gap-0.5">
+                  <Icon icon="tabler:chevron-up" width="12" height="12" />
+                  <template v-if="latestStatus?.net_out != null">
+                    {{ formatBytesSplit(latestStatus.net_out).value }}
+                    {{ formatBytesSplit(latestStatus.net_out).unit }}/s
+                  </template>
+                  <template v-else>-</template>
+                </span>
+                <span class="flex flex-row items-center justify-center gap-0.5">
+                  <Icon icon="tabler:chevron-down" width="12" height="12" />
+                  <template v-if="latestStatus?.net_in != null">
+                    {{ formatBytesSplit(latestStatus.net_in).value }}
+                    {{ formatBytesSplit(latestStatus.net_in).unit }}/s
+                  </template>
+                  <template v-else>-</template>
+                </span>
+              </div>
+            </MetricChartHeader>
+          </template>
+          <div class="h-48 xl:h-56">
+            <VChart :option="networkChartOption" autoresize />
+          </div>
+        </CardX>
+
+        <!-- 连接数卡片 -->
+        <CardX v-if="isChartCardEnabled('connections') && hasConnections" size="small" class="bg-background/50 border-none hover:bg-background transition-all rounded-md" data-load-chart-card="connections" :style="getChartCardStyle('connections')">
+          <template #header>
+            <MetricChartHeader title="网络连接" icon="tabler:binary-tree" tone="amber">
+              <div class="text-xs flex gap-1 items-baseline">
+                <span>TCP {{ latestStatus?.connections != null ? Math.round(latestStatus.connections) : '-' }}</span>
+                <span>·</span>
+                <span>UDP {{ latestStatus?.connections_udp != null ? Math.round(latestStatus.connections_udp) : '-' }}</span>
+              </div>
+            </MetricChartHeader>
+          </template>
+          <div class="h-48 xl:h-56">
+            <VChart :option="connectionsChartOption" autoresize />
+          </div>
+        </CardX>
+
+        <!-- 进程卡片 -->
+        <CardX v-if="isChartCardEnabled('process') && hasProcess" size="small" class="bg-background/50 border-none hover:bg-background transition-all rounded-md" data-load-chart-card="process" :style="getChartCardStyle('process')">
+          <template #header>
+            <MetricChartHeader title="进程" icon="tabler:activity" tone="slate">
+              <span class="text-xs">{{ latestStatus?.process != null ? Math.round(latestStatus.process) : '-' }}</span>
+            </MetricChartHeader>
+          </template>
+          <div class="h-48 xl:h-56">
+            <VChart :option="processChartOption" autoresize />
+          </div>
+        </CardX>
+      </div>
+    </Spinner>
+  </div>
+</template>

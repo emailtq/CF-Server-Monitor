@@ -1,0 +1,580 @@
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { ArrowDown, ArrowUp } from "lucide-react"
+
+import { Card } from "@/components/ui/card"
+import { DetailScroll } from "@/components/DetailScroll"
+import { TrafficDetail } from "@/components/TrafficDetail"
+import { speedHistory, type Node } from "@/lib/api"
+import { bytes, rate } from "@/lib/format"
+import { useFx } from "@/lib/fx"
+import { BUDGET_ROWS, budgetOf, cny, fxNote, type BudgetItem } from "@/lib/money"
+import { summarize, type Fleet } from "@/lib/summary"
+
+/**
+ * 列表页顶上那行概览卡片，两副面孔（主题设置的「列表页顶部」里选）：
+ *
+ *   原版（summary / both）——四张卡片，各一块读数：节点 / 最忙节点 / 今日流量 / 实时网速。
+ *   月度预算剩余价值版（budget / bothBudget）——四张卡片，但前两张各排两块读数：
+ *     ① 月度预算 + 剩余价值（口径见 lib/money.ts）
+ *     ② 节点 + 最忙节点（照参考图：节点挪到原先最忙节点那一侧、最忙节点往右让位，
+ *        两块分居同一张卡片的两端，下沿对齐）
+ *     后两张两副面孔完全一样。
+ *
+ * 两副面孔的数据都来自 `/api/nodes` 里本来就有的字段，开着它不会多发一个请求——唯一的
+ * 例外是第四张下面那条走势线，它画的是访客打开页面之后自己攒下的实时速率（api.ts 的
+ * `speedHistory`，每 2 秒一个采样、留最近 60 个 ≈ 2 分钟）：hub 没有「全站速率历史」
+ * 这种接口，刷新页面就得重新攒，所以冷启动头几秒那里是空的。
+ *
+ * ★口径跟着分组标签走：传进来的是**当前分组筛选出的节点**（`group` 也跟着一起来，
+ * 用来取那一条分组自己的速率走势线），与下面那批卡片是同一批机器。参考站（monitor 内置
+ * default 主题）的概览四格也是拿筛选后的节点算的；只让列表变、这一行不动，会出现
+ * 「上面写着 3 / 4 · Node B，下面只剩一个分组那两张卡片」。
+ *
+ * ★**搜索也吃同一套口径**：顶栏那个搜索框（`@/lib/search`）收窄之后，这一行跟着一起收窄
+ * ——「上面写着 8 台、下面只搜出 2 台」与上面那句话是同一个毛病。收窄到一台不剩时，
+ * 「节点」那张卡底部那行小字会写「没有匹配的节点」而不是「还没有节点」（`searching`）。
+ *
+ * 默认不显示（主题设置的「列表页顶部」没选它）。站点本来就有每台机器自己的卡片，
+ * 不需要概览的站不必为此让出首屏；没选时这个组件整个不挂载。
+ */
+
+/**
+ * 一块读数：一行小标签、一行大数字、一行小字。
+ *
+ * 卡片是 flex、块是 flex-col，所以块里的 `mt-auto` 能把底部那行压到同排最高的那块的下沿，
+ * 内容行数不同也对齐（例如「无在线节点」与「1 台离线」落在同一条基线上）。它在块本身高度
+ * 有富余时才起作用；刚好装下时那行就紧跟在数字下面（`pt-1`）——也就是参考站那种三段式。
+ *
+ * 标签前不带图标：参考站的四张卡都没有，图标只是把标签挤窄、并把整行垫高。
+ *
+ * `detail` 给了它，整块就成了一枚可悬停/点开的热点（2026-10-12 的创意项）：鼠标悬停（或
+ * 触屏点一下）弹出一枚浮层，把这个数的分解摊开（如「月度预算」的逐台明细）。开合规则：
+ * 鼠标 pointerenter 即开、leave 即关；触屏/笔点一下开，点别处或 Esc 关；键盘 Tab 到它开、
+ * blur 关。原来的 hint（原生 title）在这条路径上让位给了浮层尾巴里的同一段说明 ——
+ * 两套悬停提示叠在一起会打架，而信息一字不少。
+ */
+function Block({ title, hint, detail, wide = false, children }: {
+  title: string
+  /** 悬停提示：口径说明——月度预算与剩余价值那两个数不是一眼能看懂的，得写清楚。 */
+  hint?: string
+  /** 给了它可悬停/点开：弹出的浮层内容（口径行由调用方放在 detail 尾巴里）。 */
+  detail?: ReactNode
+  /**
+   * 宽浮层（22rem；默认 15rem）。给「今日流量」那张的节点明细用：一行要放
+   * 「旗子 + 名字 + 今日上下行」，下面还要放两枚带时刻的峰值，15rem 会挤成三条。
+   */
+  wide?: boolean
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  // 浮层的 id（aria-controls 指过来）：useId 的冒号等字符剔掉，与 Chart 的 clipPath 同款。
+  const popId = `block-pop-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`
+  const ref = useRef<HTMLDivElement | null>(null)
+  // ★2026-10-31 机器多的情况：浮层再长也不许吊出视口。开的时候量一次**这块下面还剩多少空间**，
+  //   把浮层的高度上限压到「剩下的那点」——矮窗口（实测 1440×420）里 min(24rem, 60vh) 仍会
+  //   顶穿屏幕下沿，只有按实际空间压才稳。`detail` 也在依赖里：峰值是逐台回来的，行数长出来
+  //   之后要重新量一次（不然先按两行的矮浮层量，回来几十行又超了）。
+  //   不做「向上弹」：这一行在页面顶部、下面就是卡片列表，空间永远在下边；上翻的判据在这套
+  //   布局里永远不会成立，写了也是没法验的死代码。
+  const popRef = useRef<HTMLSpanElement | null>(null)
+  // 「这一下 blur 是鼠标按下引起的」（见 onBlur 的注释）：pointerdown 到 click 之间不关浮层。
+  const pointerDownRef = useRef(false)
+  // 开着的浮层：点别处 / Esc 收起（与 NodeCard 那枚浮层同一个做法）。
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      const el = e.target
+      // ★同 CardStyleMenu：`instanceof HTMLElement` 漏 SVG（2026-11-21 三审）。
+      if (!(el instanceof Element) || !ref.current?.contains(el)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false) }
+    document.addEventListener("pointerdown", onDown)
+    document.addEventListener("keydown", onKey)
+    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey) }
+  }, [open])
+  // 量可用空间并压上限。用 layout effect：改高度发生在同一帧里，看不见浮层先长出来再被压。
+  // ★依赖只有 `open`（2026-11-07 二审）：原来把 `detail` 也放进依赖，而 `detail` 是调用方
+  //   每次渲染都新建的元素（`detail={<TrafficDetail …/>}`）—— WS 每 2 秒推一帧 → 这一块
+  //   每 2 秒重渲染 → 依赖变化 → 每 2 秒强制一次「展开到自然高度 + 再压回去」的同步布局。
+  //   内容长高（峰值逐台回来）交给 ResizeObserver：它盯的正是浮层自己的盒子。
+  useLayoutEffect(() => {
+    if (!open) return
+    const pop = popRef.current
+    const host = ref.current
+    if (!pop || !host) return
+    const fit = () => {
+      pop.style.maxHeight = "none"                   // 先按自然高度量（CSS 那道上限先让开）
+      const natural = pop.offsetHeight
+      const box = host.getBoundingClientRect()
+      const room = Math.round(window.innerHeight - box.bottom - 8)   // 留 8px 别贴着屏幕边
+      const want = Math.min(natural, 384, Math.round(window.innerHeight * 0.6))
+      // 下限 120px：再挤也比「整块看不见」强（120px 还能露出表头 + 两行 + 尾巴的开头）。
+      const next = `${Math.max(120, Math.min(want, room))}px`
+      if (pop.style.maxHeight !== next) pop.style.maxHeight = next
+      // ★横向也要夹（2026-11-21 三审）：浮层是 `w-max` 的绝对定位盒，默认 `left-0` ——
+      //   卡片在**右半列**时浮层往右铺、在手机上横出视口（390px 下实测右沿到 425）；
+      //   一律改成 `right-0` 又会把**左半列**的浮层推出去（实测 left=-49）。
+      //   所以按卡片的实际位置挑锚边：右边放不下就靠右、左边放不下就靠左，都放得下就靠左
+      //   （保持与原先一致的观感）。
+      const pad = 8
+      const vw = window.innerWidth
+      const w = pop.offsetWidth
+      const leftIfLeft = box.left
+      const leftIfRight = box.right - w
+      // ★两边都必须显式写：类里那个 `left-0` 会让「只设 right」变成「左右都钉住」——
+      //   `w-max` 的盒子于是被拉到「左沿=卡片左沿、右沿=卡片右沿」以外，实测 CSS 里
+      //   left 与 right 同时是 0px、浮层照样横出视口。所以挑定一边时，另一边写 `auto`。
+      if (leftIfRight >= pad && leftIfLeft + w > vw - pad) {
+        pop.style.left = "auto"
+        pop.style.right = "0px"
+      } else if (leftIfLeft >= pad) {
+        pop.style.right = "auto"
+        pop.style.left = "0px"
+      } else {
+        pop.style.right = "auto"
+        pop.style.left = `${Math.round(pad - box.left)}px`   // 两边都放不下：硬贴左边留 8px
+      }
+    }
+    fit()
+    // 行往里加（峰值一台一台回来）时浮层高度会变 —— 重新量一次。用 rAF 排队再量：
+    // 回调里改高度会再触发一次通知，直接同步改容易踩「ResizeObserver loop」。
+    let queued = 0
+    const ro = new ResizeObserver(() => {
+      if (queued) return
+      queued = requestAnimationFrame(() => { queued = 0; fit() })
+    })
+    ro.observe(pop)
+    return () => { ro.disconnect(); if (queued) cancelAnimationFrame(queued) }
+  }, [open])
+
+  return (
+    // ★容器不再是 `role="button"`（2026-11-07 二审）。ARIA 规范里 button 的后代一律是
+    //   presentational —— 而浮层里那节 `DetailScroll` 是**可聚焦的滚动区**（键盘用户靠它
+    //   读到被裁掉的几十行）。「button 里套 tabIndex=0 的滚动区」是非法结构，NVDA / JAWS
+    //   会把滚动区从可访问树里吞掉，那个设计目标直接落空。
+    //   现在的形状：容器 `role="group"`，三段读数照旧扁平（标签 / 大数 / 小字，护栏按这个
+    //   结构逐段量），只是**标签行本身**换成一枚真 `<button>`（aria-expanded /
+    //   aria-controls）。浮层是容器的兄弟节点，不在按钮里面。
+    //   另外 `onClick` 改成 toggle、触屏也能按 —— 原先只开不关，手机上点开之后没有任何
+    //   手势能把它收起来（Esc 触屏没有、点浮层本身不算「外面」）。
+    <div
+      ref={ref}
+      className={`relative flex min-w-0 flex-col ${detail !== undefined ? "rounded-md" : ""}`}
+      title={detail ? undefined : hint}
+      role={detail ? "group" : undefined}
+      onPointerEnter={detail ? (e) => { if (e.pointerType === "mouse") setOpen(true) } : undefined}
+      onPointerLeave={detail ? (e) => { if (e.pointerType === "mouse") setOpen(false) } : undefined}
+      // 焦点挪进**浮层自己**（那一节可聚焦的明细滚动区）不算「离开」—— React 的 onBlur
+      // 走的是会冒泡的 focusout：Tab 从按钮进到浮层的滚动区时，这里先收到 focusout，
+      // 浮层当场卸载、焦点掉回 body，那枚滚动区永远走不到。判据与 CardStyleMenu 同源。
+      // ★鼠标按下的那一下不能算「焦点离开」（2026-11-21 三审）：pointerdown → focus 的序列里
+      //   focusout 会带着一个在 div 之外的 relatedTarget 先到，于是「悬停已开、点一下想固定住」
+      //   的浮层被这一下 blur 关掉（真机实测：真实鼠标点击后 aria-expanded 变 false）。
+      //   用一支 ref 标出「这次 blur 是鼠标按下引起的」，那种情况不关 —— 鼠标路径的关闭由
+      //   pointerleave 与 document 的 pointerdown 判据负责，这里只管键盘与焦点真的走掉。
+      onBlur={detail ? (e) => {
+        if (e.currentTarget.contains(e.relatedTarget as globalThis.Node | null)) return
+        if (pointerDownRef.current) return
+        setOpen(false)
+      } : undefined}
+      onPointerDownCapture={detail ? () => {
+        pointerDownRef.current = true
+        // 同一拍里清掉：pointerdown 之后紧跟的是 focus/click，等都过完再放开。
+        setTimeout(() => { pointerDownRef.current = false }, 0)
+      } : undefined}
+      // ★Esc 之后把焦点还回那块标签按钮（2026-11-21 三审）：浮层里那节 `DetailScroll` 是
+      //   可聚焦的滚动区，键盘用户在里面按 Esc 收起来后，焦点原先掉到 <body> —— 要么从头
+      //   Tab 整页，要么重新发现刚才在哪一块。按钮本身没被卸载，直接 focus 即可。
+      //   CardStyleMenu 早就这么做了（`box.current?.querySelector('.card-style-toggle')?.focus()`）。
+      onKeyDown={detail ? (e) => {
+        if (e.key !== "Escape") return
+        setOpen(false)
+        ref.current?.querySelector<HTMLElement>("[data-block-toggle]")?.focus()
+      } : undefined}
+    >
+      {detail !== undefined ? (
+        <button
+          type="button"
+          data-block-toggle=""
+          className="truncate rounded-sm text-left text-xs text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+          aria-expanded={open}
+          aria-controls={open ? popId : undefined}
+          // ★点击只负责「开」，不 toggle（2026-11-21 三审）：桌面鼠标移到标签上时
+          //   `onPointerEnter` 已经把浮层打开了，再点一下原先会 toggle 成关闭 —— 也就是
+          //   「想点一下固定住，结果把它关了」（pointerdown→focus 刚设成 true，click 又翻回去）。
+          //   分家：鼠标只开（关交给 pointerleave / Esc / 点别处），触屏仍是 toggle
+          //   （触屏没有 hover，也没有 Esc —— 再点一次必须是能收起的那条路），键盘也是 toggle。
+          onClick={(e) => {
+            const touch = e.nativeEvent instanceof PointerEvent && e.nativeEvent.pointerType === "touch"
+            if (touch || e.detail === 0) setOpen((was) => !was)
+            else setOpen(true)
+          }}
+          // 鼠标悬停已经开过了；键盘 Tab 到它时也开（与原先 onFocus 的行为一致）。
+          onFocus={() => setOpen(true)}
+        >
+          {title}
+        </button>
+      ) : (
+        <div className="truncate text-xs text-muted-foreground">{title}</div>
+      )}
+      {children}
+      {detail !== undefined && open && (
+        // data-budget-detail：护栏认「浮层开没开、内容对不对」的锚点（与 data-latency 同一套做法）。
+        // ★2026-10-12 两处讲究（服务器多了以后浮层会长到几十行）：
+        //   ① 去掉了原来的 mt-1.5 —— 那段 6px 空隙会让「指针从块下移到浮层」的路上触发
+        //      pointerleave，桌面鼠标一往下浮层就闪关（根本摸不进浮层、也滚不动）。现在浮层紧贴
+        //      块底，指针全程留在 Block 子树里，悬停不断；视觉上的缓冲由浮层自己的内边距兜着。
+        //   ② ★2026-10-31 改成**三段式**（表头 / 明细 / 尾巴各一节，明细那节自己滚）：
+        //      机器多时（实测 120 台）表头里的台数与尾巴里的口径会跟着滚出视野，读完不知道
+        //      自己在看什么。现在表头与尾巴是 flex 的固定项，只有中间那节 `data-detail-scroll`
+        //      滚动（纸面滚动条同款）。高度上限仍是 min(24rem, 60vh)，写在 index.css。
+        <span
+          ref={popRef}
+          id={popId}
+          data-budget-detail=""
+          /* 横向锚边不写死在这里：由上面 fit() 按卡片在视口中的位置现算（见那里的注释）。
+             这行保留 `left-0` 只作为**首帧**的起点（fit 在同一帧的 layout effect 里就会改）。 */
+          className={`${wide ? "traffic-detail max-w-[min(22rem,calc(100vw-2rem))]" : "budget-detail max-w-[min(15rem,calc(100vw-2rem))]"} absolute top-full z-20 flex w-max flex-col rounded-md border bg-popover text-xs shadow-md left-0`}
+        >
+          {detail}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 预算卡两枚浮层的内容：逐台明细（金额降序，与 budgetOf 的明细同序）+ 口径行。
+ *
+ * ★2026-10-31 站长要求「精简这段说明」：尾巴从一整段话收成**两条**（口径一条、汇率一条）。
+ *   两条各自成行，换行点落在句号/冒号处，不会把「每日汇率」这种词拆成两半。
+ */
+function BudgetDetail({ head, items, note, rates }: { head: string; items: BudgetItem[]; note: string; rates: string }) {
+  // 机器多时只列前 BUDGET_ROWS 条（已按金额降序），剩下的收成一行「其余 N 台 ≈¥X」——
+  // 逐台相加仍等于卡片面那个合计，数字不丢，只是不再铺几百行。
+  const shown = items.slice(0, BUDGET_ROWS)
+  const rest = items.slice(BUDGET_ROWS)
+  const restSum = rest.reduce((sum, item) => sum + item.amount, 0)
+  return (
+    <>
+      {/* 表头带上条数（「各节点月摊 · 87 台」）：浮层能滚了之后，第一眼就知道一共有多少台；
+          三段式之后它固定在最上面，滚到底也还在。 */}
+      <span data-detail-head="" className="block border-b px-2.5 py-1.5 text-muted-foreground">{head} · {items.length} 台</span>
+      <DetailScroll>
+        {shown.map((item, i) => (
+          <span key={i} data-budget-row="" className="flex items-baseline justify-between gap-3">
+            <span className="min-w-0 truncate">{item.name}</span>
+            <span className="tnum shrink-0">≈{cny(item.amount)}</span>
+          </span>
+        ))}
+        {rest.length > 0 && (
+          <span data-budget-rest="" className="flex items-baseline justify-between gap-3 text-muted-foreground">
+            <span className="min-w-0 truncate">其余 {rest.length} 台</span>
+            <span className="tnum shrink-0">≈{cny(restSum)}</span>
+          </span>
+        )}
+      </DetailScroll>
+      <span data-detail-foot="" className="block border-t px-2.5 py-1.5 text-muted-foreground">
+        <span className="block">{note}</span>
+        <span className="block">{rates}</span>
+      </span>
+    </>
+  )
+}
+
+/**
+ * 一块读数里的主数字。`tnum` 让数字等宽：每两秒刷一次时不会左右抖。
+ *
+ * ★**长数字要缩号**：这一行是 `truncate`，而价值版那两格各占一半卡宽——千位数量级的金额
+ * （`≈¥2,803.13` 比 `≈¥277.01` 宽 14px）在「列数刚换」的窄列机位会被打成 `≈¥2,803.…`
+ * （站长实拍；本站实测 1024 那档最紧：月度预算截 3px、剩余价值截 20px）。
+ * 做法：按基准字号量一次「文本宽 ÷ 格子宽」，装不下就按比例降字号（有下限，见 BIG_MIN），
+ * 换列数 / 换字体 / 换长度各重量一次；`truncate` 留着当最后一道兜底。
+ * 降号只发生在真的装不下时，短读数（7 / 7）不受影响。
+ */
+const BIG_BASE = 24
+const BIG_MIN = 16
+function Big({ children, text }: { children: ReactNode; text: string }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const fit = () => {
+      el.style.fontSize = ""                        // 先回到基准字号量，免得越缩越小
+      el.style.lineHeight = ""
+      const baseH = el.getBoundingClientRect().height
+      const cw = el.clientWidth
+      const sw = el.scrollWidth
+      if (cw > 0 && sw > cw) {
+        // 行高钉在基准字号那一档：缩号只改字的大小，卡片高度零位移
+        // （否则长读数那张卡会矮几像素，整行卡片跟着参差）。
+        el.style.lineHeight = `${baseH}px`
+        el.style.fontSize = `${Math.max(BIG_MIN, Math.floor((BIG_BASE * cw) / sw))}px`
+      }
+    }
+    fit()
+    const ro = new ResizeObserver(fit)              // 换列数 / 换长度都要重量
+    ro.observe(el)
+    // ★字体是**后到**的：先按兜底字体量会得出「装得下」，真字体一到就溢出——冷启动那次
+    //   仍会被截（实测：字体已缓存时护栏全绿、冷加载时仍溢出）。所以加载完 + 头几帧各重量。
+    const timers = [0, 120, 400, 1200].map((ms) => window.setTimeout(fit, ms))
+    const onDone = () => fit()
+    if (typeof document !== "undefined" && document.fonts) {
+      document.fonts.addEventListener?.("loadingdone", onDone)
+      document.fonts.ready?.then(fit).catch(() => {})
+      // 最确定的一手：按这个盒子**实际的字体规格**把字体要过来，就位后再量一次。
+      const cs = window.getComputedStyle(el)
+      document.fonts.load?.(`${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`)?.then(fit)?.catch(() => {})
+    }
+    return () => {
+      ro.disconnect()
+      timers.forEach((t) => window.clearTimeout(t))
+      document.fonts?.removeEventListener?.("loadingdone", onDone)
+    }
+    // ★依赖是**文本**不是 children（2026-11-21 三审）：children 是 JSX 数组，调用方每次渲染
+    //   都新建一个身份 —— WS 每 2 秒推一帧 → 这个 effect 每 2 秒重跑一遍：强制同步布局
+    //   （先清 fontSize/lineHeight 再 getBoundingClientRect）、新建 ResizeObserver、
+    //   挂四个定时器、还调一次 document.fonts.load。读数没变的时候这些全是白工。
+  }, [text])
+  return <div ref={ref} className="tnum mt-1 truncate text-2xl font-semibold tracking-tight">{children}</div>
+}
+
+/** 一块读数底下那行小字（卡片两端对齐时它落在下沿）。 */
+function Foot({ children }: { children: ReactNode }) {
+  return <div className="tnum mt-auto truncate pt-1 text-xs text-muted-foreground">{children}</div>
+}
+
+/** 一张卡片：里面就一块读数（今日流量 / 实时网速，以及原版的每一张）。 */
+function Tile({ children }: { children: ReactNode }) {
+  return <Card className="min-w-0 gap-0 p-4">{children}</Card>
+}
+
+/**
+ * 一张卡片里两块读数：**两块平分**（`grid-cols-2` + 同一个 `gap-x-2`），所以两张卡里的第二块
+ * 读数落在同一条竖线上，而且与「今日流量 / 实时网速」两张卡里那张两列小栅格的第二列同一落点
+ * —— 整行四张卡读起来是一个栅格（站长挑的排法：最素、不要分隔线）。
+ *
+ * 早先试过 `justify-between`（块宽按内容走）：剩余价值（≈¥191.94）比最忙节点（51.0%）宽，
+ * 两张卡的右列起点差 18px（1440）/17px（390），被框出来报过；也试过固定 45% 的右列，列对齐了
+ * 但与前两张卡不是一个节奏。护栏里两条都钉着（同一列 + 同一落点）。
+ *
+ * 下沿对齐靠 `items-stretch`（块撑满卡片高度，grid 的默认值）+ Block 里的 `mt-auto`。
+ */
+function Pair({ children }: { children: ReactNode }) {
+  return (
+    <Card className="grid min-w-0 grid-cols-2 gap-x-2 gap-y-0 p-4">
+      {children}
+    </Card>
+  )
+}
+
+/**
+ * 一枚带方向箭头的读数。颜色随所在那一行（今日那行是前景色，累计那行是弱化灰）。
+ *
+ * 箭头 12px、与数字的间距 4px（原为 14 / 6）：概览卡片那两列数字的宽度是按像素抠出来的，
+ * 这 4px 直接进文字框（见 Unit 那段注释），观感上分辨不出。
+ */
+function Val({ icon: Icon, children }: {
+  icon: typeof ArrowDown
+  children: ReactNode
+}) {
+  return (
+    <span className="tnum inline-flex min-w-0 items-center gap-1">
+      <Icon className="size-3 shrink-0" />
+      <span className="truncate">{children}</span>
+    </span>
+  )
+}
+
+/**
+ * 读数里的「数字 / 单位」两段：数字保持 24px，单位（含 `/s`）降一档 —— 16px、常规字重、
+ * 弱化灰，与「节点」卡里那个 `/ 4` 同一套写法。
+ *
+ * 为的是宽度。这一行是 `grid grid-cols-2` + `truncate`，每格的文字框 = 格宽 − 16px
+ * （箭头 12 + 间距 4），而四列布局下卡片最宽 299px → 文字框最多 111px，最窄的四列
+ * （1024 那档）只有 77px。24px 的「112.6 KB/s」要 109px、「1023.9 KB/s」要 122px，
+ * 装不下就被静默截成「112.6 K…」——站长报过的「概览卡片有概率显示不全」就是这个：
+ * 读数越长、视口越窄越容易中招。三道一起收：单位降一档（省 20px，见下）、
+ * `rate()` 的三位有效数字（最长「999 KB/s」71px）、箭头与间距各收一档（省 4px）。
+ *
+ * 只给上面那行 24px 的大数用（今日流量 / 实时网速）：底部那行小字本来就是 12px，
+ * 单位再「降档」会比数字还大。空格留在单位前而不是用 `ml-*` 撑间距——否则复制文本
+ * 与读屏会把两个词黏成「112.6KB/s」。
+ */
+function Unit({ children }: { children: string }) {
+  const m = children.match(/^([0-9.,]+)\s*(.+)$/)
+  if (!m) return <>{children}</>
+  return (
+    <>
+      {m[1]}
+      <span className="text-base font-normal text-muted-foreground"> {m[2]}</span>
+    </>
+  )
+}
+
+// viewBox 的横纵与卡片实际尺寸无关：下面的 preserveAspectRatio 会把它拉满整行，
+// 纵轴按自己的最大值缩放。零基准——网速这种量没有上限可参照，不零基准会把
+// 「一直很忙」和「偶尔抖一下」画成同一个形状。
+const W = 100
+const H = 28
+
+/**
+ * 实时网速下面那条走势线：下行 / 上行两条折线，无坐标轴、无填充——这一块只说
+ * 「从打开页面到现在大概什么形状」，确切读数是它上面那一行。
+ *
+ * `preserveAspectRatio="none"` 把 viewBox 横向拉满卡片，代价是线宽也会被拉粗，
+ * 所以每条线挂 `vectorEffect="non-scaling-stroke"` 把线宽钉回 1px。
+ *
+ * 采样点少于两个（冷启动的头几秒、或 hub 一直连不上）就只占位不画线：一个点画不出
+ * 走势，画在那里会被读成「一直那么快」。高度照留，卡片不会因此跳一下。
+ */
+function Sparkline({ series }: { series: { rx: number; tx: number }[] }) {
+  const ready = series.length > 1
+  const max = Math.max(1, ...series.map((s) => Math.max(s.rx, s.tx)))
+  const line = (pick: (s: { rx: number; tx: number }) => number) =>
+    series
+      .map((s, i) => `${((i / (series.length - 1)) * W).toFixed(2)},${(H - 1 - (pick(s) / max) * (H - 2)).toFixed(2)}`)
+      .join(" ")
+  return (
+    /* 走势线的高度照着参考站那条来（那边约 22px）：这一格是卡片里唯一不是文字的东西，
+       高了整行四张卡就不再等高（护栏钉着「四张卡等高」）。 */
+    <div className="mt-1 h-5">
+      {ready && (
+        <svg className="h-full w-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+          {/* 下行用前景色、上行用弱化灰：与卡片网络区那两个方向的读法一致
+              （速率用前景色、累计用灰），深浅色下都跟着同一套变量走。 */}
+          <polyline points={line((s) => s.rx)} fill="none" strokeWidth={1} vectorEffect="non-scaling-stroke" className="stroke-foreground/70" />
+          <polyline points={line((s) => s.tx)} fill="none" strokeWidth={1} vectorEffect="non-scaling-stroke" className="stroke-muted-foreground/60" />
+        </svg>
+      )}
+    </div>
+  )
+}
+
+/** 「节点」那块读数：在线 / 总数 + 离线台数。两副面孔共用，块本身一模一样。 */
+function NodesBlock({ fleet, searching = false }: { fleet: Fleet; searching?: boolean }) {
+  const offline = fleet.total - fleet.online
+  return (
+    <Block title="节点">
+      {/* 斜杠与总数照参考站降一档（16px / 常规字重 / 弱化灰），只有在线数是那个大数。
+          空格照旧留着：抹掉它复制与读屏会得到「3/4」这种黏成一团的写法。 */}
+      <Big text={`${fleet.online} / ${fleet.total}`}>
+        {fleet.online} <span className="text-base font-normal text-muted-foreground">/ {fleet.total}</span>
+      </Big>
+      <Foot>
+        {/* 「一台都没有」有两种成因，说法得分开：站点本来就没有节点，还是搜索把当前那批全筛掉了。 */}
+        {fleet.total === 0 ? (searching ? "没有匹配的节点" : "还没有节点") : offline === 0 ? "全部在线" : `${offline} 台离线`}
+      </Foot>
+    </Block>
+  )
+}
+
+/** 「最忙节点」那块读数：CPU 占用最高的在线节点。 */
+function BusiestBlock({ fleet }: { fleet: Fleet }) {
+  return (
+    <Block title="最忙节点">
+      {/* 一位小数，与卡片里 CPU 那格同一个口径。 */}
+      <Big text={fleet.busiest ? `${fleet.busiest.cpu.toFixed(1)}%` : "—"}>{fleet.busiest ? `${fleet.busiest.cpu.toFixed(1)}%` : "—"}</Big>
+      <Foot>
+        {fleet.busiest ? fleet.busiest.name : "无在线节点"}
+      </Foot>
+    </Block>
+  )
+}
+
+export function SummaryCards({ nodes, group, finance = false, searching = false }: { nodes: Node[]; group: string | null; finance?: boolean; searching?: boolean }) {
+  const fleet = summarize(nodes)
+  // 每日汇率（lib/fx.ts）：新鲜缓存 ∪ 内置表起步，拉到新的在后台无缝换上——只调一次，
+  // 两个数（budget 与 note）共用同一份快照，文案与数字不许说岔。
+  const fx = useFx()
+  const budget = budgetOf(nodes, fx)
+  // 模块级的采样缓冲：`useNodes` 每次收到推送（或轮询回来）就追加一个点，
+  // 所以这里读到的是「打开页面到现在」的速率。**按分组取**（`group` = 当前选中的那一档，
+  // null = 全部）：同一个缓冲里每个分组各有一条线（api.ts 的 sample），拿全站那条线画在
+  // 分组标签下面，会出现「读数是这一组的、走势线是全站的」这种对不上的画面。
+  const series = speedHistory.get(group) ?? []
+  // 折算说明：只列真的用到过的币种——各站的账混着 USD / EUR / CNY 记，合起来必须说明口径。
+  const note = fxNote(budget.used, budget.skipped, fx)
+  // 「月度预算」与「剩余价值」两段口径文字：没有浮层时它们是原生 title；有浮层时挪进浮层尾巴
+  // （两处同一份，别让口径说岔了）。
+  // ★2026-10-31 精简（浮层尾巴只占 15rem）：口径一句 + 一句汇率，别的都砍掉。
+  // 悬停提示（原生 title，没有浮层时才用）仍是同一份文字连成一句。
+  const monthlyRule = "月摊相加；买断与未填价不计"
+  const remainingRule = "按剩余天数折算；无到期日与买断不计"
+  const monthlyNote = `${monthlyRule}。${note}`
+  const remainingNote = `${remainingRule}。${note}`
+
+  return (
+    /* 版式照参考站：`sm` 起两列、`lg` 起四列。**手机是一列而不是参考站的两列**——参考站每张
+       卡只有一个大数，两个数并排也放得下；本站的「今日流量 / 实时网速」一张卡里有两个方向，
+       390px 两列时每张卡只有 173px、两个数会各自截断（护栏量过）。 */
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {finance ? (
+        <>
+          {/* 第一张卡：月度预算 + 剩余价值。两个数都是把各站的账按汇率折成人民币后相加，
+              所以写「≈」；口径与汇率清单放在悬停提示里（见 lib/money.ts）。
+              两块都挂了浮层（detail，2026-10-12）：月度预算摊出「各节点月摊」、剩余价值摊出
+              「各节点剩余价值」——各有可计的机器才挂（明细为空时保持原生的 title 提示那副面孔）。 */}
+          <Pair>
+            <Block title="月度预算" hint={monthlyNote} detail={budget.monthlyItems.length > 0 ? <BudgetDetail head="各节点月摊" items={budget.monthlyItems} note={monthlyRule} rates={note} /> : undefined}>
+              <Big text={budget.monthly === null ? "—" : `≈${cny(budget.monthly)}`}>{budget.monthly === null ? "—" : `≈${cny(budget.monthly)}`}</Big>
+              <Foot>{budget.monthlyCount ? `${budget.monthlyCount} 台计费` : "未记录价格"}</Foot>
+            </Block>
+            <Block title="剩余价值" hint={remainingNote} detail={budget.remainingItems.length > 0 ? <BudgetDetail head="各节点剩余价值" items={budget.remainingItems} note={remainingRule} rates={note} /> : undefined}>
+              <Big text={budget.remaining === null ? "—" : `≈${cny(budget.remaining)}`}>{budget.remaining === null ? "—" : `≈${cny(budget.remaining)}`}</Big>
+              <Foot>{budget.remainingCount ? `${budget.remainingCount} 台未到期` : "无预付到期"}</Foot>
+            </Block>
+          </Pair>
+
+          {/* 第二张卡：节点 + 最忙节点，与上面同一套排法——两块读数分居卡片两端。 */}
+          <Pair>
+            <NodesBlock fleet={fleet} searching={searching} />
+            <BusiestBlock fleet={fleet} />
+          </Pair>
+        </>
+      ) : (
+        <>
+          <Tile>
+            <NodesBlock fleet={fleet} searching={searching} />
+          </Tile>
+
+          <Tile>
+            <BusiestBlock fleet={fleet} />
+          </Tile>
+        </>
+      )}
+
+      <Tile>
+        {/* 今日流量：卡片面上只有两个数，**悬停/点一下**摊出节点明细（2026-10-30）——
+            每台今天的上下行、以及今天冲到的采样峰值与时刻（见 @/components/TrafficDetail）。 */}
+        <Block title="今日流量" detail={<TrafficDetail nodes={nodes} />} wide>
+          {/* 大数一行（今日上下行），累计并成一行小字——参考站整张卡就是「小标签 / 大数 /
+              一行小字」三段，这样四张卡等高、整行才是一个节奏。四个数一个没少。
+              栅格间距沿用 `gap-x-2`（与 Pair 同一个值）：整行四张卡的第二列因此落在同一条
+              竖线上（护栏钉着）。 */}
+          <div className="mt-1 grid grid-cols-2 gap-x-2 text-2xl font-semibold tracking-tight">
+            <Val icon={ArrowDown}><Unit>{bytes(fleet.dayRx)}</Unit></Val>
+            <Val icon={ArrowUp}><Unit>{bytes(fleet.dayTx)}</Unit></Val>
+          </div>
+          <Foot>
+            <span className="inline-flex items-center gap-1.5">
+              总流量
+              <Val icon={ArrowDown}>{bytes(fleet.totalRx)}</Val>
+              <Val icon={ArrowUp}>{bytes(fleet.totalTx)}</Val>
+            </span>
+          </Foot>
+        </Block>
+      </Tile>
+
+      <Tile>
+        <Block title="实时网速">
+          <div className="mt-1 grid grid-cols-2 gap-x-2 text-2xl font-semibold tracking-tight">
+            <Val icon={ArrowDown}><Unit>{rate(fleet.netRx)}</Unit></Val>
+            <Val icon={ArrowUp}><Unit>{rate(fleet.netTx)}</Unit></Val>
+          </div>
+          <Sparkline series={series} />
+        </Block>
+      </Tile>
+    </div>
+  )
+}

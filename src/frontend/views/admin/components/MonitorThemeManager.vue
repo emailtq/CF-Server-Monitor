@@ -41,6 +41,15 @@
         </article>
       </div>
       <div class="monitor-cf-actions"><button type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="load">{{ trans.refresh }}</button><button v-if="state.selected !== null" type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="select(null)">{{ trans.monitorThemeFollowDeployment }}</button><span v-else class="text-secondary">{{ trans.monitorThemeDeployment }}</span></div>
+      <form class="monitor-install-card monitor-site-icons" @submit.prevent="saveIcons">
+        <h4>{{ trans.monitorSiteIcons }}</h4>
+        <p class="text-secondary">{{ trans.monitorSiteIconsHint }}</p>
+        <div v-for="key in ['favicon', 'touch_icon']" :key="key" class="monitor-config-field">
+          <label :for="`monitor-${key}`">{{ key === 'favicon' ? trans.favicon : trans.monitorTouchIcon }}</label>
+          <div class="monitor-cf-actions"><input :id="`monitor-${key}`" type="file" accept="image/*,.ico" :disabled="busy" @change="iconFile(key, $event)"><button type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="iconDraft[key] = ''">{{ trans.delete }}</button><img v-if="iconDraft[key]" :src="iconDraft[key]" width="32" height="32" :alt="key"></div>
+        </div>
+        <div class="monitor-cf-actions"><button type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="iconDraft = { ...iconSaved }">{{ trans.cancel }}</button><button type="submit" class="monitor-install-button monitor-install-primary" :disabled="busy">{{ trans.save }}</button></div>
+      </form>
     </template>
     <AdminDialog :open="!!editing" :title="`${themeName(editing?.short)} ${trans.settings}`" :size="large ? 'monitor-large' : 'monitor'" :busy="busy" @close="editing = null">
       <template #body>
@@ -70,7 +79,7 @@
       </template>
     </AdminDialog>
     <AdminDialog :open="!!confirming" :title="`${trans.monitorThemeRemove} ${themeName(confirming?.short)}？`" size="monitor-confirm" :busy="busy" @close="confirming = null">
-      <template #description>{{ trans.monitorThemeRemoveHint }}</template>
+      <template #description>{{ removeHint }}</template>
       <template #footer><button type="button" class="monitor-install-button monitor-quiet" :disabled="busy" @click="confirming = null">{{ trans.cancel }}</button><button type="button" class="monitor-install-button monitor-delete" :disabled="busy" @click="remove">{{ trans.delete }}</button></template>
     </AdminDialog>
     <AdminDialog :open="!!zoomed" :title="`${themeName(zoomed?.short)} ${trans.monitorThemePreviewImage}`" size="monitor-image" @close="zoomed = null"><template #description>{{ zoomed?.author }} · {{ zoomed?.version }}</template><template #body><img v-if="zoomed" class="monitor-full-image" :src="images[zoomed.revision]" :alt="themeName(zoomed.short)"></template></AdminDialog>
@@ -80,7 +89,7 @@
 
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { adminApi, uploadMonitorTheme, fetchMonitorThemeThumbnail } from '../../../utils/api'
+import { adminApi, monitorThemeApi, uploadMonitorThemeRest } from '../../../utils/api'
 import AdminDialog from './AdminDialog.vue'
 import AdminIcon from './AdminIcon.vue'
 import MonitorThemeHelp from './MonitorThemeHelp.vue'
@@ -105,6 +114,8 @@ const installing = ref('')
 const confirming = ref(null)
 const repository = ref('')
 const picker = ref(null)
+const iconSaved = ref({ favicon: '', touch_icon: '' })
+const iconDraft = ref({ favicon: '', touch_icon: '' })
 const form = computed(() => monitorConfigForm(editing.value?.config))
 const fields = computed(() => form.value.filter(field => field.type !== 'title'))
 const large = computed(() => fields.value.length > 6)
@@ -132,8 +143,15 @@ const themeName = short => {
   return theme?.builtin && short === 'default' ? props.trans.monitorDefaultName : theme?.name || short || ''
 }
 const previewReason = computed(() => props.trans[state.value?.previewStatus === 401 ? 'monitorPreviewPrivate' : state.value?.previewStatus === 403 ? 'monitorPreviewTurnstile' : 'monitorThemeUnavailable'])
+const removeHint = computed(() => {
+  const theme = confirming.value
+  const key = theme?.short === 'default' || theme?.short === 'serverstatus' ? 'monitorThemeRemoveBuiltin' : state.value?.effective === theme?.short ? 'monitorThemeRemoveCurrent' : 'monitorThemeRemoveOther'
+  return props.trans[key]
+})
+const feedback = (key, theme, version = theme?.version) => props.trans[key].replace('{theme}', themeName(theme?.short)).replace('{version}', version || '')
+const rest = (method, path, body, owner, options) => monitorThemeApi(method, path, body, props.selectedApiIndex, owner, options)
 
-const request = async (data, execute) => {
+const request = async (data, execute, theme) => {
   if (busy.value) return null
   const at = generation
   const owner = () => active && at === generation && (!props.requestOwner || props.requestOwner())
@@ -143,36 +161,52 @@ const request = async (data, execute) => {
     const result = await (execute ? execute(owner) : adminApi(data, props.selectedApiIndex, owner))
     if (!active || at !== generation || result.stale || (props.requestOwner && !props.requestOwner())) return null
     if (result.error) {
-      error.value = props.trans[result.error] || props.trans.monitorThemeUnavailable
+      const message = props.trans[result.error] || result.error
+      error.value = theme ? `${themeName(theme.short)} ${theme.version}: ${message}` : message
       notify(error.value, 'error')
       return null
     }
-    return result.data
-  } catch {
-    if (active && at === generation) { error.value = props.trans.monitorThemeUnavailable; notify(error.value, 'error') }
+    return result.status === 204 ? {} : result.data
+  } catch (failure) {
+    if (active && at === generation) { error.value = failure.message || props.trans.monitorThemeUnavailable; notify(error.value, 'error') }
     return null
   } finally {
     if (active && at === generation) busy.value = false
   }
 }
 const load = async () => {
-  const result = await request({ action: 'get_monitor_themes' })
-  if (result) { state.value = result; emit('frontend-mode', result.defaultFrontend === true) }
+  const hasIconDraft = ['favicon', 'touch_icon'].some(key => iconDraft.value[key] !== iconSaved.value[key])
+  const result = await request(null, async owner => {
+    const context = await adminApi({ action: 'get_monitor_themes' }, props.selectedApiIndex, owner)
+    if (context.error) return context
+    const list = await rest('GET', '/themes', null, owner)
+    return list.error ? list : { ...list, data: { ...context.data, themes: list.data.themes } }
+  })
+  if (result) {
+    state.value = result; emit('frontend-mode', result.defaultFrontend === true)
+    const settings = await request(null, owner => rest('GET', '/settings', null, owner))
+    if (settings) {
+      iconSaved.value = { favicon: settings.favicon, touch_icon: settings.touch_icon }
+      if (!hasIconDraft) iconDraft.value = { ...iconSaved.value }
+    }
+  }
 }
 const select = async theme => {
-  const result = await request({ action: 'select_monitor_theme', theme })
-  if (result) { state.value = result; notify(props.trans.monitorThemeSwitched) }
+  const result = theme === null ? await request({ action: 'select_monitor_theme', theme }) : await request(null, owner => rest('PUT', '/settings', { theme }, owner))
+  if (result) { notify(theme === null ? props.trans.monitorThemeFollowDeployment : feedback('monitorThemeSwitched', state.value.themes.find(item => item.short === theme))); await load() }
 }
 const preview = async theme => {
   const result = await request({ action: 'start_monitor_theme_preview', theme })
   if (result?.preview_url) window.open(result.preview_url, '_blank', 'noopener,noreferrer')
 }
-const configure = theme => {
+const configure = async theme => {
+  const saved = await request(null, owner => rest('GET', `/themes/${encodeURIComponent(theme.short)}/config`, null, owner), theme)
+  if (!saved) return
   editing.value = theme
   error.value = ''
   currentSection.value = 0
-  configBase.value = state.value.configs[theme.short] || {}
-  draft.value = monitorConfigValues(monitorConfigForm(theme.config), state.value.configs[theme.short] || {})
+  configBase.value = saved
+  draft.value = monitorConfigValues(monitorConfigForm(theme.config), saved)
 }
 const resetConfig = () => { configBase.value = {}; draft.value = monitorConfigValues(form.value, {}) }
 const saveConfig = async () => {
@@ -184,20 +218,18 @@ const saveConfig = async () => {
     return
   }
   const config = monitorConfigOverrides(form.value, configBase.value, values)
-  const result = await request({ action: 'save_monitor_theme_config', theme: editing.value.short, config })
-  if (result) { state.value = result; editing.value = null; notify(props.trans.monitorThemeSaved) }
+  const theme = editing.value
+  const result = await request(null, owner => rest('PUT', `/themes/${encodeURIComponent(theme.short)}/config`, config, owner), theme)
+  if (result) { editing.value = null; notify(feedback('monitorThemeSaved', theme)) }
 }
 const install = async (file = null) => {
   if (busy.value || !state.value?.runtimeStorage || (!file && !repository.value.trim())) return
   if (file?.size > 32 * 1024 * 1024) { error.value = props.trans.monitorThemeArchiveTooLarge; notify(error.value,'error'); return }
   const at = generation
   installing.value = file ? 'upload' : 'github'
-  const result = file ? await request(null, async owner => {
-    const uploaded = await uploadMonitorTheme(file, props.selectedApiIndex, owner)
-    return uploaded.error || !owner() ? uploaded : adminApi({ action: 'get_monitor_themes' }, props.selectedApiIndex, owner)
-  }) : await request({ action: 'install_monitor_theme', repository: repository.value.trim() })
+  const result = file ? await request(null, owner => uploadMonitorThemeRest(file, props.selectedApiIndex, owner)) : await request(null, owner => rest('POST', '/theme-install', { url: repository.value.trim() }, owner))
   if (active && at === generation) installing.value = ''
-  if (result) { state.value = result; if (!file) repository.value = ''; notify(props.trans.monitorThemeInstalled) }
+  if (result) { if (!file) repository.value = ''; notify(props.trans.monitorThemeInstalled.replace('{theme}', result.theme.name).replace('{version}', result.theme.version)); await load() }
 }
 const upload = event => {
   const file = event.target.files[0]
@@ -208,13 +240,49 @@ const update = async theme => {
   if (busy.value) return
   const at = generation
   updating.value = theme.short
-  const result = await request({action:'update_monitor_theme',theme:theme.short})
+  const result = await request(null, owner => rest('POST', `/themes/${encodeURIComponent(theme.short)}/update`, {}, owner), theme)
   if (active && at === generation) updating.value = ''
-  if (result) { state.value = result; notify(result.updated ? props.trans.monitorThemeUpdated : props.trans.monitorThemeLatest) }
+  if (result) { notify(feedback(result.updated ? 'monitorThemeUpdated' : 'monitorThemeLatest', theme, result.version)); if (result.updated) await load() }
 }
 const remove = async () => {
-  const result = await request({action:'delete_monitor_theme',theme:confirming.value.short})
-  if (result) { state.value = result; confirming.value = null; notify(props.trans.monitorThemeDeleted) }
+  const theme = confirming.value
+  const result = await request(null, owner => rest('DELETE', `/themes/${encodeURIComponent(theme.short)}`, null, owner), theme)
+  if (result) { confirming.value = null; notify(feedback('monitorThemeDeleted', theme)); await load() }
+}
+const iconFile = async (key, event) => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  const at = generation
+  try {
+    const source = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file) })
+    const img = new Image()
+    img.src = source
+    await img.decode()
+    const bytes = value => atob(value.slice(value.indexOf(',') + 1)).length
+    const draw = (type, quality) => {
+      const canvas = document.createElement('canvas')
+      const side = key === 'touch_icon' ? 180 : 64
+      canvas.width = canvas.height = side
+      const ctx = canvas.getContext('2d')
+      if (key === 'touch_icon') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, side, side) }
+      const width = img.naturalWidth || side, height = img.naturalHeight || side
+      const scale = side / Math.max(width, height)
+      ctx.drawImage(img, (side - width * scale) / 2, (side - height * scale) / 2, width * scale, height * scale)
+      return canvas.toDataURL(type, quality)
+    }
+    let value = key === 'favicon' && file.type === 'image/svg+xml' && bytes(source) <= 20480 ? source : draw('image/png')
+    for (let quality = .9; bytes(value) > 20480 && quality > .3; quality -= .15) value = draw('image/jpeg', quality)
+    if (bytes(value) > 20480) throw new Error('icon too large')
+    if (active && at === generation) iconDraft.value[key] = value
+  } catch {
+    if (active && at === generation) notify(props.trans.monitorSiteIconInvalid, 'error')
+  }
+}
+const saveIcons = async () => {
+  const values = { ...iconDraft.value }
+  const result = await request(null, owner => rest('PUT', '/settings', values, owner))
+  if (result) { iconSaved.value = values; notify(props.trans.monitorSiteIconsSaved) }
 }
 watch(() => state.value?.themes, async themes => {
   const at = generation
@@ -223,7 +291,7 @@ watch(() => state.value?.themes, async themes => {
   for (const theme of themes || []) {
     if (!theme.preview || images.value[theme.revision] || !owner()) continue
     const themeOwner = () => owner() && state.value?.themes.some(current => current.revision === theme.revision)
-    const result = await fetchMonitorThemeThumbnail(theme.short, props.selectedApiIndex, themeOwner)
+    const result = await rest('GET', `/themes/${encodeURIComponent(theme.short)}/preview`, null, themeOwner, { responseType: 'blob' })
     if (!themeOwner()) continue
     if (result.data instanceof Blob && result.data.type === 'image/png') {
       // CF's existing image CSP permits data:, not blob:; keep that policy unchanged.
@@ -245,6 +313,8 @@ watch(() => props.selectedApiIndex, () => {
   repository.value = ''
   error.value = ''
   busy.value = false
+  iconSaved.value = { favicon: '', touch_icon: '' }
+  iconDraft.value = { ...iconSaved.value }
   if (props.activeTab === 'themeStore') load()
 })
 watch(() => props.activeTab, tab => { if (tab === 'themeStore' && !state.value) load() }, { immediate: true })

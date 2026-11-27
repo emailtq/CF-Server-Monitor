@@ -1,0 +1,737 @@
+// 验「卡片形态」六档（经典 / 简约 / 延迟 / 详细 / 宽卡 / 紧凑）在真实渲染里各自的形状，以及旧值 detail → latency 的迁移。
+//
+// 用法：node tools/verify_card_styles.mjs [port]
+//
+// 为什么要它：各档的差别全在 NodeCard / WideCard / CompactList 里的条件分支上，改一处分支很容易让另一档跟着变
+// （或让 classic 悄悄开始拉延迟数据）。这里用本机静态伺服 + 桩 /api/*（含带 ping 历史的
+// /api/nodes/{id}/metrics）跑真 React 组件，逐档断言 DOM 形状、访客端请求数与列表上的读数：
+//
+//   经典   —— 底部网络收成一行（左实时速率 / 右累计，文字箭头 ↓↑）；不发任何 ping 请求；
+//             标签弱化灰 / 条 6px / 底注 12px / 名字 500
+//   简约   —— 与经典同结构、同文本，只换视觉：标签前景色 / 条 4px（上下 6px）/ 底注 11px /
+//             名字 600 / 格行距 12px；同样不发 ping 请求（两边都钉住，才叫「只换了这一套」）
+//   延迟   —— 网络合成一行 + 三网延迟块；每节点恰好 1 次 ping 请求；指定线路按填写顺序、名字对不上跳过
+//   详细   —— 元信息行 + 三枚读数盒 + 三网延迟块；标题行不再有状态点；网格不再有 xl 四列
+//   宽卡   —— 六块版式（旗子+名字 + 系统行 + 四格读数 + 上传下载两栏 + 总流量条 + 底注）；与其余五档同一条 1280 列线，一行三张
+//             （768 起）、**整页容器收 1080**（顶栏 / 主区 / 卡列一条线，卡片 = 510）；读数 13px/600、
+//             条 3px（前景 70%）；不带状态点 / 徽章；不发 ping 请求。逐块细断见 tools/verify_card_form.mjs
+//   紧凑   —— 一张表、一行一台，表头与列随屏宽收放；不发 ping 请求
+//   旧值   —— 配置里存 detail（1.2.9 的值）时必须渲染成「延迟」，不能掉回经典
+//   非法值 —— 回落出厂默认档（theme.json 的 cardStyle.default，2026-10-06 起是「详细」）
+//
+// ★ 备注（hub 的公开备注）那些判据 2026-10-03 起搬到了 tools/verify_public_remark.mjs：
+//   备注来源从主题的站点配置换成了 hub 按节点下发的 `public_remark`（见 1.16.0），
+//   这里那份以「站点配置里的标签清单」为前提的用例整段作废，留着只会与代码打架。
+//
+// 判据全部走 DOM（类名/属性/文本），不靠看图。
+//
+// 坑：桩数据别用位移写 2 的幂——JS 的位移按 32 取模，`1 << 40` 等于 256，卡片上会显示
+// 「256 B」，看起来像主题算错了单位（第一版就是这么误判的）。用 2 ** n 或十进制。
+import { createServer } from 'node:http'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { extname, join, normalize } from 'node:path'
+import { tmpdir } from 'node:os'
+import { spawn } from 'node:child_process'
+import { setTimeout as sleep } from 'node:timers/promises'
+
+const PORT = Number(process.argv[2] || 5311)
+const CDP_PORT = PORT + 4000
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
+  '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon', '.webp': 'image/webp', '.woff2': 'font/woff2',
+}
+
+/* ------------------------------------------------------------------ 桩数据 */
+
+const GB = 1024 ** 3
+const TB = 1024 ** 4
+
+// 三节点：①在线带指标与计费 ②刚接入还没上报（online 真、metrics 空） ③从没接入（deployed 假）
+const NODES = {
+  nodes: [
+    {
+      id: 1, name: '节点一', sort: 1, public: true, online: true, country: 'JP', group: '',
+      last_seen: Math.floor(Date.now() / 1000) - 5,
+      metrics: {
+        uptime: 400000, cpu: 12.5, load: [0.1, 0.2, 0.3], mem_total: 2 * GB, mem_used: 1 * GB,
+        swap_total: 0, swap_used: 0, disk_total: 40 * GB, disk_used: 10 * GB,
+        net_rx: 512 * 1024, net_tx: 128 * 1024, total_rx: 1 * TB, total_tx: 256 * GB,
+        month_rx: 8 * GB, month_tx: 4 * GB, tcp: 10, udp: 2, procs: 100,
+      },
+      os: 'Debian 12', kernel: '6.1.0', arch: 'x86_64', virt: 'kvm', cpu_name: 'Xeon',
+      cpu_cores: 2, mem_total: 2 * GB, swap_total: 0, disk_total: 40 * GB,
+      agent_version: '1.3.0', price: 12.5, currency: 'CNY', billing_cycle: 'monthly',
+      expires_at: '2027-01-01', expires_in: 95, traffic_limit: 1 * TB, traffic_mode: 'sum',
+      traffic_reset_day: 1, total_rx: 1 * TB, total_tx: 256 * GB,
+      month_rx: 8 * GB, month_tx: 4 * GB, month_start: '2026-09-01', day_rx: 1 * GB, day_tx: GB / 2,
+    },
+    {
+      id: 2, name: '节点二', sort: 2, public: true, online: true, country: 'US', group: '',
+      last_seen: Math.floor(Date.now() / 1000) - 3, metrics: null,
+      os: '', kernel: '', arch: '', virt: '', cpu_name: '', cpu_cores: 1,
+      mem_total: 1 * GB, swap_total: 0, disk_total: 20 * GB, agent_version: '1.3.0',
+      price: 0, currency: 'USD', billing_cycle: '', expires_at: null, expires_in: null,
+      traffic_limit: 0, traffic_mode: 'sum', traffic_reset_day: 1,
+      total_rx: 0, total_tx: 0, month_rx: 0, month_tx: 0, month_start: '', day_rx: 0, day_tx: 0,
+    },
+    {
+      id: 3, name: '节点三', sort: 3, public: true, online: false, country: '', group: '',
+      last_seen: 0, metrics: null, os: '', kernel: '', arch: '', virt: '', cpu_name: '',
+      cpu_cores: 0, mem_total: 0, swap_total: 0, disk_total: 0, agent_version: '',
+      price: 0, currency: '', billing_cycle: '', expires_at: null, expires_in: null,
+      traffic_limit: 0, traffic_mode: 'sum', traffic_reset_day: 1,
+      total_rx: 0, total_tx: 0, month_rx: 0, month_tx: 0, month_start: '', day_rx: 0, day_tx: 0,
+    },
+  ],
+}
+
+// 每条线路 12 个点，够画一条走势线（Sparkline 至少要 2 个非 null 点）。
+const pingPoints = (taskId, base) => Array.from({ length: 12 }, (_, i) => ({
+  task_id: taskId, ts: Math.floor(Date.now() / 1000) - (12 - i) * 300,
+  latency: Math.round(base + Math.sin(i) * 6), band: [base - 10, base + 10], loss: 0,
+}))
+
+const PING = {
+  ping: [...pingPoints(11, 42), ...pingPoints(12, 88), ...pingPoints(13, 130), ...pingPoints(14, 210)],
+  probes: { 11: '北京电信', 12: '上海电信', 13: '广州电信', 14: '成都电信' },
+  loss: { 11: 0, 12: 1.2, 13: 0, 14: 3.4 },
+}
+
+let config = {}
+let pingHits = []
+
+/* ------------------------------------------------------------------ 伺服 */
+
+const server = createServer((req, res) => {
+  const url = new URL(req.url, `http://127.0.0.1:${PORT}`)
+  const path = url.pathname
+  if (path === '/__stats') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    return res.end(JSON.stringify({ pingHits }))
+  }
+  if (path === '/__reset') {
+    pingHits = []
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    return res.end('{}')
+  }
+  if (path.startsWith('/api/')) {
+    let body = {}
+    if (path === '/api/me') body = { authed: false, github: false, public_page: true, site: `http://127.0.0.1:${PORT}`, site_name: '形态校验' }
+    else if (path === '/api/nodes') body = NODES
+    else if (path.endsWith('/config')) body = config
+    else if (path === '/api/version') body = { version: '1.3.0' }
+    else if (/^\/api\/nodes\/\d+\/metrics/.test(path)) {
+      pingHits.push(path)
+      body = url.searchParams.get('series') === 'ping' ? PING
+        : { ts: [], cpu: [], mem_used: [], disk_used: [], net_rx: [], net_tx: [] }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    return res.end(JSON.stringify(body))
+  }
+  const file = path === '/' ? '/index.html' : path
+  const full = join('dist', normalize(file).replace(/^(\.[/\\])+/, ''))
+  if (!existsSync(full) || statSync(full).isDirectory()) {
+    res.writeHead(200, { 'Content-Type': TYPES['.html'] })
+    return res.end(readFileSync('dist/index.html'))
+  }
+  res.writeHead(200, { 'Content-Type': TYPES[extname(full)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' })
+  res.end(readFileSync(full))
+})
+await new Promise((r) => server.listen(PORT, '127.0.0.1', r))
+
+/* ------------------------------------------------------------------ 浏览器 */
+
+const CHROME = [
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+  '/usr/bin/google-chrome', '/usr/bin/chromium',
+].find((p) => existsSync(p)) || 'chrome'
+
+const chrome = spawn(CHROME, [
+  '--headless=new', `--remote-debugging-port=${CDP_PORT}`, '--remote-allow-origins=*',
+  '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars',
+  '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding', '--no-proxy-server',
+  `--user-data-dir=${join(tmpdir(), `cardstyles${CDP_PORT}`)}`,
+  '--no-sandbox',
+  'about:blank',
+], { stdio: 'ignore' })
+
+let id = 0
+const pending = new Map()
+let wsUrl = null
+for (let i = 0; i < 80 && !wsUrl; i++) {
+  try {
+    const list = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
+    wsUrl = list.find((t) => t.type === 'page')?.webSocketDebuggerUrl
+  } catch { /* 等 Chrome 起来 */ }
+  if (!wsUrl) await sleep(250)
+}
+if (!wsUrl) throw new Error('Chrome 没起来')
+const ws = new WebSocket(wsUrl)
+await new Promise((r) => { ws.onopen = r })
+ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) } }
+const send = (method, params = {}) => new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })) })
+const evalJS = async (expr) => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })).result?.result?.value
+
+await send('Runtime.enable')
+await send('Page.enable')
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1200, deviceScaleFactor: 1, mobile: false })
+await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
+
+/* ------------------------------------------------------------------ 逐档探测 */
+
+// 形态断言只看「已接入」的卡片（第三台没接入，卡片里没有用量格）。
+const PROBE = `JSON.stringify((() => {
+  const all = [...document.querySelectorAll('[role=button]')]
+  const cards = all.filter((c) => /CPU/.test(c.innerText))
+  const first = cards[0]
+  const q = (sel) => first ? first.querySelectorAll(sel).length : -1
+  return {
+    cards: cards.length,
+    allCards: all.length,
+    grid: document.querySelector('.grid')?.className ?? '',
+    netRow: q('[data-net="row"]'),
+    netGrid: q('[data-net="grid"]'),
+    duo: q('[data-net="duo"]'),
+    metrics: q('[data-metrics]'),
+    status: q('[data-status]'),
+    meta: q('[data-meta]'),
+    latency: q('[data-latency]'),
+    // 经典档底部那 2×2 四格：格子数 / 栅格列数 / 有没有 svg（箭头应该是文字）/ 两端配色。
+    // 找不到时返回**空壳**而不是 null：否则旧构建上第一条断言就抛 TypeError，
+    // 把后面几十条一起带走，反向自测时看不出到底该报哪些（这条踩过）。
+    netG: (() => {
+      const g = first ? first.querySelector('[data-net="grid"]') : null
+      const empty = { cells: 0, cols: 0, svg: 0, text: '', mt: '', pt: '', fs: '', border: '', rateColor: null, arrowColor: null, totalColor: null }
+      if (!g) return empty
+      const cs = (el) => el ? getComputedStyle(el) : null
+      const cells = [...g.children]
+      return {
+        cells: cells.length,
+        cols: cs(g).gridTemplateColumns.split(' ').filter(Boolean).length,
+        svg: g.querySelectorAll('svg').length,
+        text: g.innerText.replace(/\\n/g, ' | '),
+        mt: cs(g).marginTop, pt: cs(g).paddingTop, fs: cs(g).fontSize, border: cs(g).borderTopWidth,
+        rateColor: cells[0] ? cs(cells[0]).color : null,
+        arrowColor: cells[0] && cells[0].children[0] ? cs(cells[0].children[0]).color : null,
+        totalColor: cells[2] ? cs(cells[2]).color : null,
+      }
+    })(),
+    // 卡片底部那一行网络（经典/简约档）：子元素数、有没有 svg 图标、左右两端的配色与间距。
+    net: (() => {
+      const row = first ? first.querySelector('[data-net="row"]') : null
+      if (!row) return null
+      const cs = (el) => el ? getComputedStyle(el) : null
+      const spans = [...row.children]
+      return {
+        children: row.children.length,
+        svg: row.querySelectorAll('svg').length,
+        text: row.innerText.replace(/\\n/g, ' | '),
+        leftColor: spans[0] ? cs(spans[0]).color : null,
+        rightColor: spans[1] ? cs(spans[1]).color : null,
+        marginTop: cs(row).marginTop,
+        paddingTop: cs(row).paddingTop,
+        borderTop: cs(row).borderTopWidth,
+        font: cs(row).fontSize,
+        justify: cs(row).justifyContent,
+      }
+    })(),
+    infoBox: q('[class*="bg-muted/60"]'),
+    // 三枚读数盒的排布锚点是 [data-stats]（2026-10-14 起：排布改由数据属性 + CSS 按卡片宽度
+    // 分档，不再用 grid-cols-3 类名 —— 旧判据按类名找会在改成窄卡两行档时静默 0 命中）。
+    infoGrid: q('[data-stats]'),
+    // 1440 宽（本工具的视口）下这张卡是「宽卡」档：三枚应同一行（y 相等）。窄卡那个档
+    // （到期独占一行）由 tools/verify_card_expiry_fit.mjs 逐宽度量。
+    statsGeometry: [...(first?.querySelectorAll('[data-stats] > [data-stat]') ?? [])].map((b) => {
+      const r = b.getBoundingClientRect()
+      return { stat: b.getAttribute('data-stat'), y: Math.round(r.top), w: Math.round(r.width) }
+    }),
+    dots: all.reduce((n, c) => n + c.querySelectorAll('span[aria-label="在线"],span[aria-label="离线"],span[aria-label="刚接入"]').length, 0),
+    dotLabels: all.map((c) => [...c.querySelectorAll('span[aria-label]')].map((s) => s.getAttribute('aria-label')).join('+')),
+    polylines: document.querySelectorAll('svg polyline').length,
+    // 线路名按主题自己的锚点取（data-probe-name 属性），不认 Tailwind 宽度类：名字列从
+    // w-16 放宽到 w-20（2026-10-12）时，按 span.w-16 找的旧判据会静默 0 命中。
+    rows: [...(first?.querySelectorAll('[data-latency] [data-probe-name]') ?? [])].map((s) => s.textContent.trim()),
+    text: first ? first.innerText.replace(/\\n/g, ' | ') : '',
+  }
+})())`
+
+// 简约档专用探针：结构断言仍借 PROBE，这里量的是它换掉的那几把尺子。
+// 取数一律**按结构**（卡片第 2 个孩子 = 读数格，格里的第 1 块 = CPU），不认 Tailwind 类名。
+const PLAIN_PROBE = `JSON.stringify((() => {
+  const card = [...document.querySelectorAll('[role=button]')].find((c) => /CPU/.test(c.innerText))
+  if (!card) return null
+  const grid = card.children[1]
+  const box = grid ? grid.children[0] : null
+  const label = box ? box.children[0].children[0].children[0] : null
+  const bar = box ? box.children[1] : null
+  const foot = box ? box.children[2] : null
+  const name = card.querySelector('h3')
+  const cs = (el) => el ? getComputedStyle(el) : null
+  // 进度条那根条：填色的**有效颜色**（alpha 合成到卡片底之后）与 alpha 本身。
+  // 用 canvas 读回 sRGB（oklch 手算容易错，见技能第 13 条）：先铺卡片底、再叠填色 = 实际观感。
+  const paint = (under, top) => {
+    const c = document.createElement('canvas'); c.width = c.height = 1; const x = c.getContext('2d')
+    if (under) { x.fillStyle = under; x.fillRect(0, 0, 1, 1) }
+    if (top) { x.fillStyle = top; x.fillRect(0, 0, 1, 1) }
+    const d = x.getImageData(0, 0, 1, 1).data
+    return { rgb: 'rgb(' + d[0] + ',' + d[1] + ',' + d[2] + ')', alpha: +(d[3] / 255).toFixed(3) }
+  }
+  const fillRaw = bar && bar.firstElementChild ? cs(bar.firstElementChild).backgroundColor : null
+  // ★ 颜色一律**用 canvas 合成成 sRGB 之后再比**：本站的 token 是 oklch()，拿正则去抠数字会得到
+  //   垃圾（oklch(0.18 0 0) 抠出的是 rgb(0,18,0)）；卡片本身的 background 还常常是透明的，
+  //   得先合成到页面底上才是访客看到的那一层。
+  const bodyBg = getComputedStyle(document.body).backgroundColor
+  const cardEff = paint(bodyBg, cs(card).backgroundColor).rgb
+  const pctColor = box ? cs(box.children[0].lastElementChild).color : null
+  return {
+    radius: cs(card).borderRadius,
+    shadow: cs(card).boxShadow,
+    cardBorder: cs(card).borderColor,
+    bodyBg,
+    cardBg: cardEff,
+    fillColor: fillRaw,
+    fillAlpha: fillRaw ? paint(null, fillRaw).alpha : null,
+    fillComposite: fillRaw ? paint(cardEff, fillRaw).rgb : null,
+    pctComposite: pctColor ? paint(cardEff, pctColor).rgb : null,
+    nameWeight: name ? cs(name).fontWeight : null,
+    labelColor: label ? cs(label).color : null,
+    pctColor,
+    footColor: foot ? cs(foot).color : null,
+    barH: bar ? cs(bar).height : null,
+    barTop: bar ? cs(bar).marginTop : null,
+    barBottom: bar ? cs(bar).marginBottom : null,
+    footSize: foot ? cs(foot).fontSize : null,
+    rowGap: grid ? cs(grid).rowGap : null,
+    text: card.innerText.replace(/\\n/g, ' | '),
+  }
+})())`
+
+/** 两枚颜色字符串（rgb() 形式）之间的 WCAG 对比度。 */
+function contrast(a, b) {
+  const lum = (s) => {
+    const [r, g, bl] = s.match(/\d+/g).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) })
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+  }
+  const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m)
+  return +((x + 0.05) / (y + 0.05)).toFixed(2)
+}
+
+async function render(cfg, tag = '') {
+  config = cfg
+  await fetch(`http://127.0.0.1:${PORT}/__reset`)
+  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?m=${encodeURIComponent(tag)}` })
+  let dom = null
+  for (let i = 0; i < 60; i++) {
+    await sleep(300)
+    const raw = await evalJS(PROBE)
+    if (!raw) continue
+    dom = JSON.parse(raw)
+    if (dom.cards > 0 && dom.text.includes('CPU')) break
+  }
+  if (!dom || dom.cards === 0) throw new Error(`形态 ${tag}：页面没渲染出卡片`)
+  await sleep(1000) // 让延迟请求落地（每节点 1 次，三条并发）
+  const { pingHits: hits } = await (await fetch(`http://127.0.0.1:${PORT}/__stats`)).json()
+  return { dom, ping: hits.length }
+}
+
+/* ------------------------------------------------------------------ 紧凑形态探测 */
+
+// 紧凑形态的行是 tr[data-node-card]（不是卡片；可点语义在名称列那枚按钮上），探针另写一份：表头/单元格各自数「没被 display:none 收掉」的那些，
+// 它们正是访客看得见的列。
+const COMPACT_PROBE = `JSON.stringify((() => {
+  const table = document.querySelector('table')
+  // 2026-11-06：紧凑行的可点语义搬进了名称列那枚真按钮（<tr> 不再冒充 button），
+  // 所以按 data-node-card 取行，别再拿 role 当选择器。
+  const rows = [...document.querySelectorAll('tbody tr[data-node-card]')]
+  const visible = (el) => !!el && getComputedStyle(el).display !== 'none'
+  const heads = table ? [...table.querySelectorAll('thead tr > *')].filter(visible).map((h) => h.textContent.trim()) : []
+  const cells = rows[0] ? [...rows[0].children].filter(visible).length : 0
+  const html = document.documentElement
+  return {
+    tables: document.querySelectorAll('table').length,
+    rows: rows.length,
+    heads,
+    cells,
+    grid4: [...document.querySelectorAll('*')].some((e) => typeof e.className === 'string' && e.className.includes('xl:grid-cols-4')),
+    overflowX: html.scrollWidth > html.clientWidth,
+    bars: rows.reduce((n, r) => n + r.querySelectorAll('.h-full.rounded-full').length, 0),
+    text: rows[0] ? rows[0].innerText.replace(/\\n/g, ' | ') : '',
+  }
+})())`
+
+async function renderCompact(cfg, width, tag) {
+  config = cfg
+  await fetch(`http://127.0.0.1:${PORT}/__reset`)
+  await send('Emulation.setDeviceMetricsOverride', { width, height: 1400, deviceScaleFactor: 1, mobile: false })
+  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?m=${encodeURIComponent(tag)}` })
+  let dom = null
+  for (let i = 0; i < 60; i++) {
+    await sleep(300)
+    const raw = await evalJS(COMPACT_PROBE)
+    if (!raw) continue
+    dom = JSON.parse(raw)
+    if (dom.rows > 0) break
+  }
+  if (!dom || dom.rows === 0) throw new Error(`紧凑 ${tag}：页面没渲染出行`)
+  await sleep(900) // 让延迟请求落地（紧凑形态应当一次都不发）
+  const { pingHits: hits } = await (await fetch(`http://127.0.0.1:${PORT}/__stats`)).json()
+  return { dom, ping: hits.length }
+}
+
+const results = []
+const check = (name, ok, detail) => { results.push({ name, ok, detail }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`) }
+
+/* 1) 经典（顺带量一遍它的四项视觉值，作为简约档那几条的对照——两边都钉住才叫「只换了这一套」） */
+let classicStyle = null
+{
+  const { dom, ping } = await render({ cardStyle: 'classic', listTop: 'none' }, 'classic')
+  classicStyle = JSON.parse(await evalJS(PLAIN_PROBE))
+  check('卡片壳：圆角 10px（rounded-lg；参考站是这个，不是 rounded-xl 的 14px）',
+    classicStyle.radius === '10px', classicStyle.radius)
+  check('卡片壳：无投影（参考站靠「浅灰页 + 白卡 + 一道描边」托出来，不用阴影）',
+    classicStyle.shadow === 'none', classicStyle.shadow)
+  check('卡片壳：页面底色是浅灰 oklch(0.985 0 0)（原来是纯白，卡片浮不出来）',
+    classicStyle.bodyBg === 'oklch(0.985 0 0)', classicStyle.bodyBg)
+  check('卡片壳：描边是那一档冷灰 oklch(0.92 0.004 286.32)',
+    classicStyle.cardBorder === 'oklch(0.92 0.004 286.32)', classicStyle.cardBorder)
+  check('桩数据已落到卡片（CPU 13% / 内存 1.00 / 2.00 GB / 总量 1.00 TB 与 256 GB）',
+    /1[23]%/.test(dom.text) && /1\.00 \/ 2\.00 GB/.test(dom.text) && /1\.00 TB/.test(dom.text) && /256 GB/.test(dom.text),
+    dom.text)
+  // ── 经典档底部 = **原本的 2×2 四格**（速率一行、总量一行），与「简约」那条一行两段不是一回事。
+  check('经典：底部是 2×2 四格，不是简约那条一行两段',
+    dom.netGrid === 1 && dom.netRow === 0, `四格 ${dom.netGrid} / 一行 ${dom.netRow}`)
+  check('经典：两列四格、箭头是文字不是图标',
+    dom.netG.cells === 4 && dom.netG.cols === 2 && dom.netG.svg === 0,
+    JSON.stringify({ cells: dom.netG.cells, cols: dom.netG.cols, svg: dom.netG.svg }))
+  // 归一化要连单位一起吃掉（KB/s、GB、TB 会随数据变），只留「箭头 + 数值」的次序与空格。
+  check('经典：四格文案＝↓ 速率 / ↑ 速率 / ↓ 总量 / ↑ 总量（箭头与数值之间有空格）',
+    dom.netG.text.replace(/[0-9][0-9.,]*(\s*[A-Za-z/]+)?/g, '#') === '↓ # | ↑ # | ↓ # | ↑ #', dom.netG.text)
+  check('经典：速率那行是前景色、箭头弱化；总量那行整格弱化',
+    dom.netG.arrowColor !== dom.netG.rateColor && dom.netG.totalColor === dom.netG.arrowColor,
+    JSON.stringify({ arrow: dom.netG.arrowColor, rate: dom.netG.rateColor, total: dom.netG.totalColor }))
+  check('经典：四格的分隔线与间距（mt 16px / pt 16px / 12px 字号 / 一道分隔线）',
+    dom.netG.mt === '16px' && dom.netG.pt === '16px' && dom.netG.fs === '12px' && dom.netG.border === '1px',
+    JSON.stringify({ mt: dom.netG.mt, pt: dom.netG.pt, fs: dom.netG.fs, border: dom.netG.border }))
+  check('经典：没有延迟块', dom.polylines === 0, `polyline ${dom.polylines}`)
+  check('经典：不发延迟请求', ping === 0, `实测 ${ping} 次`)
+  check('经典：无状态点、无读数盒', dom.dots === 0 && dom.infoBox === 0, `点 ${dom.dots} / 盒 ${dom.infoBox}`)
+  check('经典：网格保留 xl 四列', dom.grid.includes('xl:grid-cols-4'), dom.grid)
+  check('经典：标签与底注同为弱化灰（标签没被提亮）',
+    classicStyle.labelColor === classicStyle.footColor, `${classicStyle.labelColor} vs ${classicStyle.footColor}`)
+  check('经典：条 6px、底注 12px、名字 500、格行距 16px',
+    classicStyle.barH === '6px' && classicStyle.footSize === '12px' && classicStyle.nameWeight === '500' && classicStyle.rowGap === '16px',
+    JSON.stringify({ barH: classicStyle.barH, footSize: classicStyle.footSize, nameWeight: classicStyle.nameWeight, rowGap: classicStyle.rowGap }))
+  // ★ 2026-10-08：站长反馈「进度条有些突兀，尤其服务器多的时候」—— 根因是填色用的**正文本色**
+  //   （亮 18.7:1 / 暗 12.6:1，卡片上最重的一笔），一页 4×N 根条时压过读数与标签。
+  //   下面两条把「填色不许是正文本色」与「有效对比落在 3.5–8:1」钉住：下限 3.5 是图形可读的
+  //   底线（WCAG 非文本 3:1），上限 8 表示必须明显轻于正文。判据量的是**有效颜色**
+  //   （alpha 合成到卡片底之后），不是 fillStyle 里的那个值。改坏任一条都会红。
+  check('★ 经典：进度条填色不再是正文本色（纯前景色＝卡片上最重的一笔）',
+    classicStyle.fillAlpha !== null && classicStyle.fillAlpha < 1, `alpha=${classicStyle.fillAlpha}｜${classicStyle.fillColor}`)
+  check('★ 经典：进度条的有效对比度落在「轻于正文、又清楚看得见」的 3.5–8:1',
+    contrast(classicStyle.fillComposite, classicStyle.cardBg) >= 3.5 &&
+    contrast(classicStyle.fillComposite, classicStyle.cardBg) <= 8 &&
+    contrast(classicStyle.fillComposite, classicStyle.cardBg) < contrast(classicStyle.pctComposite, classicStyle.cardBg),
+    `填色 ${contrast(classicStyle.fillComposite, classicStyle.cardBg)}:1（${classicStyle.fillComposite}）｜ 正文 ${contrast(classicStyle.pctComposite, classicStyle.cardBg)}:1（${classicStyle.pctComposite}）｜ 卡底 ${classicStyle.cardBg}`)
+}
+
+/* 1b) 简约：与经典**同结构、同内容**，只换一套视觉处理（标签提亮 / 条压细 / 底注变小 / 名字加粗 / 行距收紧） */
+{
+  const { dom, ping } = await render({ cardStyle: 'plain', listTop: 'none' }, 'plain')
+  const s = JSON.parse(await evalJS(PLAIN_PROBE))
+  check('简约：底部是一行两段、无延迟块、无读数盒',
+    dom.netRow === 1 && dom.netGrid === 0 && dom.polylines === 0 && dom.infoBox === 0,
+    `网络行 ${dom.netRow} / 四格 ${dom.netGrid} / 盒 ${dom.infoBox} / polyline ${dom.polylines}`)
+  // 经典档恢复成 2×2 四格之后，两档**不再是同版式**，所以这里不再比「文本逐字相同」——
+  // 改成断简约自己那条一行两段的形状（上面那条）＋下面几条视觉尺子。
+  check('简约：一行两段是「左实时速率 + 右累计总量」（与经典的四格不同形状）',
+    dom.net !== null && dom.net.children === 2 && dom.net.justify === 'space-between' && dom.net.svg === 0,
+    `子元素 ${dom.net?.children} / 对齐 ${dom.net?.justify} / svg ${dom.net?.svg}`)
+  check('简约：不发延迟请求（这一档与经典一样不含三网延迟）', ping === 0, `实测 ${ping} 次`)
+  check('简约：网格保留 xl 四列（版式没被这一档改掉）', dom.grid.includes('xl:grid-cols-4'), dom.grid)
+  check('简约：标签提亮成前景色（与底注那层弱化灰不同）',
+    s.labelColor !== s.footColor, `${s.labelColor} vs ${s.footColor}`)
+  check('简约：标签与百分比同色（同一行左右两截亮度一致）',
+    s.labelColor === s.pctColor, `${s.labelColor} vs ${s.pctColor}`)
+  check('简约：进度条压到 4px、上下各留 6px',
+    s.barH === '4px' && s.barTop === '6px' && s.barBottom === '6px',
+    JSON.stringify({ h: s.barH, top: s.barTop, bottom: s.barBottom }))
+  check('简约：底注降到 11px', s.footSize === '11px', s.footSize)
+  check('简约：名字加粗一档（600，经典是 500）', s.nameWeight === '600', s.nameWeight)
+  check('简约：读数格行距收紧到 12px（经典 16px）', s.rowGap === '12px', s.rowGap)
+  // 同一条判据在**这一档**也要成立：简约那一套只是把条压细，填色口径与经典一致（同一族零件）。
+  check('★ 简约：进度条填色不再是正文本色（两档同一口径）',
+    s.fillAlpha !== null && s.fillAlpha < 1, `alpha=${s.fillAlpha}｜${s.fillColor}`)
+  check('★ 简约：进度条的有效对比度落在 3.5–8:1 且轻于正文',
+    contrast(s.fillComposite, s.cardBg) >= 3.5 &&
+    contrast(s.fillComposite, s.cardBg) <= 8 &&
+    contrast(s.fillComposite, s.cardBg) < contrast(s.pctComposite, s.cardBg),
+    `填色 ${contrast(s.fillComposite, s.cardBg)}:1（${s.fillComposite}）｜ 正文 ${contrast(s.pctComposite, s.cardBg)}:1（${s.pctComposite}）｜ 卡底 ${s.cardBg}`)
+}
+
+/* 2) 延迟（新名字） */
+{
+  // 对照组：**简约**档底部那一行的量值（经典档已恢复成 2×2 四格，不再是这一档的参照）。
+  // 判据写成**逐项等价**（结构 / 两端配色 / 间距 / 分隔线 / 两端对齐 + 文案形状），
+  // 而不是「形状差不多」——只断自己等于没证明「看齐了」。
+  const base = await render({ cardStyle: 'plain', listTop: 'none' }, 'latency-vs-plain')
+  const { dom, ping } = await render({ cardStyle: 'latency', listTop: 'none' }, 'latency')
+  const geom = (n) => JSON.stringify({
+    seg: n.children, svg: n.svg, left: n.leftColor, right: n.rightColor,
+    mt: n.marginTop, pt: n.paddingTop, border: n.borderTop, fs: n.font, justify: n.justify,
+    text: n.text.replace(/[0-9][0-9.,]*/g, '#'),
+  })
+  check('延迟：底部那行与「简约」逐项相同（结构 · 配色 · 间距 · 两端对齐 · 文案形状）',
+    dom.net !== null && base.dom.net !== null && geom(dom.net) === geom(base.dom.net),
+    `延迟 ${geom(dom.net)} / 简约 ${geom(base.dom.net)}`)
+  check('延迟：不是经典档那 2×2 四格', dom.netGrid === 0, `四格 ${dom.netGrid}`)
+  check('延迟：那行是「实时速率在左、累计总量在右」两段，两端配色不同',
+    dom.net.children === 2 && dom.net.leftColor !== dom.net.rightColor,
+    `${dom.net.children} 段 / ${dom.net.leftColor} vs ${dom.net.rightColor}`)
+  check('延迟：不再是从前那条「速率 · 总量」分隔点式（图标箭头也没了，箭头是文字）',
+    !/·/.test(dom.net.text) && dom.net.svg === 0 && /↓/.test(dom.net.text) && /↑/.test(dom.net.text),
+    `svg ${dom.net.svg} / ${dom.net.text}`)
+  check('延迟：三网延迟块已渲染（每张卡片 3 条线路）', dom.polylines === 3 * dom.cards, `polyline ${dom.polylines} / 卡 ${dom.cards}`)
+  check('延迟：每节点恰好 1 次延迟请求', ping === 2, `实测 ${ping} 次`)
+  check('延迟：线路按后台顺序取前三条', dom.rows.join('/') === '北京电信/上海电信/广州电信', dom.rows.join('/'))
+  check('延迟：无状态点、无读数盒', dom.dots === 0 && dom.infoBox === 0, `点 ${dom.dots} / 盒 ${dom.infoBox}`)
+  check('延迟：网格保留 xl 四列', dom.grid.includes('xl:grid-cols-4'), dom.grid)
+}
+{
+  // 指定线路：按填写顺序、名字对不上的跳过、超过三条截断
+  const { dom } = await render({ cardStyle: 'latency', pingLines: '广州电信\n不存在的线路\n上海电信\n成都电信\n北京电信', listTop: 'none' }, 'latency-lines')
+  check('延迟：指定线路按填写顺序渲染、名字对不上跳过、封顶三条',
+    dom.rows.join('/') === '广州电信/上海电信/成都电信', dom.rows.join('/'))
+}
+{
+  // 四条都对得上：仍然只渲染三条（上限卡在渲染出来的行数上）
+  const { dom } = await render({ cardStyle: 'latency', pingLines: '北京电信\n上海电信\n广州电信\n成都电信', listTop: 'none' }, 'latency-cap')
+  check('延迟：指定四条有效线路也只显示三条', dom.rows.join('/') === '北京电信/上海电信/广州电信', dom.rows.join('/'))
+}
+{
+  // 点卡面的一条延迟行：直达详情页「网络延迟」页签（2026-10-12 的创意项）。
+  // 这一段会让页面跳到详情页 —— 放在 latency 这组样式断言都跑完之后；后面每段都会重新 render。
+  const jumped = await evalJS(`(async () => {
+    const row = document.querySelector('[data-latency] [data-probe-name]')
+    const line = row ? row.parentElement : null
+    if (!line) return 'no-line'
+    line.click()
+    await new Promise((r) => setTimeout(r, 800))
+    return location.pathname + location.search
+  })()`)
+  check('★ 点卡面延迟行：跳详情页且 URL 带 ?tab=latency（不是默认「资源」）',
+    String(jumped) === '/node/1?tab=latency', String(jumped))
+  const landed = JSON.parse(String(await evalJS(`(async () => {
+    let btn = null
+    for (let i = 0; i < 30; i++) {
+      btn = [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === '网络延迟')
+      if (btn) break
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    const res = [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === '资源')
+    return JSON.stringify({ net: btn ? btn.className : null, res: res ? res.className : null })
+  })()`)))
+  check('★ 落点就是「网络延迟」页签（高亮在它身上、资源那个没有）',
+    !!landed.net && /bg-primary/.test(String(landed.net)) && !!landed.res && !/bg-primary/.test(String(landed.res)),
+    JSON.stringify(landed))
+}
+
+
+/* 3) 详细（新档） */
+{
+  const { dom, ping } = await render({ cardStyle: 'detailed', listTop: 'none' }, 'detailed')
+  check('详细：标题行不再挂状态点', dom.dots === 0, `点 ${dom.dots}`)
+  check('详细：三枚读数盒', dom.infoBox === 3 && dom.infoGrid === 1, `盒 ${dom.infoBox} / 栅格 ${dom.infoGrid}`)
+  check('详细：1440 下三枚读数盒仍同一行、等宽（宽卡档没被窄卡分档改到；窄卡那条由 verify_card_expiry_fit 逐宽度量）',
+    dom.statsGeometry.length === 3 &&
+    new Set(dom.statsGeometry.map((g) => g.y)).size === 1 &&
+    new Set(dom.statsGeometry.map((g) => g.w)).size === 1,
+    JSON.stringify(dom.statsGeometry))
+  check('详细：元信息行（在线时长 · 价格/周期）', /在线 /.test(dom.text) && /¥12\.50 \/ 月付/.test(dom.text), dom.text)
+  check('详细：读数盒里是真实读数（速率 / 总量 / 到期）',
+    // 速率走 rate() 的三位有效数字（KB 档不给小数）：512 KB/s、128 KB/s —— 别写回 512.0。
+    /512 KB\/s/.test(dom.text) && /128 KB\/s/.test(dom.text) && /1\.00 TB/.test(dom.text) && /剩余 95[\s\u00A0]天/.test(dom.text), dom.text)
+  check('详细：三网延迟块也照旧', dom.polylines === 3 * dom.cards, `polyline ${dom.polylines} / 卡 ${dom.cards}`)
+  check('详细：每节点恰好 1 次延迟请求', ping === 2, `实测 ${ping} 次`)
+  check('详细：网格不再有四列（卡片更宽）', !dom.grid.includes('xl:grid-cols-4'), dom.grid)
+  check('详细：经典的四格不在', dom.netRow === 0 && dom.netGrid === 0, `一行 ${dom.netRow} / 四格 ${dom.netGrid}`)
+}
+
+/* 3b) 宽卡（六块版式）：逐格量它的读数尺子；逐块细断在 tools/verify_card_form.mjs */
+// 四格读数取数**按结构**（card → [data-metrics] → 每格三个 div：表名 / 读数 / 条），不认 Tailwind 类名。
+const WIDE_CELLS = `JSON.stringify((() => {
+  const card = [...document.querySelectorAll('[role=button]')].find((c) => /CPU/.test(c.innerText))
+  if (!card) return null
+  const m = card.querySelector('[data-metrics]')
+  const cells = [...m.children]
+  const cs = (el) => el ? getComputedStyle(el) : null
+  const bar = cells[0].querySelectorAll('div')[2]
+  const fill = bar.firstElementChild
+  // 填色的**有效颜色**：合成到卡片底之后才是访客看到的那一笔（与上面几档同一手法）。
+  const c = document.createElement('canvas'); c.width = c.height = 1; const x = c.getContext('2d')
+  x.fillStyle = cs(card).backgroundColor; x.fillRect(0, 0, 1, 1)
+  x.fillStyle = cs(fill).backgroundColor; x.fillRect(0, 0, 1, 1)
+  const d = x.getImageData(0, 0, 1, 1).data
+  return {
+    cols: cs(m).gridTemplateColumns.split(' ').filter(Boolean).length,
+    divider: cs(m).borderTopWidth,
+    labels: cells.map((el) => el.children[0].textContent),
+    value: cells[0].children[1].textContent,
+    valueSize: cs(cells[0].children[1]).fontSize,
+    valueWeight: cs(cells[0].children[1]).fontWeight,
+    barH: Math.round(bar.getBoundingClientRect().height),
+    fill: [d[0], d[1], d[2]],
+    // 原始样本（只填一层）：读 fill 自己的 alpha，判「半透明」口径
+    fillAlpha: (() => { const c2 = document.createElement('canvas'); c2.width = c2.height = 1; const y = c2.getContext('2d'); y.fillStyle = cs(fill).backgroundColor; y.fillRect(0, 0, 1, 1); return +(y.getImageData(0, 0, 1, 1).data[3] / 255).toFixed(2) })(),
+  }
+})())`
+{
+  const { dom, ping } = await render({ cardStyle: 'wide', listTop: 'none' }, 'wide')
+  check('宽卡：四读数格与上传下载两栏都在；其余几档的块一个都不在',
+    dom.metrics === 1 && dom.duo === 1 && dom.netRow === 0 && dom.netGrid === 0 && dom.meta === 0 && dom.latency === 0 && dom.infoBox === 0 && dom.polylines === 0,
+    `读数格 ${dom.metrics} / 两栏 ${dom.duo} / 四格 ${dom.netGrid} / 一行 ${dom.netRow} / 元信息 ${dom.meta} / 延迟 ${dom.latency} / 盒 ${dom.infoBox}`)
+  check('宽卡：身份行不带状态点（与其余形态同一口径，2026-10-15 起撤掉）', dom.status === 0, `点 ${dom.status}`)
+  const cells = JSON.parse(await evalJS(WIDE_CELLS))
+  check('宽卡：四格一列到底、四列、上面一条分隔线',
+    !!cells && cells.cols === 4 && Number.parseFloat(cells.divider) >= 1,
+    `cols=${cells?.cols} divider=${cells?.divider}`)
+  check('宽卡：表名依次 CPU / 内存 / 存储 / 负载',
+    !!cells && JSON.stringify(cells.labels) === JSON.stringify(['CPU', '内存', '存储', '负载']),
+    JSON.stringify(cells?.labels))
+  check('宽卡：读数是两小数百分比、13px / 600、条 3px',
+    !!cells && cells.value === '12.50%' && cells.valueSize === '13px' && cells.valueWeight === '600' && cells.barH === 3,
+    JSON.stringify({ value: cells?.value, size: cells?.valueSize, weight: cells?.valueWeight, barH: cells?.barH }))
+  check('★ 宽卡：条的填色是前景色 70%（灰、半透明 —— 与经典 / 简约同一族，不是那支绿）',
+    !!cells && cells.fillAlpha < 1 && Math.max(...cells.fill) - Math.min(...cells.fill) <= 12 &&
+    !(cells.fill[1] > cells.fill[0] + 15 && cells.fill[1] > cells.fill[2] + 15),
+    JSON.stringify({ fill: cells?.fill, alpha: cells?.fillAlpha }))
+  check('宽卡：底注里价格 / 到期那一截在（价格 ¥12.50/月 · 剩余 95 天）',
+    /价格 ¥12\.50\/月/.test(dom.text) && /剩余 95[\s\u00A0]天/.test(dom.text), dom.text)
+  check('宽卡：不发延迟请求（这一档不含三网延迟）', ping === 0, `实测 ${ping} 次`)
+  check('宽卡：列表一行三张（sm 两列 / lg 起三列）——不是四列，也不再单独收窄',
+    dom.grid.includes('sm:grid-cols-2') && dom.grid.includes('lg:grid-cols-3') && !dom.grid.includes('xl:grid-cols-4') && !dom.grid.includes('md:grid-cols-2'), dom.grid)
+  // 宽度与列线（2026-10-30 站长要求）：这一档**不再单独收窄整页**，与其余五档共用 1280 ——
+  //   顶栏 / 主区 / 卡列仍是同一条线，只是卡片变成三列里的 403 宽。
+  const shellInfo = JSON.parse(await evalJS(`(() => {
+    const r = (el) => { const b = el.getBoundingClientRect(); return { x: Math.round(b.x), w: Math.round(b.width) } }
+    const h = document.querySelector('header > div')
+    const m = document.querySelector('main')
+    const g = document.querySelector('[data-card-style="wide"]')
+    const cards = [...document.querySelectorAll('[data-node-card]')]
+    return JSON.stringify({ header: h ? r(h) : null, main: m ? r(m) : null, grid: g ? r(g) : null, card: cards[0] ? r(cards[0]) : null, win: innerWidth })
+  })()`))
+  check('★ 宽卡：整页容器 1280（与其余五档同一条列线）—— 顶栏与主区同宽，卡片网格紧贴主区左内缘',
+    shellInfo.header?.w === 1280 && shellInfo.main?.w === 1280 &&
+    shellInfo.header?.x === shellInfo.main?.x && Math.abs((shellInfo.grid?.x ?? -99) - ((shellInfo.main?.x ?? 0) + 24)) <= 1,
+    JSON.stringify(shellInfo))
+  check('★ 宽卡：卡片宽 403（1280 容器 × 三列 − 12 间距）',
+    Math.abs((shellInfo.card?.w ?? 0) - 403) <= 2, `卡宽 ${shellInfo.card?.w}`)
+}
+
+
+/* 4) 旧值 detail 必须迁到延迟，不能掉回经典 */
+{
+  const { dom, ping } = await render({ cardStyle: 'detail', listTop: 'none' }, 'detail-old')
+  check('旧值 detail → 延迟（三网延迟块在）', dom.polylines === 3 * dom.cards, `polyline ${dom.polylines} / 卡 ${dom.cards}`)
+  check('旧值 detail → 延迟（不是经典：底部那行照样在、下面还挂着三网延迟）',
+    dom.netRow === 1 && dom.polylines > 0, `网络行 ${dom.netRow} / polyline ${dom.polylines}`)
+  check('旧值 detail → 延迟（不发多次请求）', ping === 2, `实测 ${ping} 次`)
+  check('旧值 detail → 延迟（不显示详细档的状态点与读数盒）', dom.dots === 0 && dom.infoBox === 0, `点 ${dom.dots} / 盒 ${dom.infoBox}`)
+}
+
+/* 5) 完全没有配置 / 非法值 → 回落**出厂默认档**（现读 theme.json 的 cardStyle.default，不写死） */
+const DEFAULT_STYLE = JSON.parse(readFileSync('theme.json', 'utf8')).config.find((f) => f.key === 'cardStyle').default
+for (const [cfg, tag] of [[{}, 'empty'], [{ cardStyle: 'bogus' }, 'bogus']]) {
+  const { dom, ping } = await render({ listTop: 'none', ...cfg }, tag)
+  // 默认档 2026-10-06 起是「详细」：认不出的值要落到它（读数盒 + 三网延迟块都在），不是掉回「简约」。
+  check(`非法值 ${tag} → 回落出厂默认档「${DEFAULT_STYLE}」`,
+    DEFAULT_STYLE === 'detailed'
+      ? dom.dots === 0 && dom.infoBox === 3 && dom.polylines === 3 * dom.cards && ping === 2
+      : dom.netRow === 1 && dom.netGrid === 0 && dom.polylines === 0 && dom.infoBox === 0 && ping === 0,
+    `默认档 ${DEFAULT_STYLE} / 网络行 ${dom.netRow} / 四格 ${dom.netGrid} / polyline ${dom.polylines} / 盒 ${dom.infoBox} / 请求 ${ping}`)
+}
+
+/* 6) 紧凑形态：一行一台的表格 */
+{
+  const { dom, ping } = await renderCompact({ cardStyle: 'compact', listTop: 'none' }, 1440, 'compact')
+  check('紧凑：渲染成一张表、一行一台（3 台 = 3 行）', dom.tables === 1 && dom.rows === 3, `表 ${dom.tables} / 行 ${dom.rows}`)
+  check('紧凑：宽屏十一列齐全（列序对齐源站，另加续费价）', dom.heads.join('/') === '名称/系统/在线/剩余/价格/负载/网速 ↓|↑/CPU/内存/硬盘/流量', dom.heads.join('/'))
+  check('紧凑：不再是卡片网格（没有 xl 四列）', !dom.grid4, '仍带 xl:grid-cols-4')
+  check('紧凑：每行四根进度条（CPU / 内存 / 硬盘 / 流量）', dom.bars === 4 * dom.rows, `条 ${dom.bars} / 行 ${dom.rows}`)
+  check('紧凑：表头与数值都在（读到 CPU 与流量读数）', /13%/.test(dom.text) && /1\.00 TB/.test(dom.text), dom.text)
+  check('紧凑：不发延迟请求（这一档不含三网延迟）', ping === 0, `实测 ${ping} 次`)
+}
+
+/* 6b) 列随屏宽收放 */
+{
+  const { dom } = await renderCompact({ cardStyle: 'compact', listTop: 'none' }, 1100, 'compact-lg')
+  check('紧凑 lg（1100）：剩余与价格回来、系统还收着，十列',
+    dom.cells === 10 && dom.heads.includes('剩余') && dom.heads.includes('价格') && !dom.heads.includes('系统'), `${dom.cells} 列：${dom.heads.join('/')}`)
+  check('紧凑 lg：无横向溢出', !dom.overflowX, '横向溢出')
+}
+{
+  const { dom } = await renderCompact({ cardStyle: 'compact', listTop: 'none' }, 900, 'compact-md')
+  check('紧凑 md（900）：系统 / 剩余 / 价格 收掉，剩八列',
+    dom.cells === 8 && !dom.heads.includes('系统') && !dom.heads.includes('剩余') && !dom.heads.includes('价格'), `${dom.cells} 列：${dom.heads.join('/')}`)
+  check('紧凑 md：无横向溢出', !dom.overflowX, '横向溢出')
+}
+{
+  const { dom, ping } = await renderCompact({ cardStyle: 'compact', listTop: 'none' }, 700, 'compact-sm')
+  check('紧凑 sm（700）：在线 / 负载 / 硬盘 收掉，剩五列',
+    dom.cells === 5 && !dom.heads.includes('在线') && !dom.heads.includes('负载') && !dom.heads.includes('硬盘'), `${dom.cells} 列：${dom.heads.join('/')}`)
+  check('紧凑 sm：无横向溢出', !dom.overflowX, '横向溢出')
+  check('紧凑 sm：仍不发延迟请求', ping === 0, `实测 ${ping} 次`)
+}
+{
+  const { dom } = await renderCompact({ cardStyle: 'compact', listTop: 'none' }, 480, 'compact-xs')
+  check('紧凑窄屏（480）：只留名称 / CPU / 流量三列', dom.cells === 3, `${dom.cells} 列：${dom.heads.join('/')}`)
+  check('紧凑窄屏：表头仍在（窄屏也告诉访客哪列是什么）', dom.heads.join('/') === '名称/CPU/流量', dom.heads.join('/'))
+  check('紧凑窄屏：无横向溢出', !dom.overflowX, '横向溢出')
+}
+
+/* 6c) 超长机器名不把表格撑出屏幕 */
+{
+  await renderCompact({ cardStyle: 'compact', listTop: 'none' }, 1000, 'compact-long')
+  const long = JSON.parse(await evalJS(`(() => {
+    const span = document.querySelector('tbody tr[data-node-card] td button')
+    span.textContent = '超长机器名'.repeat(40)
+    return JSON.stringify({
+      tableW: Math.round(document.querySelector('table').getBoundingClientRect().width),
+      overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      clipped: span.scrollWidth > span.clientWidth,
+    })
+  })()`))
+  check('紧凑：超长机器名被截断、不把表格撑出屏幕', long.clipped && !long.overflowX, JSON.stringify(long))
+}
+
+/* 6d) 点一行就地展开延迟，不跳详情页（源站的做法） */
+{
+  await renderCompact({ cardStyle: 'compact', listTop: 'none' }, 1440, 'compact-open')
+  await evalJS(`(() => { const r = document.querySelector('tbody tr[data-node-card]'); if (r) r.click(); return r ? 'ok' : 'no-row' })()`)
+  await sleep(2000) // 等 NodeDetail 那个 chunk 与延迟图落地
+  // 包一层 try：求值撞上重渲染时会丢上下文，直接 JSON.parse(undefined) 会让整脚本莫名地断在这里。
+  const raw = await evalJS(`(() => { try { return JSON.stringify({
+    path: location.pathname,
+    expanded: !!document.querySelector('tbody tr[data-node-card] button[aria-expanded="true"]'),
+    rows: document.querySelectorAll('tbody tr').length,
+    detailLink: [...document.querySelectorAll('button')].some((b) => /完整详情/.test(b.textContent)),
+    svg: document.querySelectorAll('tbody tr td[colspan] svg').length,
+    rangePills: /1 小时/.test(document.body.innerText) && /7 天/.test(document.body.innerText),
+  }) } catch (e) { return JSON.stringify({ error: String(e), path: location.pathname }) } })()`)
+  const state = JSON.parse(raw ?? '{"error":"eval 返回 undefined"}')
+  check('紧凑：点一行就地展开、不跳详情页', state.path === '/' && state.expanded === true && state.rows === 4, raw)
+  check('紧凑：展开里是延迟图（含 1/6/24/7 天范围）', state.svg > 0 && state.rangePills === true, raw)
+  check('紧凑：展开行留有去整页详情的入口', state.detailLink === true, raw)
+}
+
+ws.close()
+chrome.kill()
+server.close()
+
+const failed = results.filter((r) => !r.ok)
+console.log(`\n${results.length - failed.length} PASS / ${failed.length} FAIL`)
+process.exit(failed.length ? 1 : 0)

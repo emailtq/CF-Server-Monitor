@@ -1,7 +1,11 @@
 import defaultTheme from '../../monitor-themes/default/theme.json' with { type: 'json' };
 import serverstatusTheme from '../../monitor-themes/serverstatus/theme.json' with { type: 'json' };
+import upstreamDefault from '../../monitor-themes/default/source/theme.json' with { type: 'json' };
+import upstreamServerstatus from '../../monitor-themes/serverstatus/source/theme.json' with { type: 'json' };
 
 export const MONITOR_THEMES = [defaultTheme, serverstatusTheme];
+export const MONITOR_UPSTREAM_THEMES = [upstreamDefault, upstreamServerstatus];
+export const monitorBuiltinRevision = short => `builtin-${short}-cf-nullable-1`;
 export const MONITOR_PREVIEW_PARAM = 'monitor_preview';
 export const MONITOR_REVISION_PARAM = 'monitor_revision';
 export const MONITOR_DNS_HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;

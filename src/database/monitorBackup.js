@@ -24,6 +24,10 @@ function validLedger(value) {
 function validSample(value) {
   if(!object(value) || !time(value.sampledAt) || !Number.isSafeInteger(value.elapsedMs) || value.elapsedMs<0 || !source(value.source) || !object(value.report))return false;
   const r=value.report;
+  if(value.byteTokens!==undefined && (!object(value.byteTokens) || Object.entries(value.byteTokens).some(([key,token]) =>
+    !['mem_total','mem_used','swap_total','swap_used','disk_total','disk_used'].includes(key) ||
+    typeof token!=='string' || !/^(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(token) ||
+    !Number.isInteger(Number(token)) || !nonnegative(Number(token)) || Number(token)!==r[key])))return false;
   for(const key of ['cpu','uptime','mem_total','mem_used','swap_total','swap_used','disk_total','disk_used','tcp','udp','procs','net_rx','net_tx']) {
     if(Object.hasOwn(r,key) && !nonnegative(r[key]))return false;
   }

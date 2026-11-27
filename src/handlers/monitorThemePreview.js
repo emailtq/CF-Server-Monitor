@@ -1,6 +1,8 @@
 import { checkPreviewAuth } from './frontend.js';
 import { MONITOR_PREVIEW_PARAM, MONITOR_REVISION_PARAM, validMonitorShort } from '../shared/monitorThemes.js';
 import { loadMonitorThemeCatalog, loadMonitorRelease, validMonitorRevision } from '../services/monitorThemePackages.js';
+import { monitorCookie } from '../services/monitorViewerAccess.js';
+import { getTerminalJwtPrincipal } from '../middleware/auth.js';
 
 // The original SPA replaces its URL when navigating. Preserve preview transport context without changing the release files.
 export function monitorPreviewHtml(html, short) {
@@ -34,7 +36,7 @@ export async function resolveMonitorPreview(request, env, url) {
   else {
     try {
       const referrer = new URL(request.headers.get('Referer'));
-      if (referrer.origin === url.origin) short = referrer.searchParams.get(MONITOR_PREVIEW_PARAM);
+      if (referrer.origin === url.origin && !/^\/admin(?:\/|$)/.test(referrer.pathname)) short = referrer.searchParams.get(MONITOR_PREVIEW_PARAM);
     } catch { /* No same-origin preview document. */ }
   }
   if (short == null) return null;
@@ -46,7 +48,14 @@ export async function resolveMonitorPreview(request, env, url) {
     if (!success) throw new Error();
     const rows = Object.fromEntries(results.map(row => [row.key, row.jwt_secret]));
     const jwtSecret = rows.site_options == null ? rows.jwt_secret : rows.site_options;
-    if (!await checkPreviewAuth(request, env, { jwt_secret: jwtSecret == null ? undefined : JSON.parse(jwtSecret) })) return { status: 401, error: 'monitorPreviewLogin' };
+    const policy={jwt_secret:jwtSecret == null ? undefined : JSON.parse(jwtSecret)};
+    if (!await checkPreviewAuth(request, env, policy)) return { status: 401, error: 'monitorPreviewLogin' };
+    const token=monitorCookie(request,'cfsm_theme_preview_auth');
+    const principal=await getTerminalJwtPrincipal({headers:new Headers({Authorization:`Bearer ${token}`})},env,policy);
+    if(!principal)return {status:401,error:'monitorPreviewLogin'};
+    const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE name='terminal_auth_sessions'").first();
+    const session=table?await env.DB.prepare('SELECT expires_at,revoked_at FROM terminal_auth_sessions WHERE jti=?').bind(principal.jti).first():null;
+    if(session&&(session.revoked_at!==null||session.expires_at!==principal.exp))return {status:401,error:'monitorPreviewLogin'};
     const revision = monitorResourceRevision(request, url);
     if (revision) {
       if (!validMonitorRevision(revision)) return { status: 400, error: 'monitorThemeInvalid' };
@@ -63,7 +72,7 @@ export function monitorResourceRevision(request, url) {
   if (url.searchParams.has(MONITOR_REVISION_PARAM)) return url.searchParams.get(MONITOR_REVISION_PARAM);
   try {
     const referrer = new URL(request.headers.get('Referer'));
-    if (referrer.origin === url.origin) return referrer.searchParams.get(MONITOR_REVISION_PARAM);
+    if (referrer.origin === url.origin && !/^\/admin(?:\/|$)/.test(referrer.pathname)) return referrer.searchParams.get(MONITOR_REVISION_PARAM);
   } catch {}
   return null;
 }

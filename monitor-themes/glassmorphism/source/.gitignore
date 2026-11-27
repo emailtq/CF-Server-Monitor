@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+*.tsbuildinfo
+.DS_Store
+CLAUDE.md
+.claude/launch.json
+
+# CF ships the reproducible consumer bundle alongside its maintained source.
+!dist/
+!dist/**

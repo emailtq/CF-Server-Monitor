@@ -74,6 +74,7 @@ export async function addServerColumns(db) {
       region: "TEXT DEFAULT ''",
       tags: "TEXT DEFAULT ''",
       note: "TEXT DEFAULT ''",
+      public_remark: "TEXT DEFAULT ''",
       billing_cycle: "TEXT DEFAULT 'month'",
       auto_renewal: "TEXT DEFAULT '0'",
       currency: "TEXT DEFAULT '¥'",

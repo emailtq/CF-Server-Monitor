@@ -1,5 +1,5 @@
 import { AppError } from '../utils/errors.js';
-import { MONITOR_THEMES, findMonitorTheme, validMonitorShort } from '../shared/monitorThemes.js';
+import { MONITOR_THEMES, MONITOR_UPSTREAM_THEMES, monitorBuiltinRevision, findMonitorTheme, validMonitorShort } from '../shared/monitorThemes.js';
 import { monitorArchivePath, parseMonitorThemeArchive } from '../shared/monitorThemeArchive.js';
 
 const REGISTRY = 'monitor_theme_packages';
@@ -10,12 +10,14 @@ const releaseKey = revision => `monitor_theme_release:${revision}`;
 const REVISION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const unavailable = () => new AppError('monitorThemeUnavailable', 503);
 const invalid = () => new AppError('monitorThemeInvalid', 400);
+const PUBLISHER_AUTHORITY_SQL = `(SELECT CASE WHEN key='site_options' THEN json_extract(value,'$.jwt_secret') ELSE value END
+  FROM settings WHERE key IN('site_options','jwt_secret') ORDER BY CASE WHEN key='site_options' THEN 0 ELSE 1 END LIMIT 1)`;
 const mimes = { html: 'text/html;charset=UTF-8', js: 'application/javascript', css: 'text/css', json: 'application/json',
   svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
   webp: 'image/webp', avif: 'image/avif', woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf', wasm: 'application/wasm', mp4: 'video/mp4', txt: 'text/plain' };
 
 export function validMonitorRevision(revision) {
-  return typeof revision === 'string' && (REVISION.test(revision) || MONITOR_THEMES.some(theme => revision === `builtin-${theme.short}`));
+  return typeof revision === 'string' && (REVISION.test(revision) || MONITOR_THEMES.some(theme => revision === `builtin-${theme.short}` || revision === monitorBuiltinRevision(theme.short)));
 }
 
 export async function loadMonitorPackageRegistry(db) {
@@ -30,7 +32,9 @@ export async function loadMonitorPackageRegistry(db) {
 
 export async function loadMonitorRelease(db, revision) {
   if (!validMonitorRevision(revision)) throw invalid();
-  const builtin = MONITOR_THEMES.find(theme => revision === `builtin-${theme.short}`);
+  const legacy = MONITOR_UPSTREAM_THEMES.find(theme => revision === `builtin-${theme.short}`);
+  if (legacy) return { manifest: legacy, revision, builtin: true, upstream: true };
+  const builtin = MONITOR_THEMES.find(theme => revision === monitorBuiltinRevision(theme.short));
   if (builtin) return { manifest: builtin, revision, builtin: true };
   try {
     const row = await db.prepare('SELECT value FROM settings WHERE key=?').bind(releaseKey(revision)).first();
@@ -47,7 +51,7 @@ export async function loadMonitorRelease(db, revision) {
 
 export async function loadMonitorThemeCatalog(db) {
   const { registry } = await loadMonitorPackageRegistry(db);
-  const themes = MONITOR_THEMES.map(theme => ({ ...theme, builtin: true, preview: theme.short === 'default', revision: `builtin-${theme.short}` }));
+  const themes = MONITOR_THEMES.map(theme => ({ ...theme, builtin: true, preview: theme.short === 'default', revision: monitorBuiltinRevision(theme.short) }));
   // Registry size is bounded; read manifest rows in one D1 query, never read credentials.
   if (Object.keys(registry).length) {
     const keys = Object.values(registry).map(releaseKey);
@@ -71,7 +75,15 @@ export async function loadMonitorThemeCatalog(db) {
   return { themes, registry };
 }
 
-async function publishPointer(db, short, revision, expectedRevision) {
+export async function assertMonitorThemePublisher(db, publisher) {
+  if(!publisher)return;
+  const row=await db.prepare(`SELECT ${PUBLISHER_AUTHORITY_SQL} AS authority`).first();
+  if(row?.authority!==publisher.authority||publisher.exp<=Date.now()/1000)throw new AppError('Unauthorized',401);
+  const table=await db.prepare("SELECT name FROM sqlite_master WHERE name='terminal_auth_sessions'").first();
+  const tombstone=table?await db.prepare('SELECT expires_at,revoked_at FROM terminal_auth_sessions WHERE jti=?').bind(publisher.jti).first():null;
+  if(tombstone&&(tombstone.revoked_at!==null||tombstone.expires_at!==publisher.exp))throw new AppError('Unauthorized',401);
+}
+async function publishPointer(db, short, revision, expectedRevision, publisher) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const { registry, raw } = await loadMonitorPackageRegistry(db);
     if ((Object.hasOwn(registry, short) ? registry[short] : null) !== expectedRevision) throw new AppError('monitorThemeConflict', 409);
@@ -79,19 +91,25 @@ async function publishPointer(db, short, revision, expectedRevision) {
     if (revision === null) delete next[short]; else next[short] = revision;
     if (Object.keys(next).length > 128) throw new AppError('monitorThemeLimit', 409);
     const value = JSON.stringify(next);
+    await assertMonitorThemePublisher(db,publisher);
+    const authTable=publisher&&await db.prepare("SELECT name FROM sqlite_master WHERE name='terminal_auth_sessions'").first();
+    const guard=publisher?` AND ${PUBLISHER_AUTHORITY_SQL}=?
+      ${authTable?"AND NOT EXISTS(SELECT 1 FROM terminal_auth_sessions WHERE jti=? AND (revoked_at IS NOT NULL OR expires_at<>?))":''}
+      AND ? > CAST(strftime('%s','now') AS INTEGER)`:'';
+    const args=publisher?[publisher.authority,...(authTable?[publisher.jti,publisher.exp]:[]),publisher.exp]:[];
     const result = raw === null
-      ? await db.prepare('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO NOTHING').bind(REGISTRY, value).run()
-      : await db.prepare('UPDATE settings SET value=? WHERE key=? AND value=?').bind(value, REGISTRY, raw).run();
+      ? await db.prepare(`INSERT INTO settings(key,value) SELECT ?,? WHERE 1=1 ${guard} ON CONFLICT(key) DO NOTHING`).bind(REGISTRY, value,...args).run()
+      : await db.prepare(`UPDATE settings SET value=? WHERE key=? AND value=? ${guard}`).bind(value, REGISTRY, raw,...args).run();
     if (!result.success) throw unavailable();
     if (result.meta?.changes === 1) return;
   }
   throw new AppError('monitorThemeConflict', 409);
 }
 
-export async function installMonitorTheme(env, archive, { expectedShort, repository, expectedRevision } = {}) {
+export async function installMonitorTheme(env, archive, { expectedShort, repository, expectedRevision, initialRegistry, publisher } = {}) {
   if (!env.DB) throw new AppError('monitorThemeStorageUnavailable', 503);
   if (expectedShort !== undefined && !validMonitorShort(expectedShort)) throw invalid();
-  const initial = await loadMonitorPackageRegistry(env.DB);
+  const initial = initialRegistry ? { registry: initialRegistry } : await loadMonitorPackageRegistry(env.DB);
   if (expectedRevision !== undefined && (!expectedShort || (Object.hasOwn(initial.registry, expectedShort) ? initial.registry[expectedShort] : null) !== expectedRevision)) throw new AppError('monitorThemeConflict', 409);
   const revision = crypto.randomUUID();
   try {
@@ -126,11 +144,14 @@ export async function installMonitorTheme(env, archive, { expectedShort, reposit
     });
     const short = parsed.manifest.short;
     if (expectedShort !== undefined && short !== expectedShort) throw invalid();
+    const previous = Object.hasOwn(initial.registry, short) ? await loadMonitorRelease(env.DB, initial.registry[short]) : null;
+    const protectedRevision = previous?.manifest.cf_revision || (!previous && repository && findMonitorTheme(short)?.cf_revision);
+    if (protectedRevision && !parsed.manifest.cf_revision) throw new AppError('monitorThemeConsumerRevisionRequired', 409);
     await flush(true);
     const release = { ...parsed, revision, storage: 'd1', createdAt: Date.now(), ...(repository ? { repository } : {}) };
     const write = await env.DB.prepare('INSERT INTO settings(key,value) VALUES (?,?)').bind(releaseKey(revision), JSON.stringify(release)).run();
     if (!write.success) throw unavailable();
-    await publishPointer(env.DB, short, revision, Object.hasOwn(initial.registry, short) ? initial.registry[short] : null);
+    await publishPointer(env.DB, short, revision, Object.hasOwn(initial.registry, short) ? initial.registry[short] : null,publisher);
     return { ...parsed.manifest, short, revision };
   } catch (error) {
     // Only this unpublished revision is removed; the previous active version remains intact.
@@ -154,13 +175,13 @@ export async function readMonitorThemeFile(env, short, relativePath, revision = 
   const path = monitorArchivePath(relativePath);
   if (!revision) {
     const { registry } = await loadMonitorPackageRegistry(env.DB);
-    revision = Object.hasOwn(registry, short) ? registry[short] : `builtin-${short}`;
+    revision = Object.hasOwn(registry, short) ? registry[short] : monitorBuiltinRevision(short);
   }
   const release = await loadMonitorRelease(env.DB, revision);
   if (!release || release.manifest.short !== short) return null;
   if (release.builtin) {
     if (!env.ASSETS) return null;
-    const response = await env.ASSETS.fetch(new Request(`http://monitor-theme/_monitor_theme/${short}/${path.split('/').map(encodeURIComponent).join('/')}${search}`, { method }));
+    const response = await env.ASSETS.fetch(new Request(`http://monitor-theme/_monitor_theme/${short}/${release.upstream ? 'upstream/' : ''}${path.split('/').map(encodeURIComponent).join('/')}${search}`, { method }));
     return response.ok ? response : null;
   }
   if (!env.DB) throw new AppError('monitorThemeStorageUnavailable', 503);
@@ -242,5 +263,5 @@ async function readReleaseEntry(env, release, entry, path, method, origin) {
 export async function resolveMonitorThemeRelease(env, selected, revision = null) {
   if (revision) return loadMonitorRelease(env.DB, revision);
   const { registry } = await loadMonitorPackageRegistry(env.DB);
-  return loadMonitorRelease(env.DB, Object.hasOwn(registry, selected) ? registry[selected] : `builtin-${findMonitorTheme(selected)?.short || 'default'}`);
+  return loadMonitorRelease(env.DB, Object.hasOwn(registry, selected) ? registry[selected] : monitorBuiltinRevision(findMonitorTheme(selected)?.short || 'default'));
 }

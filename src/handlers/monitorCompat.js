@@ -3,13 +3,15 @@ import { createNotFoundResponse } from '../utils/errors.js';
 import { loadMonitorCompatSnapshot } from '../services/monitorCompatSnapshot.js';
 import { loadMonitorCompatHistory } from '../services/monitorCompatHistory.js';
 import { loadMonitorThemes, getMonitorThemeConfig, saveMonitorThemeConfig } from '../services/monitorThemes.js';
-import { MONITOR_DNS_HOSTNAME, MONITOR_PREVIEW_PARAM, MONITOR_REVISION_PARAM, findMonitorTheme } from '../shared/monitorThemes.js';
+import { MONITOR_DNS_HOSTNAME, MONITOR_PREVIEW_PARAM, MONITOR_REVISION_PARAM, monitorBuiltinRevision, findMonitorTheme } from '../shared/monitorThemes.js';
 import { resolveMonitorPreview, monitorThemeHtml, monitorResourceRevision } from './monitorThemePreview.js';
 import { readMonitorThemeFile, resolveMonitorThemeRelease, validMonitorRevision } from '../services/monitorThemePackages.js';
 import { loadMonitorViewerAccess, MONITOR_VIEWER_LIVE_URL, monitorCookie, MONITOR_VERIFICATION_COOKIE } from '../services/monitorViewerAccess.js';
 import { handleMonitorAccess, serveMonitorAccessGate } from './monitorAccess.js';
 import { monitorThemeMutationAccess } from './monitorThemeUpload.js';
 import { getMonitorCompatIds, MONITOR_COMPAT_VISIBLE } from '../database/monitorCompatIds.js';
+import { handleMonitorApi } from './monitorApi.js';
+import { serveMonitorSiteIcon } from '../services/monitorSiteIcons.js';
 
 export { loadMonitorCompatAccess };
 const NO_STORE = { 'Cache-Control': 'no-store' };
@@ -23,12 +25,13 @@ function adminRoute(request, pathname) {
 function themePath(pathname) {
   if (pathname.split('/').includes('api')) return null;
   if (/^\/(api|admin|_monitor_theme|__do)(\/|$)/.test(pathname) || /^\/(update|updateDatabase|clearHistory|theme)$/.test(pathname)) return null;
-  if (/^\/(static|files|mikus|os-icons)(\/|$)/.test(pathname) || /^\/(install[^/]*|uninstall[^/]*|cf-server-monitor\.ps1|manifest\.json|dashboard\.html)$/.test(pathname)) return null;
+  if (/^\/(install[^/]*|uninstall[^/]*|cf-server-monitor\.ps1|dashboard\.html)$/.test(pathname)) return null;
   try {
     const decoded = decodeURIComponent(pathname.slice(1));
     if (!decoded) return 'index.html';
-    if (decoded.split('/').includes('api') || /^(api|admin|_monitor_theme|__do|static|files|mikus|os-icons)(\/|$)/.test(decoded)) return null;
-    if (/^(update|updateDatabase|clearHistory|theme|install[^/]*|uninstall[^/]*|cf-server-monitor\.ps1|manifest\.json|dashboard\.html)$/.test(decoded)) return null;
+    if (/%(?:2f|5c|[01][0-9a-f]|7f|25)/i.test(pathname)) return null;
+    if (decoded.split('/').includes('api') || /^(api|admin|agent|_monitor_theme|__do)(\/|$)/.test(decoded)) return null;
+    if (/^(update|updateDatabase|clearHistory|theme|install[^/]*|uninstall[^/]*|cf-server-monitor\.ps1|dashboard\.html)$/.test(decoded)) return null;
     if (/[\\:\x00-\x1f\x7f]/.test(decoded) || decoded.split('/').some(part => !part || part === '.' || part === '..')) return null;
     return decoded;
   } catch { return null; }
@@ -43,7 +46,8 @@ async function serveTheme(request, env, url, preview, defaultFrontend) {
   const revision = preview?.revision || monitorResourceRevision(request, url);
   if (revision && !validMonitorRevision(revision)) return Response.json({ error: 'monitorThemeInvalid' }, { status: 400, headers: NO_STORE });
   const resource = /\.[^/]+$/.test(path) && path !== 'index.html';
-  if (resource && ((preview && !url.searchParams.has(MONITOR_PREVIEW_PARAM)) || (revision && !url.searchParams.has(MONITOR_REVISION_PARAM)))) {
+  const sharedPath=/^(static|files|mikus|os-icons)(\/|$)/.test(path)||path==='manifest.json';
+  if (resource && url.search !== '?theme' && ((preview && !url.searchParams.has(MONITOR_PREVIEW_PARAM)) || (revision && !url.searchParams.has(MONITOR_REVISION_PARAM)))) {
     const target = new URL(url);
     if (preview) target.searchParams.set(MONITOR_PREVIEW_PARAM, preview.short);
     if (revision) target.searchParams.set(MONITOR_REVISION_PARAM, revision);
@@ -51,6 +55,7 @@ async function serveTheme(request, env, url, preview, defaultFrontend) {
   }
   let response, release, index = path === 'index.html';
   try {
+    const icon=await serveMonitorSiteIcon(request,env,url);if(icon)return icon;
     const selected = preview?.short || (await loadMonitorThemes(env.DB, env.MONITOR_COMPAT_THEME)).effective;
     release = await resolveMonitorThemeRelease(env, selected, revision);
     if (!release) return createNotFoundResponse();
@@ -60,16 +65,17 @@ async function serveTheme(request, env, url, preview, defaultFrontend) {
     response = await readMonitorThemeFile(env, release.manifest.short, builtinPage ? 'index.html' : path, release.revision, request.method, url.search, url.origin);
     if (!response && !resource && !index) { index = true; response = await readMonitorThemeFile(env, release.manifest.short, 'index.html', release.revision, request.method, '', url.origin); }
     if (!response && index && !release.builtin && !preview && !revision) {
-      release = await resolveMonitorThemeRelease(env, 'default', 'builtin-default');
-      response = await readMonitorThemeFile(env, 'default', 'index.html', 'builtin-default', request.method);
+      release = await resolveMonitorThemeRelease(env, 'default', monitorBuiltinRevision('default'));
+      response = await readMonitorThemeFile(env, 'default', 'index.html', monitorBuiltinRevision('default'), request.method);
     }
   } catch (error) {
     if (!preview && !revision && !resource && error?.message === 'monitorThemeStorageUnavailable') {
-      release = await resolveMonitorThemeRelease(env, 'default', 'builtin-default');
-      response = await readMonitorThemeFile(env, 'default', 'index.html', 'builtin-default', request.method); index = true;
+      release = await resolveMonitorThemeRelease(env, 'default', monitorBuiltinRevision('default'));
+      response = await readMonitorThemeFile(env, 'default', 'index.html', monitorBuiltinRevision('default'), request.method); index = true;
     } else return Response.json({ error: 'monitorThemeUnavailable' }, { status: 503, headers: NO_STORE });
   }
   if (!response) {
+    if (sharedPath && !preview && !revision && env.ASSETS) return null;
     if (/^(flags\/|favicon\.)/.test(path) && !preview && !revision && env.ASSETS) return null;
     return createNotFoundResponse();
   }
@@ -141,6 +147,11 @@ export async function handleMonitorCompat(request, env, url) {
   }
   const page = await serveTheme(request, env, url, preview, defaultFrontend);
   if (page) return page;
+  if (['GET','HEAD'].includes(request.method) && themePath(url.pathname)) return null;
+  if (viewer) {
+    const response = await handleMonitorApi(request, env, url);
+    if (response) return response;
+  }
   const isMe = url.pathname === '/api/me', isNodes = url.pathname === '/api/nodes', isLive = url.pathname === '/api/ws';
   const configShort = /^\/api\/themes\/([A-Za-z0-9_-]{1,128})\/config$/.exec(url.pathname)?.[1];
   const historyId = Number(/^\/api\/nodes\/([1-9]\d*)\/metrics$/.exec(url.pathname)?.[1]);

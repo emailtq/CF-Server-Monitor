@@ -110,7 +110,7 @@ test('registration bounds JSON bytes and types, denies caller identity/credentia
     }
     const raw = (body, headers = {}, path = '/api/agent/register') => h.fetch(path, {method:'POST', headers:{Authorization:`Bearer ${key}`, 'Content-Type':'application/json', ...headers}, body});
     assert.equal((await raw('{')).status, 400);
-    assert.equal((await raw('{}', {'Content-Type':'text/plain'})).status, 415);
+    assert.equal((await raw('{}', {'Content-Type':'application/xml'})).status, 415);
     // Undici rejects forged Content-Length before the Worker; exercise the real handler with real D1.
     const declared = (body, length) => handleAgentRegistration(new Request('https://example.com/api/agent/register', {
       method:'POST', headers:{Authorization:`Bearer ${key}`, 'Content-Type':'application/json', 'Content-Length':length}, body

@@ -1,10 +1,11 @@
+import { monitorBuiltinRevision } from "../shared/monitorThemes.js";
 import { MONITOR_PREVIEW_PARAM, MONITOR_DNS_HOSTNAME } from '../shared/monitorThemes.js';
 import { loadMonitorThemes, selectMonitorTheme, saveMonitorThemeConfig } from '../services/monitorThemes.js';
 import { loadMonitorCompatAccess } from '../services/monitorCompatAccess.js';
 import { loadMonitorViewerAccess } from '../services/monitorViewerAccess.js';
 import { installMonitorRepository } from '../services/monitorThemeRepository.js';
 import { loadMonitorPackageRegistry, loadMonitorRelease, removeMonitorTheme, readMonitorThemeThumbnail } from '../services/monitorThemePackages.js';
-import { monitorThemeMutationAccess } from './monitorThemeUpload.js';
+import { monitorThemeMutationAccess, monitorThemeMutationAuthorization } from './monitorThemeUpload.js';
 import { AppError } from '../utils/errors.js';
 
 export async function handleMonitorThemeAdmin({ request, env, data, previewAuthCookie }) {
@@ -20,15 +21,15 @@ export async function handleMonitorThemeAdmin({ request, env, data, previewAuthC
       return image ? new Response(image.body, {headers:{...headers,'Content-Type':'image/png'}}) : new Response(null,{status:404,headers});
     }
     if (['install_monitor_theme', 'update_monitor_theme', 'delete_monitor_theme'].includes(data.action)) {
-      const status = await monitorThemeMutationAccess(request, env);
+      const {status,publisher} = await monitorThemeMutationAuthorization(request, env);
       if (status !== 200) return Response.json({ error: 'monitorThemeAccessDenied' }, { status, headers });
-      if (data.action === 'install_monitor_theme') await installMonitorRepository(env, data.repository);
+      if (data.action === 'install_monitor_theme') await installMonitorRepository(env, data.repository,undefined,undefined,undefined,publisher);
       if (data.action === 'update_monitor_theme') {
         const { registry } = await loadMonitorPackageRegistry(env.DB);
         const revision = Object.hasOwn(registry, data.theme) ? registry[data.theme] : null;
-        const release = await loadMonitorRelease(env.DB, revision || `builtin-${data.theme}`);
+        const release = await loadMonitorRelease(env.DB, revision || monitorBuiltinRevision(data.theme));
         if (!release) throw new AppError('monitorThemeUnavailable', 503);
-        update = await installMonitorRepository(env, release.repository ? `https://github.com/${release.repository}` : release.manifest.url, data.theme, revision, release.manifest.version);
+        update = await installMonitorRepository(env, release.repository ? `https://github.com/${release.repository}` : release.manifest.url, data.theme, revision, release.manifest.version,publisher);
       }
       if (data.action === 'delete_monitor_theme') await removeMonitorTheme(env, data.theme);
     }

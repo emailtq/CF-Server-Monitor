@@ -1,5 +1,5 @@
 import { getTerminalAdminPrincipal } from '../middleware/auth.js';
-import { hashNodeToken, prepareNodeCredential } from '../database/nodeCredentials.js';
+import { hashNodeToken, prepareNodeCredential, verifyNodeToken } from '../database/nodeCredentials.js';
 import { SERVER_INSERT_SQL } from '../database/indexOptimization.js';
 import { ensureAgentRegistrationSchema, REGISTRATION_DB_NOW_SQL, REGISTRATION_ENABLED_SQL, REGISTRATION_VALID_SQL } from '../database/agentRegistration.js';
 import { generateRandomSecret, isValidJwtSecret } from '../utils/settings.js';
@@ -44,12 +44,28 @@ export async function handlePrepareRegistration(request, env, data) {
   } catch (_) { return error('registration_unavailable', 503); }
 }
 
-async function readBody(request) {
+export async function handleCloseRegistration(request, env) {
+  const url=new URL(request.url);
+  if(url.protocol!=='https:'||request.headers.get('Origin')!==url.origin)return error('node_origin_denied',403);
+  try {
+    const settings=await authority(env.DB),owner=await getTerminalAdminPrincipal(request,env,settings);
+    if(!owner)return error('node_login_required',401);
+    await ensureAgentRegistrationSchema(env.DB);
+    await env.DB.prepare(`DELETE FROM agent_registration_keys WHERE EXISTS(SELECT 1 FROM settings WHERE key='site_options' AND json_extract(value,'$.jwt_secret')=?)
+      AND EXISTS(SELECT 1 FROM terminal_auth_sessions WHERE jti=? AND expires_at=? AND revoked_at IS NULL AND expires_at*1000>${REGISTRATION_DB_NOW_SQL})`)
+      .bind(settings.jwt_secret,owner.jti,owner.exp).run();
+    const current=await authority(env.DB);
+    if(current.jwt_secret!==settings.jwt_secret||!await getTerminalAdminPrincipal(request,env,current))return error('registration_authority_changed',403);
+    return response({closed:true});
+  }catch{return error('registration_unavailable',503);}
+}
+
+async function readBody(request, native = false) {
   const rawLength = request.headers.get('Content-Length');
   if (rawLength !== null && (!/^\d+$/.test(rawLength) || !Number.isSafeInteger(Number(rawLength)))) return {failure:error('registration_invalid_length', 400)};
   const declared = rawLength === null ? null : Number(rawLength);
   if (declared > MAX_BODY_BYTES) return {failure:error('registration_payload_too_large', 413)};
-  if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers.get('Content-Type') || '')) return {failure:error('registration_json_required', 415)};
+  if (!(native ? /^text\/plain(?:\s*;\s*charset=utf-8)?$/i : /^application\/json(?:\s*;\s*charset=utf-8)?$/i).test(request.headers.get('Content-Type') || '')) return {failure:error('registration_json_required', 415)};
   const reader = request.body?.getReader();
   if (!reader) return {failure:error('registration_invalid_json', 400)};
   const chunks = [];
@@ -69,7 +85,8 @@ async function readBody(request) {
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    const body = JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(bytes));
+    const text = new TextDecoder('utf-8', {fatal:true}).decode(bytes);
+    const body = native ? {name:text} : JSON.parse(text);
     if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'name') ||
         (body.name !== undefined && (typeof body.name !== 'string' || body.name.length > 100))) return {failure:error('registration_invalid_json', 400)};
     return {body};
@@ -89,14 +106,20 @@ async function admission(db, hash) {
   return {settings};
 }
 
-export async function handleAgentRegistration(request, env) {
+async function register(request, env, native) {
   const url = new URL(request.url);
   if (url.protocol !== 'https:' || url.username || url.password) return error('registration_https_required', 403);
   if (request.method !== 'POST') return error('registration_method_denied', 405);
-  const key = request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
-  if (!key || url.search) return error('registration_key_denied', 401);
+  if (url.search) return error('registration_key_denied',401);
   try {
-    const parsed = await readBody(request);
+    const held=request.headers.get('X-Node-Token');
+    if(held) {
+      const identity=await verifyNodeToken(env.DB,held);
+      if(identity)return response({serverId:identity.serverId,token:held});
+    }
+    const key = request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+    if(!key)return error('registration_key_denied',401);
+    const parsed = await readBody(request,native);
     if (parsed.failure) return parsed.failure;
     const hash = await hashNodeToken(key);
     const authorized = await admission(env.DB, hash);
@@ -128,4 +151,13 @@ export async function handleAgentRegistration(request, env) {
     clearSiteSettingsCache();
     return response({serverId, token:credential.token});
   } catch (_) { return error('registration_unavailable', 503); }
+}
+
+export async function handleAgentRegistration(request,env) {
+  const native=/^text\/plain(?:\s*;\s*charset=utf-8)?$/i.test(request.headers.get('Content-Type')||'');
+  const result=await register(request,env,native);
+  if(!native)return result;
+  const body=await result.json();
+  const status=body.error==='registration_key_denied'||body.error==='registration_limit_reached'?403:result.status;
+  return new Response(result.ok?body.token:body.error,{status,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
 }
